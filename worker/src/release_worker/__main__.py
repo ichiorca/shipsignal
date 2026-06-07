@@ -32,6 +32,7 @@ from release_worker.aurora_repository import (
     connect_from_env,
 )
 from release_worker.github_diff_source import GitHubDiffSource
+from release_worker.github_pr_source import GitHubPullRequestSource
 from release_worker.graph import build_release_intelligence_graph
 from release_worker.state import ReleaseRunState
 
@@ -72,11 +73,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         boundary_reader = AuroraBoundaryReader(conn)
         diff_source = GitHubDiffSource.from_env()
+        pr_source = GitHubPullRequestSource.from_env()
         evidence_sink = S3AuroraEvidenceSink(
             conn, s3_client_from_env(), _require_env("EVIDENCE_BUCKET")
         )
         graph = build_release_intelligence_graph(
-            repository, boundary_reader, diff_source, evidence_sink
+            repository, boundary_reader, diff_source, pr_source, evidence_sink
         )
         initial = ReleaseRunState(release_run_id=release_run_id, thread_id=thread_id)
         graph.invoke(initial)

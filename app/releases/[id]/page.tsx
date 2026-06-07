@@ -8,6 +8,7 @@ import { notFound } from 'next/navigation';
 import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
 import { listEvidenceForRun } from '@/app/lib/db/evidenceItems.ts';
 import { EvidenceTable } from '@/app/components/EvidenceTable.ts';
+import { CategorizedSignals } from '@/app/components/CategorizedSignals.ts';
 
 // Always reflect the latest evidence for the run; not statically cacheable.
 export const dynamic = 'force-dynamic';
@@ -45,6 +46,9 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
           <time dateTime={run.started_at}>{run.started_at}</time>
         </dd>
       </dl>
+
+      <h2>Signals by type</h2>
+      <CategorizedSignals items={evidence} />
 
       <h2>Evidence</h2>
       <p>{evidence.length === 1 ? '1 item' : `${evidence.length} items`}</p>

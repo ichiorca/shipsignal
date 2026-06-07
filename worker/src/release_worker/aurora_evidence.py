@@ -62,7 +62,9 @@ class S3AuroraEvidenceSink:
     are written with SSE and served to the UI only via short-expiry presigned URLs.
     """
 
-    def __init__(self, conn: psycopg.Connection, s3_client: object, bucket: str) -> None:
+    def __init__(
+        self, conn: psycopg.Connection, s3_client: object, bucket: str
+    ) -> None:
         self._conn = conn
         self._s3 = s3_client
         self._bucket = bucket
@@ -90,9 +92,9 @@ class S3AuroraEvidenceSink:
                 INSERT INTO evidence_items (
                     id, release_run_id, evidence_type, source, source_url, repo,
                     file_path, symbol_name, raw_excerpt_s3_uri, redacted_excerpt,
-                    risk_flags, metadata_json
+                    confidence, risk_flags, metadata_json
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb
                 )
                 """,
                 (
@@ -106,6 +108,7 @@ class S3AuroraEvidenceSink:
                     item.symbol_name,
                     item.raw_excerpt_s3_uri,
                     item.redacted_excerpt,
+                    item.confidence,
                     json.dumps(list(item.risk_flags)),
                     json.dumps(item.metadata),
                 ),

@@ -17,8 +17,13 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from release_worker.evidence_nodes import collect_redact_persist
-from release_worker.evidence_ports import BoundaryReader, DiffSource, EvidenceSink
+from release_worker.evidence_nodes import collect_redact_persist_all
+from release_worker.evidence_ports import (
+    BoundaryReader,
+    DiffSource,
+    EvidenceSink,
+    PullRequestSource,
+)
 from release_worker.nodes import run_passthrough
 from release_worker.repository import ReleaseRunRepository
 from release_worker.state import ReleaseRunState
@@ -28,21 +33,31 @@ def build_release_intelligence_graph(
     repository: ReleaseRunRepository,
     boundary_reader: BoundaryReader,
     diff_source: DiffSource,
+    pr_source: PullRequestSource,
     evidence_sink: EvidenceSink,
 ):
     """Compile the graph: START -> collect_evidence -> passthrough -> END.
 
     The ports are captured in node closures so each node stays a pure function of its
     ``(inputs, port)`` while LangGraph only sees ``state -> state`` callables.
-    ``collect_evidence`` persists redacted evidence for the run, then ``passthrough``
-    advances the run's status to completed (spec 001).
+    ``collect_evidence`` runs the full spec-003 collection chain (git diff + PR/issues +
+    docs deltas + deterministic code signals), redacting every excerpt before persist,
+    then ``passthrough`` advances the run's status to completed (spec 001).
+
+    P5 / constitution §5: the raw collected evidence lives only inside
+    ``collect_redact_persist_all`` and is redacted before persist — it never enters the
+    LangGraph ``ReleaseRunState`` ("redact before persist, before state").
     """
 
     def _collect_evidence(state: ReleaseRunState) -> ReleaseRunState:
         # Side-effecting (S3 + Aurora writes), but redacted-only by construction —
         # persist_evidence accepts solely RedactedEvidence. State is unchanged.
-        collect_redact_persist(
-            state.release_run_id, boundary_reader, diff_source, evidence_sink
+        collect_redact_persist_all(
+            state.release_run_id,
+            boundary_reader,
+            diff_source,
+            pr_source,
+            evidence_sink,
         )
         return state
 

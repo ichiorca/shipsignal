@@ -18,15 +18,24 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from release_worker.evidence_models import (
+    CodeSignal,
     CollectedEvidence,
     EvidenceRecord,
     MalformedDiffError,
+    MalformedPullRequestError,
+    PullRequestPayload,
     RawDiffPayload,
     RedactedEvidence,
     ReleaseBoundary,
 )
-from release_worker.evidence_ports import BoundaryReader, DiffSource, EvidenceSink
+from release_worker.evidence_ports import (
+    BoundaryReader,
+    DiffSource,
+    EvidenceSink,
+    PullRequestSource,
+)
 from release_worker.redaction import redact
+from release_worker.signal_extractors import CODE_EXTRACTORS, extract_docs_delta
 
 # PRD §6.3: git-diff evidence is typed as a code-diff change from the git_diff source.
 _EVIDENCE_TYPE = "code_diff"
@@ -48,23 +57,24 @@ def _compare_url(boundary: ReleaseBoundary) -> str:
     )
 
 
-def collect_git_diff(
-    boundary: ReleaseBoundary, source: DiffSource
-) -> tuple[CollectedEvidence, ...]:
-    """Fetch the boundary diff and build one untrusted evidence item per changed file.
+def _validated_diff(boundary: ReleaseBoundary, source: DiffSource) -> RawDiffPayload:
+    """Fetch and validate the boundary diff once (the single boundary check, AC4).
 
-    The raw payload is validated through ``RawDiffPayload`` (the single boundary
-    check); a malformed payload fails closed as a user-safe ``MalformedDiffError``
-    (AC4) without echoing the offending content.
+    Shared by every diff-derived collector (whole-file evidence, docs deltas, code
+    signals) so the compare range is fetched and validated exactly once per run.
     """
     payload = source.fetch_raw_diff(boundary)
     try:
-        diff = RawDiffPayload.model_validate(payload)
+        return RawDiffPayload.model_validate(payload)
     except ValidationError as err:
         # Do not leak the raw payload (may contain PII/secrets) into the error.
         raise MalformedDiffError() from err
 
-    source_url = _compare_url(boundary)
+
+def _whole_file_evidence(
+    diff: RawDiffPayload, source_url: str
+) -> tuple[CollectedEvidence, ...]:
+    """One untrusted ``code_diff`` evidence item per changed file (spec 002 behavior)."""
     collected: list[CollectedEvidence] = []
     for changed in diff.files:
         line_ranges = ",".join(h.line_range for h in changed.hunks)
@@ -83,6 +93,19 @@ def collect_git_diff(
             )
         )
     return tuple(collected)
+
+
+def collect_git_diff(
+    boundary: ReleaseBoundary, source: DiffSource
+) -> tuple[CollectedEvidence, ...]:
+    """Fetch the boundary diff and build one untrusted evidence item per changed file.
+
+    The raw payload is validated through ``RawDiffPayload`` (the single boundary
+    check); a malformed payload fails closed as a user-safe ``MalformedDiffError``
+    (AC4) without echoing the offending content.
+    """
+    diff = _validated_diff(boundary, source)
+    return _whole_file_evidence(diff, _compare_url(boundary))
 
 
 def redact_evidence(
@@ -107,6 +130,7 @@ def redact_evidence(
                 symbol_name=item.symbol_name,
                 redacted_excerpt=result.text,
                 risk_flags=result.risk_flags,
+                confidence=item.confidence,
                 metadata=item.metadata,
             )
         )
@@ -141,6 +165,7 @@ def persist_evidence(
             raw_excerpt_s3_uri=s3_uri,
             redacted_excerpt=item.redacted_excerpt,
             risk_flags=item.risk_flags,
+            confidence=item.confidence,
             metadata=item.metadata,
         )
         sink.record(record)
@@ -162,5 +187,159 @@ def collect_redact_persist(
     """
     boundary = load_release_boundary(release_run_id, reader)
     collected = collect_git_diff(boundary, source)
+    redacted = redact_evidence(collected)
+    return persist_evidence(release_run_id, redacted, sink)
+
+
+# --- T1 (spec 003) — collect_prs_and_issues ---------------------------------------
+# PR/issue text is untrusted (github-rules) and is emitted as raw CollectedEvidence;
+# it still passes redact_evidence before any persist (§5). Provenance is direct, so
+# these collector items carry confidence=1.0 (nothing is inferred to discount).
+_PR_SOURCE = "pr_metadata"
+_PR_EVIDENCE_TYPE = "pr_metadata"
+_ISSUE_SOURCE = "issue_tracker"
+_ISSUE_EVIDENCE_TYPE = "issue"
+_DIRECT_PROVENANCE_CONFIDENCE = 1.0
+
+
+def collect_prs_and_issues(
+    boundary: ReleaseBoundary, source: PullRequestSource
+) -> tuple[CollectedEvidence, ...]:
+    """Fetch PR metadata + linked issues and emit one untrusted evidence item each (T1).
+
+    The source payload is validated through ``PullRequestPayload`` (the single boundary
+    check); a malformed payload fails closed as a user-safe ``MalformedPullRequestError``
+    (AC4) without echoing the offending content. Title/body are kept verbatim here —
+    redaction happens in ``redact_evidence`` before persist (§5).
+    """
+    payload = source.fetch_pull_requests(boundary)
+    try:
+        prs = PullRequestPayload.model_validate(payload)
+    except ValidationError as err:
+        raise MalformedPullRequestError() from err
+
+    collected: list[CollectedEvidence] = []
+    for pr in prs.pull_requests:
+        pr_metadata: dict[str, str | int] = {"pr_number": pr.number}
+        if pr.labels:
+            pr_metadata["labels"] = ",".join(pr.labels)
+        if pr.reviewers:
+            pr_metadata["reviewers"] = ",".join(pr.reviewers)
+        collected.append(
+            CollectedEvidence(
+                evidence_type=_PR_EVIDENCE_TYPE,
+                source=_PR_SOURCE,
+                repo=boundary.repo,
+                source_url=pr.url,
+                raw_excerpt=f"{pr.title}\n\n{pr.body}".strip(),
+                confidence=_DIRECT_PROVENANCE_CONFIDENCE,
+                metadata=pr_metadata,
+            )
+        )
+        for issue in pr.linked_issues:
+            collected.append(
+                CollectedEvidence(
+                    evidence_type=_ISSUE_EVIDENCE_TYPE,
+                    source=_ISSUE_SOURCE,
+                    repo=boundary.repo,
+                    source_url=issue.url,
+                    raw_excerpt=f"{issue.title}\n\n{issue.body}".strip(),
+                    confidence=_DIRECT_PROVENANCE_CONFIDENCE,
+                    metadata={"pr_number": pr.number, "issue_key": issue.key},
+                )
+            )
+    return tuple(collected)
+
+
+# --- T2/T4 (spec 003) — diff-derived signal collection ----------------------------
+
+
+def _signal_to_evidence(
+    diff: RawDiffPayload, source_url: str, file_path: str, status: str, sig: CodeSignal
+) -> CollectedEvidence:
+    """Lift a deterministic ``CodeSignal`` into a ``CollectedEvidence`` (shared by the
+    docs and code-signal nodes), adding repo/source_url/file_path provenance and the
+    new-file line range. ``source="git_diff"`` matches the PRD §6.3 contract example."""
+    metadata: dict[str, str | int] = {"status": status}
+    if sig.line is not None:
+        metadata["line_range"] = str(sig.line)
+    return CollectedEvidence(
+        evidence_type=sig.evidence_type,
+        source=_SOURCE,
+        repo=diff.repo,
+        source_url=source_url,
+        file_path=file_path,
+        symbol_name=sig.symbol_name,
+        raw_excerpt=sig.excerpt,
+        confidence=sig.confidence,
+        metadata=metadata,
+    )
+
+
+def collect_docs_changes(
+    diff: RawDiffPayload, source_url: str
+) -> tuple[CollectedEvidence, ...]:
+    """Detect docs/release-note/API-reference deltas in the diff as evidence (T2).
+
+    Drives the ``extract_docs_delta`` extractor over every changed file so that
+    extractor is reachable through exactly one node (anti-pattern #3).
+    """
+    collected: list[CollectedEvidence] = []
+    for changed in diff.files:
+        for sig in extract_docs_delta(changed):
+            collected.append(
+                _signal_to_evidence(
+                    diff, source_url, changed.file_path, changed.status, sig
+                )
+            )
+    return tuple(collected)
+
+
+def extract_code_signals(
+    diff: RawDiffPayload, source_url: str
+) -> tuple[CollectedEvidence, ...]:
+    """Run the deterministic code-signal extractors over every changed file (T4).
+
+    Each extractor (§6.2) emits typed ``CodeSignal``s which become typed
+    ``CollectedEvidence`` carrying ``evidence_type`` + ``confidence`` + provenance.
+    """
+    collected: list[CollectedEvidence] = []
+    for changed in diff.files:
+        for extractor in CODE_EXTRACTORS:
+            for sig in extractor(changed):
+                collected.append(
+                    _signal_to_evidence(
+                        diff, source_url, changed.file_path, changed.status, sig
+                    )
+                )
+    return tuple(collected)
+
+
+def collect_redact_persist_all(
+    release_run_id: str,
+    reader: BoundaryReader,
+    diff_source: DiffSource,
+    pr_source: PullRequestSource,
+    sink: EvidenceSink,
+) -> tuple[EvidenceRecord, ...]:
+    """The full release-intelligence collection chain for one run (PRD §5.2, T4).
+
+    Order mirrors the graph: load_release_boundary → collect_git_diff →
+    collect_prs_and_issues → collect_docs_changes → extract_code_signals →
+    redact_evidence → persist_evidence. Every raw collector item is accumulated in
+    *local* scope and redacted before persist — raw excerpts never enter LangGraph
+    state, Aurora, or S3 (constitution §5 "redact before persist, before state"). The
+    diff is fetched and validated exactly once and reused across the diff-derived nodes.
+    """
+    boundary = load_release_boundary(release_run_id, reader)
+    source_url = _compare_url(boundary)
+    diff = _validated_diff(boundary, diff_source)
+
+    collected: tuple[CollectedEvidence, ...] = (
+        *_whole_file_evidence(diff, source_url),
+        *collect_prs_and_issues(boundary, pr_source),
+        *collect_docs_changes(diff, source_url),
+        *extract_code_signals(diff, source_url),
+    )
     redacted = redact_evidence(collected)
     return persist_evidence(release_run_id, redacted, sink)

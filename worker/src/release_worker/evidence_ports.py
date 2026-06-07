@@ -15,6 +15,16 @@ from release_worker.evidence_models import EvidenceRecord, ReleaseBoundary
 
 
 @runtime_checkable
+class PullRequestSource(Protocol):
+    """Fetch PR metadata + linked issues for a boundary (T1, spec 003 / PRD §6.1).
+
+    Returns an *untrusted* payload (typically a dict) that ``collect_prs_and_issues``
+    validates through ``PullRequestPayload`` (AC4) before any text is used."""
+
+    def fetch_pull_requests(self, boundary: ReleaseBoundary) -> object: ...
+
+
+@runtime_checkable
 class BoundaryReader(Protocol):
     """Resolve a run's compare range from durable storage (PRD §5.2)."""
 
@@ -77,6 +87,19 @@ class StaticDiffSource:
         self._payload = payload
 
     def fetch_raw_diff(self, boundary: ReleaseBoundary) -> object:
+        return self._payload
+
+
+class StaticPullRequestSource:
+    """A ``PullRequestSource`` returning a fixed payload — for tests and local dev.
+
+    Hand it a well-formed dict to exercise PR/issue collection, or a malformed one to
+    prove ``collect_prs_and_issues`` fails closed (AC4)."""
+
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+
+    def fetch_pull_requests(self, boundary: ReleaseBoundary) -> object:
         return self._payload
 
 

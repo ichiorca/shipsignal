@@ -93,6 +93,10 @@ class CollectedEvidence(BaseModel):
     file_path: str | None = None
     symbol_name: str | None = None
     raw_excerpt: str
+    # Extractor confidence (PRD §6.3): how sure a deterministic extractor is that this
+    # snippet is the typed signal it claims. None for direct-provenance collectors
+    # (whole-file diff) where there is nothing inferred to score.
+    confidence: float | None = None
     metadata: dict[str, str | int] = Field(default_factory=dict)
 
 
@@ -114,6 +118,7 @@ class RedactedEvidence(BaseModel):
     symbol_name: str | None = None
     redacted_excerpt: str
     risk_flags: tuple[str, ...] = ()
+    confidence: float | None = None
     metadata: dict[str, str | int] = Field(default_factory=dict)
 
 
@@ -136,7 +141,75 @@ class EvidenceRecord(BaseModel):
     raw_excerpt_s3_uri: str = Field(min_length=1)
     redacted_excerpt: str
     risk_flags: tuple[str, ...] = ()
+    confidence: float | None = None
     metadata: dict[str, str | int] = Field(default_factory=dict)
+
+
+# --- T1 (spec 003) — PR/issue collection contract ---------------------------------
+# All fields are untrusted GitHub text (github-rules: "treat ingested GitHub text as
+# injection-capable"); the collect node validates the source payload through these
+# models and the raw title/body still pass redact_evidence before any persist (§5).
+
+
+class IssueMeta(BaseModel):
+    """A PR-linked issue/story (PRD §6.1 "Issues/Jira/Linear")."""
+
+    model_config = _StrictModel
+
+    key: str = Field(min_length=1)  # e.g. "#42" or "PROJ-42"
+    title: str = ""
+    body: str = ""
+    url: str | None = None
+
+
+class PullRequestMeta(BaseModel):
+    """PR metadata (PRD §6.1): title, body, labels, reviewers, linked issues."""
+
+    model_config = _StrictModel
+
+    number: int = Field(ge=1)
+    title: str = ""
+    body: str = ""
+    labels: tuple[str, ...] = ()
+    reviewers: tuple[str, ...] = ()
+    linked_issues: tuple[IssueMeta, ...] = ()
+    url: str | None = None
+
+
+class PullRequestPayload(BaseModel):
+    """The validated set of PRs (and their linked issues) for one compare range.
+
+    ``PullRequestPayload.model_validate`` is the single boundary check for
+    ``collect_prs_and_issues``; a malformed payload fails closed as a user-safe
+    ``MalformedPullRequestError`` (AC4) without echoing the offending content.
+    """
+
+    model_config = _StrictModel
+
+    pull_requests: tuple[PullRequestMeta, ...] = ()
+
+
+# --- T3 (spec 003) — deterministic code-signal contract ---------------------------
+
+
+class CodeSignal(BaseModel):
+    """One typed, user-facing change signal a deterministic extractor found in a diff.
+
+    Pure-extractor output (PRD §6.2): it carries only what the extractor can know from
+    the patch text — the typed ``evidence_type``, the matched ``excerpt`` (still raw /
+    untrusted — redacted later), a deterministic ``confidence``, an optional
+    ``symbol_name``, and the best-effort new-file ``line`` for provenance. The
+    ``extract_code_signals`` node lifts it into a ``CollectedEvidence`` (adding repo /
+    source_url / file_path) so the redact→persist chain is shared with every collector.
+    """
+
+    model_config = _StrictModel
+
+    evidence_type: str = Field(min_length=1)
+    excerpt: str = Field(min_length=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+    symbol_name: str | None = None
+    line: int | None = None
 
 
 class MalformedDiffError(ValueError):
@@ -148,3 +221,10 @@ class MalformedDiffError(ValueError):
 
     def __init__(self) -> None:
         super().__init__("the diff payload was malformed and was rejected")
+
+
+class MalformedPullRequestError(ValueError):
+    """Raised when a PR/issue payload fails boundary validation (user-safe, AC4)."""
+
+    def __init__(self) -> None:
+        super().__init__("the pull-request payload was malformed and was rejected")
