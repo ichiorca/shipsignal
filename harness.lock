@@ -1,0 +1,6 @@
+# harness.lock — generated; do not edit by hand.
+# Pins eval-set version, schema version, adapter versions.
+
+schemaVersion = "1.0.0"
+evalSetVersion = "harness-eval-set-v1.0.0"
+adapters = []

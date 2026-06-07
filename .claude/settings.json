@@ -1,0 +1,64 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'C:/Users/Ranee Bajaj/go/bin/harness.exe' adapter claude-code post-tool",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'C:/Users/Ranee Bajaj/go/bin/harness.exe' adapter claude-code pre-tool",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'C:/Users/Ranee Bajaj/go/bin/harness.exe' adapter claude-code session-start",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'C:/Users/Ranee Bajaj/go/bin/harness.exe' adapter claude-code stop",
+            "timeout": 600000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'C:/Users/Ranee Bajaj/go/bin/harness.exe' adapter claude-code user-prompt-submit",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  }
+}
