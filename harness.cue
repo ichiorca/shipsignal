@@ -24,6 +24,9 @@ harness: schema.#Harness & {
 		}
 	}
 
+	// Depth (L2/L3/L4 standard featureFlags) is provisioned by
+	// `harness levels set` into the managed levels.cue — not hand-edited here.
+
 	sandboxes: "default": {
 		name:          "default"
 		lifecycle:     "ga"
@@ -105,6 +108,10 @@ harness: schema.#Harness & {
 		quarantineUntrusted: true
 		compositionRule:     "any-untrusted-poisons-output"
 	}
+
+	// L3 tools + sagas are provisioned via `harness tools add` / `harness saga
+	// add` into the composed tools/*.cue and sagas/*.cue component files — not
+	// hand-edited here. (Gated on depth: enable with `harness levels set L3`.)
 
 	// --- Dynamic workflows (Claude Code, research preview) ------------------
 	// 'harness init' staged two bundled workflows under workflows/ (INERT).

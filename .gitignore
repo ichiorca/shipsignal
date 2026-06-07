@@ -1,2 +1,43 @@
+# --- Harness runtime state (local & non-reproducible; the committed config is
+#     harness.cue, levels.cue, tools/, sagas/, .claude/, memory/, hooks/) ---
 .harness/state/
 .harness/traces.jsonl
+.harness/traces.jsonl.*
+
+# --- Secrets / environment (also sandbox-protected; never commit) ---
+.env
+.env.*
+!.env.example
+
+# --- Node / TypeScript (Next.js app) ---
+node_modules/
+.next/
+out/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Python (LangGraph workers / extractors) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# --- Editors / OS ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
