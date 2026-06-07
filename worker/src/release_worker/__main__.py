@@ -1,10 +1,15 @@
-"""T5 (spec 001) — entry point the GitHub Actions release-run job invokes.
+"""T5 (spec 001) / T2-T4 (spec 002) — entry point the Actions release-run job invokes.
 
-Wires the durable Aurora repository into ``release_intelligence_graph`` and runs the
-single pass-through node for one ``release_run_id``. P5 (Safety rails): the run id is
-the only externally supplied value and is validated before use; the DB DSN and any
-credentials come from env, never argv. On any failure the run is marked ``failed`` so
-the dashboard never shows a run wedged in ``running``.
+Wires the durable Aurora repository plus the evidence ports (Aurora boundary reader,
+GitHub diff source, S3+Aurora evidence sink) into ``release_intelligence_graph`` and
+runs it for one ``release_run_id``: collect -> redact -> persist evidence, then advance
+the run to completed. P5 (Safety rails): the run id is the only externally supplied
+value and is validated before use; the DB DSN, GitHub token, and S3 bucket all come
+from env, never argv. On any failure the run is marked ``failed`` so the dashboard
+never shows a run wedged in ``running``.
+
+This module owns the runtime adapters (psycopg/boto3/urllib) so the unit gate never
+imports them — it tests the pure node logic against in-memory fakes instead.
 
 Invoked as ``python -m release_worker --release-run-id <uuid>`` on the runner.
 """
@@ -13,14 +18,32 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from uuid import uuid4
 
-from release_worker.aurora_repository import AuroraReleaseRunRepository
+from release_worker.aurora_evidence import (
+    AuroraBoundaryReader,
+    S3AuroraEvidenceSink,
+    s3_client_from_env,
+)
+from release_worker.aurora_repository import (
+    AuroraReleaseRunRepository,
+    connect_from_env,
+)
+from release_worker.github_diff_source import GitHubDiffSource
 from release_worker.graph import build_release_intelligence_graph
 from release_worker.state import ReleaseRunState
 
 logger = logging.getLogger("release_worker")
+
+
+def _require_env(name: str) -> str:
+    """Read a required env var or fail fast with a secret-free message."""
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"missing required environment variable: {name}")
+    return value
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -42,9 +65,19 @@ def main(argv: list[str] | None = None) -> int:
     # thread; the skeleton mints one and records it per the AC).
     thread_id = f"lg_{uuid4().hex}"
 
-    repository = AuroraReleaseRunRepository.from_env()
+    # One shared connection for the whole short-lived job (aurora-postgresql-rules):
+    # the run repository, the boundary reader, and the evidence sink all use it.
+    conn = connect_from_env()
+    repository = AuroraReleaseRunRepository(conn)
     try:
-        graph = build_release_intelligence_graph(repository)
+        boundary_reader = AuroraBoundaryReader(conn)
+        diff_source = GitHubDiffSource.from_env()
+        evidence_sink = S3AuroraEvidenceSink(
+            conn, s3_client_from_env(), _require_env("EVIDENCE_BUCKET")
+        )
+        graph = build_release_intelligence_graph(
+            repository, boundary_reader, diff_source, evidence_sink
+        )
         initial = ReleaseRunState(release_run_id=release_run_id, thread_id=thread_id)
         graph.invoke(initial)
         logger.info("release run %s completed (thread %s)", release_run_id, thread_id)
@@ -57,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
             logger.exception("could not mark release run %s failed", release_run_id)
         return 1
     finally:
-        repository.close()
+        conn.close()
 
 
 if __name__ == "__main__":

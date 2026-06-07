@@ -15,8 +15,8 @@ session start.
 
 ## Active spec
 
-`001-release-run-skeleton-trigger-run-lifecycle-dashboard` — a previous session set this marker and the post-pass gates have
-not yet cleared it. Run `/spec-kit-implement 001-release-run-skeleton-trigger-run-lifecycle-dashboard` to resume.
+`002-evidence-collection-with-redact-before-persist-git-diff` — a previous session set this marker and the post-pass gates have
+not yet cleared it. Run `/spec-kit-implement 002-evidence-collection-with-redact-before-persist-git-diff` to resume.
 
 ## Available spec-kit slash commands
 

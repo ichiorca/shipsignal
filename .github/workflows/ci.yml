@@ -38,7 +38,9 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # pgvector-enabled image: migration 0003 (spec 002) creates `extension vector`
+        # for the evidence_items embedding column, so a stock postgres:16 can't apply it.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci

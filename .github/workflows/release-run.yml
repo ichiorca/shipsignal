@@ -66,5 +66,12 @@ jobs:
           # DSN is a secret (Aurora endpoint via RDS Proxy). Never echoed; the worker
           # reads it from env and enforces TLS.
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Read-only token the evidence collector uses for the compare API
+          # (github-rules: server-side only, never argv/logs). The built-in job token
+          # is scoped to this repo by the `contents: read` permission above.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Private S3 bucket for redacted evidence blobs (a name, not a secret; the
+          # worker writes via the OIDC-assumed role, never long-lived keys).
+          EVIDENCE_BUCKET: ${{ vars.EVIDENCE_BUCKET }}
           PYTHONPATH: worker/src
         run: python -m release_worker --release-run-id "${{ inputs.release_run_id }}"

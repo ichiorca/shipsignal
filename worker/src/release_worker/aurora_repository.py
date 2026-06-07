@@ -26,6 +26,19 @@ def _require_tls(dsn: str) -> str:
     return dsn
 
 
+def connect_from_env(env_var: str = "DATABASE_URL") -> psycopg.Connection:
+    """Open one TLS-required, autocommit connection to Aurora from the env DSN.
+
+    The single short-lived connection is shared by the run repository, the boundary
+    reader, and the evidence sink in ``__main__`` (T4, spec 002) so one Actions job
+    opens exactly one connection to the pooled endpoint (aurora-postgresql-rules:
+    short-lived contexts must not fan out raw connections)."""
+    dsn = os.environ.get(env_var)
+    if not dsn:
+        raise RuntimeError(f"missing required environment variable: {env_var}")
+    return psycopg.connect(_require_tls(dsn), autocommit=True)
+
+
 class AuroraReleaseRunRepository:
     """Durable repository over a short-lived psycopg connection.
 
@@ -39,11 +52,7 @@ class AuroraReleaseRunRepository:
 
     @classmethod
     def from_env(cls, env_var: str = "DATABASE_URL") -> AuroraReleaseRunRepository:
-        dsn = os.environ.get(env_var)
-        if not dsn:
-            raise RuntimeError(f"missing required environment variable: {env_var}")
-        conn = psycopg.connect(_require_tls(dsn), autocommit=True)
-        return cls(conn)
+        return cls(connect_from_env(env_var))
 
     def get_status(self, release_run_id: str) -> RunStatus:
         with self._conn.cursor() as cur:
