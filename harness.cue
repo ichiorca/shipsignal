@@ -7,8 +7,9 @@ import (
 harness: schema.#Harness & {
 	schemaVersion: "1.0.0"
 	metadata: {
-		name:  "my-harness-project"
-		owner: "me"
+		name:        "shipsignal"
+		owner:       "me"
+		testCommand: "npm test && pytest -q"
 	}
 
 	active: {
