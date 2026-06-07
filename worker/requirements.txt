@@ -1,0 +1,7 @@
+# T5 (spec 001) — runtime deps for the LangGraph release worker on the Actions runner.
+# Pinned (dependency-policy: no floating ranges). The unit-test gate does NOT install
+# these — it imports only the pure modules (status/state/nodes/repository); these are
+# the heavy libs behind graph.py / aurora_repository.py used at deploy time.
+langgraph==0.2.60
+psycopg[binary]==3.2.3
+pydantic==2.10.4

@@ -13,6 +13,11 @@ managed conventions live in `memory/constitution.md`; project setup in
 `harness.cue`. This file just surfaces them to the active agent on every
 session start.
 
+## Active spec
+
+`001-release-run-skeleton-trigger-run-lifecycle-dashboard` — a previous session set this marker and the post-pass gates have
+not yet cleared it. Run `/spec-kit-implement 001-release-run-skeleton-trigger-run-lifecycle-dashboard` to resume.
+
 ## Available spec-kit slash commands
 
 - `/spec-kit-implement <spec-id>` — Implement one spec end-to-end. Post-pass gates run automatically on session end.

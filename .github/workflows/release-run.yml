@@ -1,0 +1,70 @@
+# T5 (spec 001) — the long-running release job on the GitHub Actions runner.
+# P1 (Substrate): the heavy LangGraph work runs HERE, never in the Vercel app. The job
+# boots release_intelligence_graph's single pass-through node, which flips the run
+# running -> completed and writes langgraph_thread_id back to Aurora.
+#
+# Hardened runner (github-rules): least-privilege token (id-token for OIDC + read-only
+# contents only), pinned actions, no long-lived AWS keys — credentials come from an
+# OIDC-assumed role. The DB DSN is injected from a secret, never hardcoded.
+
+name: release-run
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: 'UUID of the pre-inserted release_runs row'
+        required: true
+        type: string
+      repo:
+        description: 'owner/repo the run targets'
+        required: false
+        type: string
+      base_ref:
+        description: 'compare base ref'
+        required: false
+        type: string
+      head_ref:
+        description: 'compare head ref'
+        required: false
+        type: string
+
+# Least privilege: OIDC token to assume the AWS role + read the repo. Nothing else.
+permissions:
+  id-token: write
+  contents: read
+
+# One in-flight job per release run; a re-dispatch supersedes rather than racing.
+concurrency:
+  group: release-run-${{ inputs.release_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    name: Advance release run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install worker runtime
+        run: pip install -r worker/requirements.txt
+
+      - name: Assume AWS role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_RELEASE_RUN_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Run release_intelligence_graph
+        env:
+          # DSN is a secret (Aurora endpoint via RDS Proxy). Never echoed; the worker
+          # reads it from env and enforces TLS.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PYTHONPATH: worker/src
+        run: python -m release_worker --release-run-id "${{ inputs.release_run_id }}"

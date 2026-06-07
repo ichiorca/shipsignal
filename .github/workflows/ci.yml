@@ -1,0 +1,67 @@
+# CI (spec 001) — unit gates + Alembic migration check.
+# P6 (Quality bars): tsc/eslint-adjacent type gate, the TS unit suite, the Python unit
+# suite, and a real migration apply/rollback round-trip must all be green.
+# github-rules: least-privilege token (read-only contents), no secrets needed — the
+# migration check runs against an ephemeral Postgres service, never a real cluster.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Type-check + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pydantic==2.10.4 pytest==8.3.4 ruff==0.8.4
+      - run: ruff check .
+      - run: pytest -q
+
+  migration-check:
+    name: Alembic migration check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: shipsignal
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Local ephemeral service — not a real cluster. TLS is not required against
+      # localhost; the env.py guard only forbids sslmode=disable being set explicitly.
+      DATABASE_URL: postgresql+psycopg://ci:ci@localhost:5432/shipsignal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r db/requirements.txt
+      # Prove the migrations are real and reversible (anti-pattern #1: no stub DDL):
+      # apply to head, roll all the way back, then re-apply.
+      - run: alembic upgrade head
+      - run: alembic downgrade base
+      - run: alembic upgrade head

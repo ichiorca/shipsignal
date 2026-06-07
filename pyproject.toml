@@ -1,0 +1,21 @@
+# Root tooling config for the Python LangGraph worker (spec 001, T5) and migrations
+# (T2). The release_worker package lives under worker/src; pytest injects it on the
+# path so the unit gate runs without an editable install (the CI runner installs
+# worker/requirements.txt for the real langgraph/psycopg/alembic paths).
+
+[tool.pytest.ini_options]
+testpaths = ["worker/tests"]
+pythonpath = ["worker/src"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["worker/src"]
+
+[tool.ruff.lint]
+# Ruff's default floor (E4/E7/E9/F) plus the repo-mandated set.
+select = ["E4", "E7", "E9", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["release_worker"]

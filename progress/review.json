@@ -1,0 +1,162 @@
+{
+  "projectRoot": "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal",
+  "generatedAt": "2026-06-07T22:53:49Z",
+  "specs": [
+    {
+      "id": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
+      "specMD": "specs/001-release-run-skeleton-trigger-run-lifecycle-dashboard/spec.md",
+      "tasksMD": "specs/001-release-run-skeleton-trigger-run-lifecycle-dashboard/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 6
+    },
+    {
+      "id": "002-evidence-collection-with-redact-before-persist-git-diff",
+      "specMD": "specs/002-evidence-collection-with-redact-before-persist-git-diff/spec.md",
+      "tasksMD": "specs/002-evidence-collection-with-redact-before-persist-git-diff/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
+    },
+    {
+      "id": "003-pr-issue-docs-collection-deterministic-code-signal-extractors",
+      "specMD": "specs/003-pr-issue-docs-collection-deterministic-code-signal-extractors/spec.md",
+      "tasksMD": "specs/003-pr-issue-docs-collection-deterministic-code-signal-extractors/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
+    },
+    {
+      "id": "004-feature-clustering-scoring-gate-1-approval",
+      "specMD": "specs/004-feature-clustering-scoring-gate-1-approval/spec.md",
+      "tasksMD": "specs/004-feature-clustering-scoring-gate-1-approval/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 6
+    },
+    {
+      "id": "005-content-generation-blog-changelog-from-approved-features",
+      "specMD": "specs/005-content-generation-blog-changelog-from-approved-features/spec.md",
+      "tasksMD": "specs/005-content-generation-blog-changelog-from-approved-features/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
+    },
+    {
+      "id": "006-claim-extraction-evidence-linking-checks-gate-2",
+      "specMD": "specs/006-claim-extraction-evidence-linking-checks-gate-2/spec.md",
+      "tasksMD": "specs/006-claim-extraction-evidence-linking-checks-gate-2/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
+    },
+    {
+      "id": "007-expand-artifact-set-sales-one-pager-social-demo-script-audio-digest",
+      "specMD": "specs/007-expand-artifact-set-sales-one-pager-social-demo-script-audio-digest/spec.md",
+      "tasksMD": "specs/007-expand-artifact-set-sales-one-pager-social-demo-script-audio-digest/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 4
+    },
+    {
+      "id": "008-demo-media-validated-click-path-playwright-ffmpeg-elevenlabs-s3",
+      "specMD": "specs/008-demo-media-validated-click-path-playwright-ffmpeg-elevenlabs-s3/spec.md",
+      "tasksMD": "specs/008-demo-media-validated-click-path-playwright-ffmpeg-elevenlabs-s3/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 6
+    },
+    {
+      "id": "009-skill-learning-ledger-gate-3-repo-skill-md-replacement",
+      "specMD": "specs/009-skill-learning-ledger-gate-3-repo-skill-md-replacement/spec.md",
+      "tasksMD": "specs/009-skill-learning-ledger-gate-3-repo-skill-md-replacement/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 6
+    },
+    {
+      "id": "010-gdpr-data-subject-rights-privacy-eval-gate",
+      "specMD": "specs/010-gdpr-data-subject-rights-privacy-eval-gate/spec.md",
+      "tasksMD": "specs/010-gdpr-data-subject-rights-privacy-eval-gate/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
+    },
+    {
+      "id": "011-model-tier-routing-token-budgets-and-cost-latency-eval-gate",
+      "specMD": "specs/011-model-tier-routing-token-budgets-and-cost-latency-eval-gate/spec.md",
+      "tasksMD": "specs/011-model-tier-routing-token-budgets-and-cost-latency-eval-gate/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
+    },
+    {
+      "id": "012-full-loop-end-to-end-wiring-resume-and-dod-hardening",
+      "specMD": "specs/012-full-loop-end-to-end-wiring-resume-and-dod-hardening/spec.md",
+      "tasksMD": "specs/012-full-loop-end-to-end-wiring-resume-and-dod-hardening/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
+    }
+  ],
+  "taskCoverage": [
+    {
+      "taskId": "T1",
+      "specId": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
+      "citedInLog": true,
+      "logFiles": [
+        "pass1.log"
+      ],
+      "sourceCites": 3
+    },
+    {
+      "taskId": "T2",
+      "specId": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
+      "citedInLog": true,
+      "logFiles": [
+        "pass1.log"
+      ],
+      "sourceCites": 4
+    },
+    {
+      "taskId": "T3",
+      "specId": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
+      "citedInLog": true,
+      "logFiles": [
+        "pass1.log"
+      ],
+      "sourceCites": 4
+    },
+    {
+      "taskId": "T4",
+      "specId": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
+      "citedInLog": true,
+      "logFiles": [
+        "pass1.log"
+      ],
+      "sourceCites": 4
+    },
+    {
+      "taskId": "T5",
+      "specId": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
+      "citedInLog": true,
+      "logFiles": [
+        "pass1.log"
+      ],
+      "sourceCites": 3
+    },
+    {
+      "taskId": "T6",
+      "specId": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
+      "citedInLog": true,
+      "logFiles": [
+        "pass1.log"
+      ],
+      "sourceCites": 4
+    }
+  ],
+  "unimplemented": null,
+  "unreached": null,
+  "orphaned": null,
+  "untraced": null,
+  "constitutionIndex": null,
+  "uncitedPrinciples": null,
+  "sourceFilesScanned": 20,
+  "findings": [
+    {
+      "id": "F001",
+      "severity": "med",
+      "axis": "spec-provenance",
+      "summary": "12 spec(s) are not cleanly committed: 001-release-run-skeleton-trigger-run-lifecycle-dashboard, 002-evidence-collection-with-redact-before-persist-git-diff, 003-pr-issue-docs-collection-deterministic-code-signal-extractors, 004-feature-clustering-scoring-gate-1-approval, 005-content-generation-blog-changelog-from-approved-features, 006-claim-extraction-evidence-linking-checks-gate-2, 007-expand-artifact-set-sales-one-pager-social-demo-script-audio-digest, 008-demo-media-validated-click-path-playwright-ffmpeg-elevenlabs-s3, 009-skill-learning-ledger-gate-3-repo-skill-md-replacement, 010-gdpr-data-subject-rights-privacy-eval-gate, 011-model-tier-routing-token-budgets-and-cost-latency-eval-gate, 012-full-loop-end-to-end-wiring-resume-and-dod-hardening",
+      "recommendation": "Commit the spec.md(s) so downstream provenance carriers land as repo-versioned (anti-pattern #3)."
+    }
+  ]
+}

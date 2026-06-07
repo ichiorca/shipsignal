@@ -1,0 +1,65 @@
+/* T6 (spec 001) — minimal dashboard styling.
+   P6 (WCAG 2.2 AA): a visible focus indicator on every interactive element and an
+   on-focus skip link. Status colour is a supplement to the text label, never the
+   sole carrier of meaning. */
+
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  line-height: 1.5;
+}
+
+header {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid;
+}
+
+main {
+  padding: 1rem;
+}
+
+/* Keyboard users get a clear, high-contrast focus ring everywhere. */
+:focus-visible {
+  outline: 3px solid;
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: 0;
+}
+.skip-link:focus {
+  left: 0;
+  padding: 0.5rem 1rem;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+caption {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 0.5rem;
+}
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid;
+}
+
+/* Colour is an enhancement; the text label in the cell carries the status. */
+td[data-status='completed'] span {
+  font-weight: 600;
+}
+td[data-status='failed'] span {
+  font-weight: 600;
+  text-decoration: underline;
+}

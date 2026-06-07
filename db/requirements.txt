@@ -1,0 +1,6 @@
+# T2 (spec 001) — deps for running Alembic migrations (CI migration check + prod
+# deploy step). Pinned per dependency-policy. Kept separate from the worker runtime so
+# the migration job installs only what it needs.
+alembic==1.14.0
+SQLAlchemy==2.0.36
+psycopg[binary]==3.2.3
