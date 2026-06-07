@@ -20,8 +20,11 @@ harness: schema.#Harness & {
 
 	costCap: {
 		autonomous: {
-			maxUsd:      10.0
-			onExhausted: "terminate"
+			// The USD figure is an ESTIMATE (depends on the dev's plan/subscription),
+			// so it warns rather than terminates — it must never kill a long
+			// autonomous build on a fixed-price plan. Raise/lower as a soft signal.
+			maxUsd:      100.0
+			onExhausted: "warn"
 		}
 	}
 
