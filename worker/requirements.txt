@@ -8,3 +8,9 @@ pydantic==2.10.4
 # boto3 backs the Bedrock Converse model client (spec 004) and the S3 evidence sink
 # (spec 002). Only the runtime adapters import it; the unit gate does not install it.
 boto3==1.35.90
+# playwright drives the demo-media capture (spec 008, T3). Lazy-imported inside
+# PlaywrightDemoCapturer.capture so module load never requires the browser dep; the unit
+# gate uses the in-memory capturer instead. ElevenLabs TTS (T4) and ffmpeg (T5) need no
+# Python dep — narration goes over the v1 REST API via urllib (stdlib), and ffmpeg is the
+# system binary invoked through subprocess on the Actions runner.
+playwright==1.49.1

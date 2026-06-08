@@ -1,0 +1,57 @@
+"""T5 (spec 008) — runtime S3 adapter for storing assembled demo media.
+
+P4 (Storage) + s3-rules: the assembled binary (video/audio) goes to a PRIVATE bucket with
+server-side encryption, under a sanitized, run-scoped key; only the ``s3://`` URI is returned
+(persisted in Aurora). The UI reaches the object solely through a server-minted, short-expiry,
+GET-scoped presigned URL (the Next.js layer) — never a public object. Imported only by
+``__main__`` at runtime (needs boto3), so the unit gate never imports it.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from release_worker.media_models import AssembledMedia
+
+# release_run_id / media_id are uuid4 hex or canonical UUIDs we mint — never attacker-
+# controlled — but we still validate before composing an S3 key so a future caller can't
+# smuggle a path-traversal segment (s3-rules: sanitize object keys).
+_SAFE_KEY_SEGMENT = re.compile(r"\A[0-9a-fA-F-]{8,36}\Z")
+
+# MIME → object extension for the stored media key.
+_EXTENSIONS = {
+    "video/mp4": "mp4",
+    "audio/mpeg": "mp3",
+    "audio/mp4": "m4a",
+}
+
+
+def _safe_segment(value: str, label: str) -> str:
+    if not _SAFE_KEY_SEGMENT.fullmatch(value):
+        raise ValueError(f"unsafe {label} for S3 key")
+    return value
+
+
+class S3MediaStore:
+    """Upload assembled media to a private, encrypted, run-scoped S3 key (PRD §5.4)."""
+
+    def __init__(self, s3_client: object, bucket: str) -> None:
+        self._s3 = s3_client
+        self._bucket = bucket
+
+    def store(self, release_run_id: str, media_id: str, media: AssembledMedia) -> str:
+        run = _safe_segment(release_run_id, "release_run_id")
+        mid = _safe_segment(media_id, "media_id")
+        ext = _EXTENSIONS.get(media.content_type, "bin")
+        key = f"media/{run}/{mid}.{ext}"
+        body = Path(media.local_path).read_bytes()
+        # mypy can't see boto3's dynamic client surface; call via the bound method.
+        self._s3.put_object(  # type: ignore[attr-defined]
+            Bucket=self._bucket,
+            Key=key,
+            Body=body,
+            ContentType=media.content_type,
+            ServerSideEncryption="AES256",
+        )
+        return f"s3://{self._bucket}/{key}"

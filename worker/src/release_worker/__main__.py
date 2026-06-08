@@ -57,6 +57,7 @@ from release_worker.aurora_features import (
     AuroraFeatureSink,
     AuroraRedactedEvidenceReader,
 )
+from release_worker.aurora_media import AuroraDemoScriptReader, AuroraMediaAssetSink
 from release_worker.aurora_repository import (
     AuroraReleaseRunRepository,
     connect_from_env,
@@ -64,12 +65,18 @@ from release_worker.aurora_repository import (
 from release_worker.bedrock_client import BedrockModelClient
 from release_worker.content_graph import build_content_generation_graph
 from release_worker.content_state import ContentRunState
+from release_worker.elevenlabs_client import ElevenLabsSynthesizer
 from release_worker.feature_models import GateDecision
+from release_worker.ffmpeg_assembler import FfmpegVideoAssembler
 from release_worker.github_diff_source import GitHubDiffSource
 from release_worker.github_pr_source import GitHubPullRequestSource
 from release_worker.graph import build_release_intelligence_graph
 from release_worker.guardrails_client import BedrockGuardrailScanner
+from release_worker.media_graph import build_media_generation_graph
+from release_worker.media_state import MediaRunState
+from release_worker.playwright_capture import PlaywrightDemoCapturer
 from release_worker.repo_skill_source import FilesystemSkillSource
+from release_worker.s3_media_store import S3MediaStore
 from release_worker.state import ReleaseRunState
 
 logger = logging.getLogger("release_worker")
@@ -105,7 +112,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--graph",
-        choices=["release_intelligence", "content_generation"],
+        choices=["release_intelligence", "content_generation", "media_generation"],
         default="release_intelligence",
         help="Which graph to run for this release run (default: release_intelligence).",
     )
@@ -176,6 +183,48 @@ def _run_content_generation(
     return 0
 
 
+def _run_media_generation(
+    conn: psycopg.Connection,
+    release_run_id: str,
+    thread_id: str,
+) -> int:
+    """Run media_generation_graph for one run (spec 008, PRD §5.4).
+
+    load approved demo_script → generate click-path → STRICT-validate it → Playwright capture
+    (synthetic fixture data) → ElevenLabs narration (content-hash idempotent, stubbed in CI) →
+    ffmpeg assemble (only after audio materialized) → store in S3 (private, sanitized key) →
+    persist the media_assets row. There is no human gate in this graph — its demo_script input
+    is already Gate#2-approved — so it runs straight through. The run fails closed if no
+    demo_script is approved (constitution §5). All capture/narration/assembly runs on the
+    Actions runner (constitution §1), never the Vercel app.
+
+    The narration voice/model/output-format are read from env as CONFIG (elevenlabs-rules), not
+    hardcoded. The media id is minted per run (P1: we record provenance, LangGraph owns state).
+    """
+    media_id = uuid4().hex
+    graph = build_media_generation_graph(
+        AuroraDemoScriptReader(conn),
+        BedrockModelClient.from_env(),
+        PlaywrightDemoCapturer.from_env(),
+        ElevenLabsSynthesizer.from_env(),
+        FfmpegVideoAssembler.from_env(),
+        S3MediaStore(s3_client_from_env(), _require_env("MEDIA_BUCKET")),
+        AuroraMediaAssetSink(conn),
+    )
+    config = {"configurable": {"thread_id": thread_id}}
+    initial = MediaRunState(
+        release_run_id=release_run_id,
+        thread_id=thread_id,
+        media_id=media_id,
+        voice_id=_require_env("ELEVENLABS_VOICE_ID"),
+        model_id=os.environ.get("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2"),
+        output_format=os.environ.get("ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_128"),
+    )
+    graph.invoke(initial, config)
+    logger.info("media run %s completed (thread %s)", release_run_id, thread_id)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     args = _parse_args(sys.argv[1:] if argv is None else argv)
@@ -200,6 +249,12 @@ def main(argv: list[str] | None = None) -> int:
                 dashboard_base_url,
                 args.resume_decision,
             )
+
+        if args.graph == "media_generation":
+            # Spec 008 slice: approved demo_script → validated click-path → Playwright capture
+            # → ElevenLabs narration → ffmpeg → S3 → media_assets. No human gate (the script is
+            # already Gate#2-approved); runs straight through on the Actions runner.
+            return _run_media_generation(conn, release_run_id, thread_id)
 
         graph = build_release_intelligence_graph(
             repository,

@@ -1,0 +1,133 @@
+// T6 (spec 008) — demo-media preview (PRD §5.4 / §13.1 media review). P6 (Quality bars / WCAG
+// 2.2 AA): each asset is a headed <section> with a native, keyboard-operable player —
+// <video controls> for demo video, <audio controls> for the audio digest — sourced from the
+// short-expiry presigned-URL route (never a raw S3 URL). The player carries an accessible name
+// (aria-label). The narration of this media is the Gate#2-approved demo_script it derives from,
+// so we link to that source artifact as the media's text alternative/transcript (WCAG 1.2.x)
+// rather than fabricating a captions endpoint. The provenance (source artifact, click-path hash,
+// narration key, voice/model) is exposed as a description list so a reviewer can trace the
+// rendered media to its approved source. constitution §4/§5: the component is typed against
+// MediaAsset (key + provenance only) — no raw evidence, no S3 credentials, no s3_uri reaches the
+// client; the <source> points at the server-side playback route which 302s to the signed URL.
+//
+// Authored with React.createElement (not JSX) so it renders under the dependency-free
+// `node --test` a11y harness, mirroring the other components. No client state is needed (the
+// native controls own playback), so this is a plain Server-Component-safe presentational unit.
+
+import { createElement } from 'react';
+import type { ReactElement } from 'react';
+import type { MediaAsset } from '@/app/lib/db/mediaAssets.ts';
+
+export interface MediaPreviewProps {
+  readonly assets: readonly MediaAsset[];
+}
+
+/** Human label per media type; an unknown type falls back to its raw id (visible anomaly). */
+const MEDIA_TYPE_LABELS: Readonly<Record<string, string>> = {
+  demo_video: 'Demo video',
+  release_audio_digest: 'Release audio digest',
+};
+
+function mediaTypeLabel(mediaType: string): string {
+  return MEDIA_TYPE_LABELS[mediaType] ?? mediaType;
+}
+
+/** The server-side playback route that 302s to a short-lived presigned URL (never the s3_uri). */
+function playbackSrc(assetId: string): string {
+  return `/api/media/${assetId}/playback`;
+}
+
+function provenanceList(asset: MediaAsset): ReactElement {
+  const entries = Object.entries(asset.provenance);
+  if (entries.length === 0) {
+    return createElement('p', null, 'No provenance recorded.');
+  }
+  return createElement(
+    'dl',
+    { 'data-provenance-for': asset.id },
+    ...entries.flatMap(([key, value]) => [
+      createElement('dt', { key: `${key}-t` }, key),
+      createElement('dd', { key: `${key}-d` }, value),
+    ]),
+  );
+}
+
+/** The native, keyboard-operable player for one asset. Audio digests get <audio>; everything
+ *  else gets <video>. Both carry an accessible name; the text alternative/transcript is the
+ *  linked source demo_script (rendered by transcriptLink), not a fabricated captions file. */
+function player(asset: MediaAsset): ReactElement {
+  const accessibleName = `${mediaTypeLabel(asset.media_type)} player`;
+  const src = playbackSrc(asset.id);
+  const isAudio = asset.media_type === 'release_audio_digest';
+  if (isAudio) {
+    return createElement(
+      'audio',
+      { controls: true, preload: 'none', 'aria-label': accessibleName, 'data-media-id': asset.id },
+      createElement('source', { src, type: asset.content_type }),
+      'Your browser does not support the audio element.',
+    );
+  }
+  return createElement(
+    'video',
+    {
+      controls: true,
+      preload: 'none',
+      'aria-label': accessibleName,
+      'data-media-id': asset.id,
+      width: 640,
+    },
+    createElement('source', { src, type: asset.content_type }),
+    'Your browser does not support the video element.',
+  );
+}
+
+/** The media's text alternative: a link to the Gate#2-approved demo_script it was narrated from
+ *  (WCAG 1.2.x). Rendered only when the source artifact is known. */
+function transcriptLink(asset: MediaAsset): ReactElement | null {
+  if (asset.source_artifact_id === null) return null;
+  return createElement(
+    'p',
+    null,
+    createElement(
+      'a',
+      { href: `/releases/${asset.release_run_id}/artifacts/review#artifact-${asset.source_artifact_id}` },
+      'View the demo script this media was narrated from (transcript)',
+    ),
+  );
+}
+
+function durationText(asset: MediaAsset): string {
+  if (asset.duration_seconds === null) return 'Duration unknown';
+  return `Duration: ${Math.round(asset.duration_seconds)}s`;
+}
+
+function assetSection(asset: MediaAsset): ReactElement {
+  const headingId = `media-${asset.id}`;
+  return createElement(
+    'section',
+    {
+      key: asset.id,
+      'aria-labelledby': headingId,
+      'data-media-id': asset.id,
+      'data-media-status': asset.status,
+    },
+    createElement('h2', { id: headingId }, mediaTypeLabel(asset.media_type)),
+    createElement('p', { 'data-status': asset.status }, `Status: ${asset.status}`),
+    createElement('p', null, durationText(asset)),
+    player(asset),
+    transcriptLink(asset),
+    createElement('h3', null, 'Provenance'),
+    provenanceList(asset),
+  );
+}
+
+export function MediaPreview({ assets }: MediaPreviewProps): ReactElement {
+  if (assets.length === 0) {
+    return createElement(
+      'div',
+      null,
+      createElement('p', null, 'No demo media has been generated for this run yet.'),
+    );
+  }
+  return createElement('div', null, ...assets.map(assetSection));
+}

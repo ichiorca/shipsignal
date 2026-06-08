@@ -7,7 +7,7 @@ import (
 harness: schema.#Harness & {
 	schemaVersion: "1.0.0"
 	metadata: {
-		linkedSpec: "specs/007-expand-artifact-set-sales-one-pager-social-demo-script-audio-digest/spec.md"
+		linkedSpec: "specs/008-demo-media-validated-click-path-playwright-ffmpeg-elevenlabs-s3/spec.md"
 		name:        "shipsignal"
 		owner:       "me"
 		testCommand: "npm test && pytest -q"
