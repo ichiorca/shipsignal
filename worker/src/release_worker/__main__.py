@@ -82,6 +82,7 @@ from release_worker.github_pr_source import GitHubPullRequestSource
 from release_worker.graph import build_release_intelligence_graph
 from release_worker.guardrails_client import BedrockGuardrailScanner
 from release_worker.log_scrubbing import install_pii_scrubbing
+from release_worker.loop_orchestration import phase_from_graph, thread_id_for
 from release_worker.media_graph import build_media_generation_graph
 from release_worker.media_state import MediaRunState
 from release_worker.playwright_capture import PlaywrightDemoCapturer
@@ -92,6 +93,7 @@ from release_worker.s3_media_store import S3MediaStore
 from release_worker.skill_learning_graph import build_skill_learning_graph
 from release_worker.skill_learning_state import SkillLearningState
 from release_worker.state import ReleaseRunState
+from release_worker.transient_retry import with_retries
 
 logger = logging.getLogger("release_worker")
 
@@ -188,8 +190,13 @@ def _run_content_generation(
     config = {"configurable": {"thread_id": thread_id}}
 
     if resume_decision is not None:
-        # Continue the halted graph past Gate #2 with the recorded human decision.
-        graph.invoke(Command(resume=resume_decision), config)
+        # Continue the halted graph past Gate #2 with the recorded human decision. Wrapped
+        # in with_retries (spec 012 T2): a transient Bedrock/S3 blip during the post-gate
+        # nodes retries the SAME checkpointed thread (idempotent re-entry), never a fork.
+        with_retries(
+            lambda: graph.invoke(Command(resume=resume_decision), config),
+            label=f"content resume {release_run_id}",
+        )
         logger.info(
             "content run %s resumed at Gate #2 (%s)", release_run_id, resume_decision
         )
@@ -198,7 +205,9 @@ def _run_content_generation(
     initial = ContentRunState(
         release_run_id=release_run_id, thread_id=thread_id, repo=repo
     )
-    result = graph.invoke(initial, config)
+    result = with_retries(
+        lambda: graph.invoke(initial, config), label=f"content run {release_run_id}"
+    )
     if "__interrupt__" in result:
         logger.info(
             "content run %s halted at Gate #2 (thread %s); awaiting review",
@@ -250,7 +259,12 @@ def _run_media_generation(
         model_id=os.environ.get("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2"),
         output_format=os.environ.get("ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_128"),
     )
-    graph.invoke(initial, config)
+    # T2 (spec 012) — the media graph runs straight through (no gate) but touches Bedrock /
+    # ElevenLabs / S3; retry the whole invocation on a transient blip. The node-level
+    # idempotency (content-hash TTS dedupe, sanitized S3 key) makes re-entry safe.
+    with_retries(
+        lambda: graph.invoke(initial, config), label=f"media run {release_run_id}"
+    )
     logger.info("media run %s completed (thread %s)", release_run_id, thread_id)
     return 0
 
@@ -304,8 +318,14 @@ def _run_skill_learning(
 
     if resume_decision is not None:
         # Continue the halted graph past Gate #3 with the recorded human decision + reviewer.
-        graph.invoke(
-            Command(resume={"decision": resume_decision, "reviewer": reviewer}), config
+        # with_retries (spec 012 T2) makes the post-gate repo-write path resilient to a
+        # transient Bedrock/GitHub blip; the single SKILL.md write is idempotent on re-entry.
+        with_retries(
+            lambda: graph.invoke(
+                Command(resume={"decision": resume_decision, "reviewer": reviewer}),
+                config,
+            ),
+            label=f"skill resume {release_run_id}",
         )
         logger.info(
             "skill run %s resumed at Gate #3 (%s)", release_run_id, resume_decision
@@ -315,7 +335,9 @@ def _run_skill_learning(
     initial = SkillLearningState(
         release_run_id=release_run_id, thread_id=thread_id, repo=repo
     )
-    result = graph.invoke(initial, config)
+    result = with_retries(
+        lambda: graph.invoke(initial, config), label=f"skill run {release_run_id}"
+    )
     if "__interrupt__" in result:
         logger.info(
             "skill run %s halted at Gate #3 (thread %s); awaiting review",
@@ -342,9 +364,14 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(raw)
     release_run_id = args.release_run_id
 
-    # Resume reuses the caller-supplied thread (PRD §5.6 "resume the same thread_id");
-    # an initial run mints one (P1: LangGraph owns the thread; we record it on the run).
-    thread_id = args.thread_id or f"lg_{uuid4().hex}"
+    # T1/T2 (spec 012) — thread-id resolution that makes resume idempotent re-entry:
+    # a resume reuses the caller-supplied thread (PRD §5.6 "resume the same thread_id");
+    # otherwise we derive a DETERMINISTIC per-(run, phase) id from loop_orchestration, so
+    # re-dispatching a graph for a run lands on the SAME checkpointed thread rather than
+    # forking a fresh one. Distinct per phase so the four graphs never collide on one run.
+    thread_id = args.thread_id or thread_id_for(
+        release_run_id, phase_from_graph(args.graph)
+    )
     dashboard_base_url = os.environ.get("DASHBOARD_BASE_URL", "https://app.example.com")
 
     # One shared connection for the whole short-lived job (aurora-postgresql-rules).
@@ -401,14 +428,21 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.resume_decision is not None:
             # Continue the halted graph past Gate #1 with the recorded human decision.
-            graph.invoke(Command(resume=args.resume_decision), config)
+            # with_retries (spec 012 T2): a transient Bedrock/GitHub/S3 error retries the
+            # same checkpointed thread (idempotent re-entry), never a fork.
+            with_retries(
+                lambda: graph.invoke(Command(resume=args.resume_decision), config),
+                label=f"release resume {release_run_id}",
+            )
             logger.info(
                 "release run %s resumed (%s)", release_run_id, args.resume_decision
             )
             return 0
 
         initial = ReleaseRunState(release_run_id=release_run_id, thread_id=thread_id)
-        result = graph.invoke(initial, config)
+        result = with_retries(
+            lambda: graph.invoke(initial, config), label=f"release run {release_run_id}"
+        )
         if "__interrupt__" in result:
             logger.info(
                 "release run %s halted at Gate #1 (thread %s); awaiting review",

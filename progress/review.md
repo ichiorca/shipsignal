@@ -1,8 +1,8 @@
 # spec-kit review
 
-_Generated at 2026-06-08T14:53:20Z â€” projectRoot "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal" â€” 71 source file(s) scanned._
+_Generated at 2026-06-08T16:05:20Z â€” projectRoot "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal" â€” 71 source file(s) scanned._
 
-## Specs (12)
+## Specs (18)
 
 | ID | tasks | provenance |
 |---|---:|---|
@@ -18,13 +18,22 @@ _Generated at 2026-06-08T14:53:20Z â€” projectRoot "C:\\Users\\Ranee Bajaj\
 | 010-gdpr-data-subject-rights-privacy-eval-gate | 5 | repo-versioned |
 | 011-model-tier-routing-token-budgets-and-cost-latency-eval-gate | 5 | repo-versioned |
 | 012-full-loop-end-to-end-wiring-resume-and-dod-hardening | 5 | repo-versioned |
+| 013-product-evaluation-layer-metrics-judge-gold-set | 6 | repo-unversioned |
+| 014-demo-media-trigger-broken-step-surfacing-and-schema-fix | 5 | repo-unversioned |
+| 015-release-status-model-read-apis-and-skill-admin | 5 | repo-unversioned |
+| 016-audit-trail-hashing-and-redaction-hardening | 5 | repo-unversioned |
+| 017-durable-resume-checkpointer-and-pgvector-retrieval | 4 | repo-unversioned |
+| 018-skills-inventory-reconciliation-and-pr-promotion | 4 | repo-unversioned |
 
 ## Constitution citations (0 principle(s))
 
 | Principle | Citations |
 |---|---:|
 
-## Findings (0)
+## Findings (1)
 
-_None â€” everything resolves._
+### F001 â€” 6 spec(s) are not cleanly committed: 013-product-evaluation-layer-metrics-judge-gold-set, 014-demo-media-trigger-broken-step-surfacing-and-schema-fix, 015-release-status-model-read-apis-and-skill-admin, 016-audit-trail-hashing-and-redaction-hardening, 017-durable-resume-checkpointer-and-pgvector-retrieval, 018-skills-inventory-reconciliation-and-pr-promotion  `[med]`
+
+- **Axis**: spec-provenance
+- **Recommendation**: Commit the spec.md(s) so downstream provenance carriers land as repo-versioned (anti-pattern #3).
 

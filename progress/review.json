@@ -1,6 +1,6 @@
 {
   "projectRoot": "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal",
-  "generatedAt": "2026-06-08T14:53:20Z",
+  "generatedAt": "2026-06-08T16:05:20Z",
   "specs": [
     {
       "id": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
@@ -85,6 +85,48 @@
       "tasksMD": "specs/012-full-loop-end-to-end-wiring-resume-and-dod-hardening/tasks.md",
       "provenanceClass": "repo-versioned",
       "taskCount": 5
+    },
+    {
+      "id": "013-product-evaluation-layer-metrics-judge-gold-set",
+      "specMD": "specs/013-product-evaluation-layer-metrics-judge-gold-set/spec.md",
+      "tasksMD": "specs/013-product-evaluation-layer-metrics-judge-gold-set/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 6
+    },
+    {
+      "id": "014-demo-media-trigger-broken-step-surfacing-and-schema-fix",
+      "specMD": "specs/014-demo-media-trigger-broken-step-surfacing-and-schema-fix/spec.md",
+      "tasksMD": "specs/014-demo-media-trigger-broken-step-surfacing-and-schema-fix/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
+    },
+    {
+      "id": "015-release-status-model-read-apis-and-skill-admin",
+      "specMD": "specs/015-release-status-model-read-apis-and-skill-admin/spec.md",
+      "tasksMD": "specs/015-release-status-model-read-apis-and-skill-admin/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
+    },
+    {
+      "id": "016-audit-trail-hashing-and-redaction-hardening",
+      "specMD": "specs/016-audit-trail-hashing-and-redaction-hardening/spec.md",
+      "tasksMD": "specs/016-audit-trail-hashing-and-redaction-hardening/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
+    },
+    {
+      "id": "017-durable-resume-checkpointer-and-pgvector-retrieval",
+      "specMD": "specs/017-durable-resume-checkpointer-and-pgvector-retrieval/spec.md",
+      "tasksMD": "specs/017-durable-resume-checkpointer-and-pgvector-retrieval/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 4
+    },
+    {
+      "id": "018-skills-inventory-reconciliation-and-pr-promotion",
+      "specMD": "specs/018-skills-inventory-reconciliation-and-pr-promotion/spec.md",
+      "tasksMD": "specs/018-skills-inventory-reconciliation-and-pr-promotion/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 4
     }
   ],
   "taskCoverage": [
@@ -96,6 +138,7 @@
         "pass1.log",
         "pass10.log",
         "pass11.log",
+        "pass12.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -115,6 +158,7 @@
         "pass1.log",
         "pass10.log",
         "pass11.log",
+        "pass12.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -134,6 +178,7 @@
         "pass1.log",
         "pass10.log",
         "pass11.log",
+        "pass12.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -153,6 +198,7 @@
         "pass1.log",
         "pass10.log",
         "pass11.log",
+        "pass12.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -172,6 +218,7 @@
         "pass1.log",
         "pass10.log",
         "pass11.log",
+        "pass12.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -202,5 +249,13 @@
   "constitutionIndex": null,
   "uncitedPrinciples": null,
   "sourceFilesScanned": 71,
-  "findings": null
+  "findings": [
+    {
+      "id": "F001",
+      "severity": "med",
+      "axis": "spec-provenance",
+      "summary": "6 spec(s) are not cleanly committed: 013-product-evaluation-layer-metrics-judge-gold-set, 014-demo-media-trigger-broken-step-surfacing-and-schema-fix, 015-release-status-model-read-apis-and-skill-admin, 016-audit-trail-hashing-and-redaction-hardening, 017-durable-resume-checkpointer-and-pgvector-retrieval, 018-skills-inventory-reconciliation-and-pr-promotion",
+      "recommendation": "Commit the spec.md(s) so downstream provenance carriers land as repo-versioned (anti-pattern #3)."
+    }
+  ]
 }

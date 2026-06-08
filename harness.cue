@@ -7,10 +7,10 @@ import (
 harness: schema.#Harness & {
 	schemaVersion: "1.0.0"
 	metadata: {
-		linkedSpec: "specs/011-model-tier-routing-token-budgets-and-cost-latency-eval-gate/spec.md"
+		linkedSpec: "specs/012-full-loop-end-to-end-wiring-resume-and-dod-hardening/spec.md"
 		name:        "shipsignal"
 		owner:       "me"
-		testCommand: "npm test && pytest -q"
+		testCommand: "npm test && python -m pytest -q"
 
 		// completeness — input locations for `harness spec-kit completeness`.
 		// Declared here (not just as CLI flags) so the native Stop hook's

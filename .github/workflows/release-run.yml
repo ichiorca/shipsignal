@@ -1,11 +1,19 @@
-# T5 (spec 001) — the long-running release job on the GitHub Actions runner.
-# P1 (Substrate): the heavy LangGraph work runs HERE, never in the Vercel app. The job
-# boots release_intelligence_graph's single pass-through node, which flips the run
-# running -> completed and writes langgraph_thread_id back to Aurora.
+# T5 (spec 001) / T1,T4 (spec 012) — the long-running release-loop job on the GitHub
+# Actions runner. P1 (Substrate): the heavy LangGraph work runs HERE, never in the Vercel
+# app. One dispatch advances ONE phase of the loop for a run:
+#
+#   graph=release_intelligence → collect/redact/persist → signals → features → Gate #1
+#   graph=content_generation   → drafts → claims → checks → Gate #2
+#   graph=media_generation     → click-path → Playwright → ElevenLabs → ffmpeg → S3 (no gate)
+#   graph=skill_learning       → learning signals → candidate → Gate #3 → repo SKILL.md
+#
+# Each phase resumes on the SAME per-(run, phase) thread the worker derives
+# (loop_orchestration.thread_id_for), so a `--resume-decision` dispatch continues the
+# halted graph rather than forking it (PRD §5.6).
 #
 # Hardened runner (github-rules): least-privilege token (id-token for OIDC + read-only
 # contents only), pinned actions, no long-lived AWS keys — credentials come from an
-# OIDC-assumed role. The DB DSN is injected from a secret, never hardcoded.
+# OIDC-assumed role. Every secret is injected from the secret/var store, never hardcoded.
 
 name: release-run
 
@@ -16,6 +24,20 @@ on:
         description: 'UUID of the pre-inserted release_runs row'
         required: true
         type: string
+      graph:
+        # T1 (spec 012) — which loop phase to advance. Defaults to the first phase so an
+        # initial dispatch behaves exactly as before; the dashboard's resume routes pass
+        # content_generation (Gate #2) / skill_learning (Gate #3). Declared here so the
+        # dispatch from app/lib/resumeDispatch.ts (which sends `graph`) is accepted.
+        description: 'Loop phase / graph to run'
+        required: false
+        default: 'release_intelligence'
+        type: choice
+        options:
+          - release_intelligence
+          - content_generation
+          - media_generation
+          - skill_learning
       repo:
         description: 'owner/repo the run targets'
         required: false
@@ -29,11 +51,18 @@ on:
         required: false
         type: string
       resume_decision:
-        description: 'Gate #1 decision to resume a halted run (approved|rejected|edited)'
+        description: 'Gate decision to resume a halted run (approved|rejected|edited)'
         required: false
         type: string
       thread_id:
         description: 'LangGraph thread to resume (PRD §5.6 — same thread_id)'
+        required: false
+        type: string
+      reviewer:
+        # T1 (spec 012) — forwarded to a Gate #3 (skill_learning) resume so the promotion/
+        # rejection record names the human who decided (§10.5 reviewed_by). Declared here so
+        # the resume dispatch (which sends `reviewer`) is accepted; ignored by other graphs.
+        description: 'Reviewer who resolved the gate (Gate #3 promotion/rejection record)'
         required: false
         type: string
 
@@ -42,14 +71,14 @@ permissions:
   id-token: write
   contents: read
 
-# One in-flight job per release run; a re-dispatch supersedes rather than racing.
+# One in-flight job per (release run, phase); a re-dispatch supersedes rather than racing.
 concurrency:
-  group: release-run-${{ inputs.release_run_id }}
+  group: release-run-${{ inputs.release_run_id }}-${{ inputs.graph }}
   cancel-in-progress: false
 
 jobs:
   run:
-    name: Advance release run
+    name: Advance release loop
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,30 +98,44 @@ jobs:
           role-to-assume: ${{ secrets.AWS_RELEASE_RUN_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Run release_intelligence_graph
+      - name: Run loop phase
         env:
-          # DSN is a secret (Aurora endpoint via RDS Proxy). Never echoed; the worker
-          # reads it from env and enforces TLS.
+          # --- Aurora (all four graphs persist run state/provenance) --------------------
+          # DSN is a secret (Aurora endpoint via RDS Proxy). Never echoed; the worker reads
+          # it from env and enforces TLS (PGSSLMODE=require+).
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          # Read-only token the evidence collector uses for the compare API
-          # (github-rules: server-side only, never argv/logs). The built-in job token
-          # is scoped to this repo by the `contents: read` permission above.
+          PGSSLMODE: ${{ vars.PGSSLMODE }}
+          # --- GitHub (evidence collector compare API; server-side only) ----------------
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Private S3 bucket for redacted evidence blobs (a name, not a secret; the
-          # worker writes via the OIDC-assumed role, never long-lived keys).
-          EVIDENCE_BUCKET: ${{ vars.EVIDENCE_BUCKET }}
-          # Bedrock Converse model + the PUBLISHED Guardrail the clustering node attaches
-          # (constitution §5: a Guardrail is mandatory). Model id is config, not a secret;
-          # the guardrail id/version come from repo vars.
+          # github.sha pins the commit a skill candidate is drafted against (spec 009 §10.5).
+          GITHUB_SHA: ${{ github.sha }}
+          # --- Bedrock Converse + the mandatory PUBLISHED Guardrail (constitution §5) ----
+          AWS_REGION: ${{ secrets.AWS_REGION }}
           BEDROCK_MODEL_ID: ${{ vars.BEDROCK_MODEL_ID }}
           BEDROCK_GUARDRAIL_ID: ${{ vars.BEDROCK_GUARDRAIL_ID }}
           BEDROCK_GUARDRAIL_VERSION: ${{ vars.BEDROCK_GUARDRAIL_VERSION }}
-          # Used to build the Gate #1 interrupt payload's dashboard_url (PRD §5.6).
+          # --- S3 buckets (names, not secrets; written via the OIDC-assumed role) -------
+          EVIDENCE_BUCKET: ${{ vars.EVIDENCE_BUCKET }}
+          MEDIA_BUCKET: ${{ vars.MEDIA_BUCKET }}
+          # --- ElevenLabs narration (media_generation only) -----------------------------
+          # The xi-api-key is server-side only — never a NEXT_PUBLIC_* var (elevenlabs-rules).
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ vars.ELEVENLABS_VOICE_ID }}
+          ELEVENLABS_MODEL_ID: ${{ vars.ELEVENLABS_MODEL_ID }}
+          ELEVENLABS_OUTPUT_FORMAT: ${{ vars.ELEVENLABS_OUTPUT_FORMAT }}
+          # Synthetic demo fixture the Playwright click-path runs against (no real PII).
+          DEMO_FIXTURE_BASE_URL: ${{ vars.DEMO_FIXTURE_BASE_URL }}
+          # --- Dashboard URL embedded in each gate's interrupt payload (PRD §5.6) -------
           DASHBOARD_BASE_URL: ${{ vars.DASHBOARD_BASE_URL }}
           PYTHONPATH: worker/src
-        # The resume args are empty on an initial run (the worker halts at Gate #1) and
-        # carry the recorded decision + thread on a resume dispatch (spec 004 T6).
+        # The resume args are empty on an initial run (the worker halts at the phase's gate)
+        # and carry the recorded decision + thread + reviewer on a resume dispatch. --graph
+        # selects the loop phase (default release_intelligence). The worker derives a
+        # deterministic per-(run, phase) thread when --thread-id is omitted (spec 012 T1/T2).
         run: |
           python -m release_worker \
             --release-run-id "${{ inputs.release_run_id }}" \
-            ${{ inputs.resume_decision && format('--resume-decision {0} --thread-id {1}', inputs.resume_decision, inputs.thread_id) || '' }}
+            --graph "${{ inputs.graph }}" \
+            ${{ inputs.resume_decision && format('--resume-decision {0}', inputs.resume_decision) || '' }} \
+            ${{ inputs.thread_id && format('--thread-id {0}', inputs.thread_id) || '' }} \
+            ${{ inputs.reviewer && format('--reviewer {0}', inputs.reviewer) || '' }}
