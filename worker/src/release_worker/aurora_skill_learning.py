@@ -332,6 +332,9 @@ class AuroraSkillCandidateSink:
     def mark_promoted(self, record: PromotionRecord) -> None:
         # Records the promotion provenance and flips status to 'promoted'. The old/new content
         # hashes are preserved on the row even though the repo file has been replaced (AC2).
+        # T3 (spec 018) — also record HOW the skill was promoted: promotion_mode ('direct'|'pr')
+        # and the opened PR url for the §15.3 PR mode (null for direct), part of the durable
+        # provenance (migration 0017).
         with self._conn.cursor() as cur:
             cur.execute(
                 """
@@ -341,7 +344,9 @@ class AuroraSkillCandidateSink:
                        old_content_hash = %s,
                        new_content_hash = %s,
                        reviewed_by = %s,
-                       reviewed_at = now()
+                       reviewed_at = now(),
+                       promotion_mode = %s,
+                       promotion_pr_url = %s
                  WHERE id = %s
                 """,
                 (
@@ -349,6 +354,8 @@ class AuroraSkillCandidateSink:
                     record.old_content_hash,
                     record.new_content_hash,
                     record.reviewer,
+                    record.promotion_mode.value,
+                    record.pr_url,
                     record.candidate_id,
                 ),
             )

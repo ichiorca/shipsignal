@@ -95,8 +95,11 @@ from release_worker.media_graph import build_media_generation_graph
 from release_worker.media_state import MediaRunState
 from release_worker.playwright_capture import PlaywrightDemoCapturer
 from release_worker.privacy import main as privacy_main
+from release_worker.promotion_config import (
+    build_repo_skill_writer,
+    parse_promotion_mode,
+)
 from release_worker.repo_skill_source import FilesystemSkillSource
-from release_worker.repo_skill_writer import FilesystemRepoSkillWriter
 from release_worker.s3_media_store import S3MediaStore
 from release_worker.skill_learning_graph import build_skill_learning_graph
 from release_worker.skill_learning_state import SkillLearningState
@@ -384,7 +387,13 @@ def _run_skill_learning(
         ),
         AuroraSuppressionStore(conn),
         AuroraSkillCandidateSink(conn),
-        FilesystemRepoSkillWriter.from_env(),
+        # T4 (spec 018) — the repo writer is config-selected (PRD §9.4.4 / §15.3): the preferred
+        # PR mode (branch + PR a human merges) or the hackathon-fast direct write to the
+        # checked-out tree. Both reach the graph only on the approved Gate #3 branch, so neither
+        # relaxes a §9.4 invariant. Default is direct; SKILL_PROMOTION_MODE=pr opts into PR mode.
+        build_repo_skill_writer(
+            parse_promotion_mode(os.environ.get("SKILL_PROMOTION_MODE"))
+        ),
         # T4 (spec 016) — §18.2 layer-3: the proposed skill body is scanned through the SAME
         # published Bedrock Guardrail as artifacts before any repo SKILL.md is overwritten.
         BedrockGuardrailScanner.from_env(),

@@ -164,17 +164,37 @@ class SkillRevisionCandidate(BaseModel):
     status: str = "draft"
 
 
+class PromotionMode(StrEnum):
+    """How an approved skill candidate is promoted to the repo (T3/T4, spec 018; PRD §9.4.4/§15.3).
+
+    ``DIRECT`` — the hackathon-fast path: overwrite ``skills/<skill>/SKILL.md`` on the checked-out
+    branch (``FilesystemRepoSkillWriter``). ``PR`` — the preferred production path: create a branch,
+    replace the file, and open a pull request for the change (``GitHubPullRequestSkillWriter``).
+    Both honor §9.4 (explicit approval, same-path replacement, recorded provenance); they differ
+    only in HOW the replacement lands. Selectable via configuration (``parse_promotion_mode``).
+    """
+
+    DIRECT = "direct"
+    PR = "pr"
+
+
 class PromotionResult(BaseModel):
     """What a ``RepoSkillWriter`` returns after replacing a repo SKILL.md (the single repo write).
 
     The resulting ``commit_sha`` + the ``new_content_hash`` of the bytes written — recorded into
     the candidate row so the promotion is reproducible + tamper-evident (AC2).
+
+    T3 (spec 018) — ``promotion_mode`` records WHICH mode produced the result (direct vs PR), and
+    ``pr_url`` carries the opened pull request URL when the PR mode is used (``None`` for direct).
+    Both flow into the ``PromotionRecord`` so Aurora records how the skill was promoted (§15.3).
     """
 
     model_config = _StrictModel
 
     commit_sha: str = Field(min_length=1)
     new_content_hash: str = Field(min_length=1)
+    promotion_mode: PromotionMode = PromotionMode.DIRECT
+    pr_url: str | None = None
 
 
 class PromotionRecord(BaseModel):
@@ -182,6 +202,9 @@ class PromotionRecord(BaseModel):
 
     Preserved after the repo file is replaced (§9.4.5 / AC2): the commit sha + old/new content
     hashes + reviewer + the candidate that was promoted.
+
+    T3 (spec 018) — ``promotion_mode`` + ``pr_url`` record HOW the promotion landed (direct write
+    vs an opened PR) so the §15.3 promotion mode is part of the durable provenance.
     """
 
     model_config = _StrictModel
@@ -191,6 +214,8 @@ class PromotionRecord(BaseModel):
     old_content_hash: str = Field(min_length=1)
     new_content_hash: str = Field(min_length=1)
     reviewer: str | None = None
+    promotion_mode: PromotionMode = PromotionMode.DIRECT
+    pr_url: str | None = None
 
 
 class Gate3Payload(BaseModel):

@@ -23,6 +23,7 @@ from typing import Protocol, runtime_checkable
 from release_worker.skill_learning_models import (
     ActiveSkill,
     LearningSignal,
+    PromotionMode,
     PromotionRecord,
     PromotionResult,
     SkillRevisionCandidate,
@@ -224,13 +225,29 @@ class InMemorySkillCandidateSink:
 class InMemoryRepoSkillWriter:
     """In-process ``RepoSkillWriter``: records the (skill_path, file_content) it was asked to write
     (so a test can prove ONLY the approved path is written, and only on the approved branch) and
-    returns a deterministic promotion result. NEVER touches the working tree."""
+    returns a deterministic promotion result. NEVER touches the working tree.
 
-    def __init__(self, commit_sha: str = "deadbeefcafebabe") -> None:
+    ``promotion_mode`` + ``pr_url`` (spec 018) let a test stand in for either promotion mode: the
+    default is the direct write; a PR-mode test constructs it with ``PromotionMode.PR`` + a pr_url
+    to prove ``update_repo_skill_file`` carries that provenance onto the ``PromotionRecord``."""
+
+    def __init__(
+        self,
+        commit_sha: str = "deadbeefcafebabe",
+        promotion_mode: PromotionMode = PromotionMode.DIRECT,
+        pr_url: str | None = None,
+    ) -> None:
         self._commit_sha = commit_sha
+        self._promotion_mode = promotion_mode
+        self._pr_url = pr_url
         self.written: list[tuple[str, str]] = []
 
     def replace_skill_file(self, skill_path: str, file_content: str) -> PromotionResult:
         self.written.append((skill_path, file_content))
         new_hash = hashlib.sha256(file_content.encode("utf-8")).hexdigest()
-        return PromotionResult(commit_sha=self._commit_sha, new_content_hash=new_hash)
+        return PromotionResult(
+            commit_sha=self._commit_sha,
+            new_content_hash=new_hash,
+            promotion_mode=self._promotion_mode,
+            pr_url=self._pr_url,
+        )

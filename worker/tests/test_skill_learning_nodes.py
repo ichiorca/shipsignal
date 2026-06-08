@@ -29,6 +29,7 @@ from release_worker.skill_learning_models import (
     ActiveSkill,
     ImpactedSkill,
     MalformedSkillDraftError,
+    PromotionMode,
     RawReviewSignal,
     SkillGateResolution,
     SkillRevisionCandidate,
@@ -335,6 +336,52 @@ def test_approve_writes_only_the_skill_path_and_records_promotion() -> None:
     sink = InMemorySkillCandidateSink()
     mark_candidate_promoted(records, sink)
     assert sink.promotions == list(records)
+
+
+def test_approve_stamps_last_promoted_candidate_id_in_frontmatter() -> None:
+    # T2 (spec 018) — the promoted SKILL.md records WHICH candidate produced it (PRD §9.1).
+    candidate = _drafted()[0]
+    writer = InMemoryRepoSkillWriter(commit_sha="abc123sha")
+    resolution = SkillGateResolution(decision="approved", reviewer="carol")
+
+    update_repo_skill_file((candidate,), resolution, writer)
+
+    _, written_content = writer.written[0]
+    frontmatter, _ = parse_frontmatter(written_content)
+    # Stamped at promotion (only the promoted candidate is known then), not at draft time.
+    assert frontmatter["last_promoted_candidate_id"] == candidate.candidate_id
+    # The proposed frontmatter (e.g. the bumped version) is preserved alongside the stamp.
+    assert frontmatter["version"] == candidate.proposed_version
+
+
+def test_approve_via_pr_mode_records_pr_provenance() -> None:
+    # T3 (spec 018) — a PR-mode writer's promotion_mode + pr_url flow onto the PromotionRecord
+    # (PRD §15.3), so Aurora records HOW the skill was promoted.
+    candidate = _drafted()[0]
+    writer = InMemoryRepoSkillWriter(
+        commit_sha="prcommitsha",
+        promotion_mode=PromotionMode.PR,
+        pr_url="https://github.com/org/product/pull/7",
+    )
+    resolution = SkillGateResolution(decision="approved", reviewer="carol")
+
+    records = update_repo_skill_file((candidate,), resolution, writer)
+
+    assert records[0].promotion_mode is PromotionMode.PR
+    assert records[0].pr_url == "https://github.com/org/product/pull/7"
+    assert records[0].promoted_commit_sha == "prcommitsha"
+
+
+def test_approve_direct_mode_records_no_pr_url() -> None:
+    # The direct (hackathon-fast) write records mode='direct' and no PR url — the selectable fallback.
+    candidate = _drafted()[0]
+    writer = InMemoryRepoSkillWriter(commit_sha="abc123sha")
+    resolution = SkillGateResolution(decision="approved", reviewer="carol")
+
+    records = update_repo_skill_file((candidate,), resolution, writer)
+
+    assert records[0].promotion_mode is PromotionMode.DIRECT
+    assert records[0].pr_url is None
 
 
 def test_reject_records_rejection_and_opens_cooldown_but_writes_no_file() -> None:

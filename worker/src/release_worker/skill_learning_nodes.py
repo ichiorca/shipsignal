@@ -585,12 +585,21 @@ def update_repo_skill_file(
     and written at the SAME repo path (§9.4.3); the writer returns the resulting commit sha + the
     new content hash. Builds the ``PromotionRecord`` carrying the old + new content hashes (AC2 —
     preserved after replacement) and the reviewer who approved. Returns the records to persist.
+
+    T2 (spec 018) — the rendered file stamps ``last_promoted_candidate_id`` into its frontmatter
+    (PRD §9.1) so the canonical SKILL.md records WHICH candidate produced its current body. Stamped
+    here (at promotion), not at draft time, because the promoted candidate is only known once Gate
+    #3 approves; the stamped bytes are exactly what the writer hashes, so ``new_content_hash``
+    matches the file on disk (AC2). The writer's ``promotion_mode`` + ``pr_url`` are carried onto
+    the record so the audit trail records HOW the skill was promoted (PR vs direct, §15.3).
     """
     records: list[PromotionRecord] = []
     for candidate in candidates:
-        file_content = render_skill_file(
-            candidate.proposed_frontmatter, candidate.proposed_body
-        )
+        stamped_frontmatter: dict[str, str | bool] = {
+            **candidate.proposed_frontmatter,
+            "last_promoted_candidate_id": candidate.candidate_id,
+        }
+        file_content = render_skill_file(stamped_frontmatter, candidate.proposed_body)
         result = writer.replace_skill_file(candidate.skill_path, file_content)
         records.append(
             PromotionRecord(
@@ -599,6 +608,8 @@ def update_repo_skill_file(
                 old_content_hash=candidate.old_content_hash,
                 new_content_hash=result.new_content_hash,
                 reviewer=resolution.reviewer,
+                promotion_mode=result.promotion_mode,
+                pr_url=result.pr_url,
             )
         )
     return tuple(records)
