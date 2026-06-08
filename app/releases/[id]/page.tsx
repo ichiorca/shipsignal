@@ -35,6 +35,9 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
       <p>
         <a href={`/releases/${run.id}/review`}>Review feature manifest (Gate #1) →</a>
       </p>
+      <p>
+        <a href={`/releases/${run.id}/artifacts`}>View draft artifacts →</a>
+      </p>
       <dl>
         <dt>Compare range</dt>
         <dd>

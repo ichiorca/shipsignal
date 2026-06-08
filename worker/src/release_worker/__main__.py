@@ -35,8 +35,14 @@ import os
 import sys
 from uuid import uuid4
 
+import psycopg
 from langgraph.types import Command
 
+from release_worker.aurora_content import (
+    AuroraApprovedFeatureReader,
+    AuroraArtifactSink,
+    AuroraSkillSnapshotSink,
+)
 from release_worker.aurora_evidence import (
     AuroraBoundaryReader,
     S3AuroraEvidenceSink,
@@ -51,13 +57,18 @@ from release_worker.aurora_repository import (
     connect_from_env,
 )
 from release_worker.bedrock_client import BedrockModelClient
+from release_worker.content_graph import build_content_generation_graph
+from release_worker.content_state import ContentRunState
 from release_worker.feature_models import GateDecision
 from release_worker.github_diff_source import GitHubDiffSource
 from release_worker.github_pr_source import GitHubPullRequestSource
 from release_worker.graph import build_release_intelligence_graph
+from release_worker.repo_skill_source import FilesystemSkillSource
 from release_worker.state import ReleaseRunState
 
 logger = logging.getLogger("release_worker")
+
+_DEFAULT_MODEL_ID = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
 
 def _require_env(name: str) -> str:
@@ -86,7 +97,48 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="LangGraph thread to resume (required with --resume-decision).",
     )
+    parser.add_argument(
+        "--graph",
+        choices=["release_intelligence", "content_generation"],
+        default="release_intelligence",
+        help="Which graph to run for this release run (default: release_intelligence).",
+    )
     return parser.parse_args(argv)
+
+
+def _run_content_generation(
+    conn: psycopg.Connection,
+    release_run_id: str,
+    thread_id: str,
+) -> int:
+    """Run content_generation_graph for one run: load approved features → snapshot skills →
+    generate blog+changelog → persist drafts (spec 005, PRD §5.3).
+
+    The run's repo is read from ``release_runs`` so skill snapshots are scoped correctly
+    (skills are repo-level, §10.5). The graph fails closed if no features are approved
+    (constitution §5), so a premature trigger produces no artifacts.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT repo FROM release_runs WHERE id = %s", (release_run_id,))
+        row = cur.fetchone()
+    if row is None:
+        raise RuntimeError(f"release run {release_run_id} not found")
+    repo = row[0]
+
+    graph = build_content_generation_graph(
+        AuroraApprovedFeatureReader(conn),
+        FilesystemSkillSource.from_env(),
+        AuroraSkillSnapshotSink(conn),
+        BedrockModelClient.from_env(),
+        AuroraArtifactSink(conn),
+        model_id=os.environ.get("BEDROCK_MODEL_ID", _DEFAULT_MODEL_ID),
+    )
+    initial = ContentRunState(
+        release_run_id=release_run_id, thread_id=thread_id, repo=repo
+    )
+    graph.invoke(initial, {"configurable": {"thread_id": thread_id}})
+    logger.info("content generation for run %s persisted drafts", release_run_id)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -103,6 +155,11 @@ def main(argv: list[str] | None = None) -> int:
     conn = connect_from_env()
     repository = AuroraReleaseRunRepository(conn)
     try:
+        if args.graph == "content_generation":
+            # Spec 005 slice: generate blog/changelog drafts from approved features.
+            # No interrupt/gate yet (that is spec 006), so it runs straight through.
+            return _run_content_generation(conn, release_run_id, thread_id)
+
         graph = build_release_intelligence_graph(
             repository,
             AuroraBoundaryReader(conn),
