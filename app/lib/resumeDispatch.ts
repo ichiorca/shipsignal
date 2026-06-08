@@ -12,8 +12,17 @@ export interface ResumeDispatchArgs {
   readonly threadId: string;
   readonly decision: 'approved' | 'rejected' | 'edited';
   // Which graph to resume. Gate #1 resumes 'release_intelligence' (default); Gate #2 (spec
-  // 006) resumes 'content_generation' past the approve_artifacts interrupt.
-  readonly graph?: 'release_intelligence' | 'content_generation' | undefined;
+  // 006) resumes 'content_generation' past the approve_artifacts interrupt; Gate #3 (spec 009)
+  // resumes 'skill_learning' past the approve_skill_candidate interrupt.
+  readonly graph?:
+    | 'release_intelligence'
+    | 'content_generation'
+    | 'skill_learning'
+    | undefined;
+  // Reviewer who resolved the gate. Forwarded to the worker on a Gate #3 resume so the
+  // promotion/rejection record names the human who decided (§10.5 reviewed_by); ignored by the
+  // other graphs (their reviewer is captured in the approvals audit row).
+  readonly reviewer?: string | undefined;
 }
 
 /**
@@ -44,8 +53,12 @@ export async function dispatchResume(args: ResumeDispatchArgs): Promise<void> {
         release_run_id: args.releaseRunId,
         resume_decision: args.decision,
         thread_id: args.threadId,
-        // Default keeps Gate #1 behaviour; Gate #2 passes 'content_generation'.
+        // Default keeps Gate #1 behaviour; Gate #2 passes 'content_generation', Gate #3
+        // 'skill_learning'.
         graph: args.graph ?? 'release_intelligence',
+        // Forwarded so a Gate #3 promotion/rejection record names the reviewer; '' when absent
+        // (the other graphs ignore it). Never a secret — just the reviewer login/email.
+        reviewer: args.reviewer ?? '',
       },
     }),
   });

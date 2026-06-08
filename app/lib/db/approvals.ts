@@ -11,12 +11,16 @@ export type ApprovalDecision = 'approved' | 'rejected' | 'edited';
 
 /** What the gate is deciding on. Gate #1 uses 'feature' per-card and 'feature_manifest'
  *  for the run-level resume submission; Gate #2 (spec 006) uses 'artifact' per-artifact and
- *  'artifact_manifest' for the run-level resume. The table is gate-agnostic (§10.4). */
+ *  'artifact_manifest' for the run-level resume; Gate #3 (spec 009) uses 'skill_candidate'
+ *  per-candidate and 'skill_candidate_manifest' for the run-level skill-replacement resume.
+ *  The table is gate-agnostic (§10.4). */
 export type ApprovalTargetType =
   | 'feature'
   | 'feature_manifest'
   | 'artifact'
-  | 'artifact_manifest';
+  | 'artifact_manifest'
+  | 'skill_candidate'
+  | 'skill_candidate_manifest';
 
 export interface RecordApprovalArgs {
   readonly target_type: ApprovalTargetType;

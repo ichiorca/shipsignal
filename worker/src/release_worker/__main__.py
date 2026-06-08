@@ -33,6 +33,7 @@ import argparse
 import logging
 import os
 import sys
+from pathlib import Path
 from uuid import uuid4
 
 import psycopg
@@ -62,6 +63,13 @@ from release_worker.aurora_repository import (
     AuroraReleaseRunRepository,
     connect_from_env,
 )
+from release_worker.aurora_skill_learning import (
+    AuroraLearningSignalSink,
+    AuroraLearningSignalSource,
+    AuroraRepoActiveSkillReader,
+    AuroraSkillCandidateSink,
+    AuroraSuppressionStore,
+)
 from release_worker.bedrock_client import BedrockModelClient
 from release_worker.content_graph import build_content_generation_graph
 from release_worker.content_state import ContentRunState
@@ -76,7 +84,10 @@ from release_worker.media_graph import build_media_generation_graph
 from release_worker.media_state import MediaRunState
 from release_worker.playwright_capture import PlaywrightDemoCapturer
 from release_worker.repo_skill_source import FilesystemSkillSource
+from release_worker.repo_skill_writer import FilesystemRepoSkillWriter
 from release_worker.s3_media_store import S3MediaStore
+from release_worker.skill_learning_graph import build_skill_learning_graph
+from release_worker.skill_learning_state import SkillLearningState
 from release_worker.state import ReleaseRunState
 
 logger = logging.getLogger("release_worker")
@@ -111,8 +122,18 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="LangGraph thread to resume (required with --resume-decision).",
     )
     parser.add_argument(
+        "--reviewer",
+        default=None,
+        help="Reviewer who resolved a gate (recorded on a skill_learning Gate #3 resume).",
+    )
+    parser.add_argument(
         "--graph",
-        choices=["release_intelligence", "content_generation", "media_generation"],
+        choices=[
+            "release_intelligence",
+            "content_generation",
+            "media_generation",
+            "skill_learning",
+        ],
         default="release_intelligence",
         help="Which graph to run for this release run (default: release_intelligence).",
     )
@@ -225,6 +246,75 @@ def _run_media_generation(
     return 0
 
 
+def _run_skill_learning(
+    conn: psycopg.Connection,
+    release_run_id: str,
+    thread_id: str,
+    dashboard_base_url: str,
+    resume_decision: str | None,
+    reviewer: str | None,
+) -> int:
+    """Run skill_learning_graph for one run through Gate #3 (spec 009, PRD §5.5).
+
+    collect learning signals (reviewer edits / rejected claims / notes) → cluster edit + rejection
+    patterns → select impacted skills → draft a staged revision candidate per skill → persist as
+    status='draft' → HALT at the Gate #3 interrupt. The run's repo is read from ``release_runs`` so
+    candidates are scoped to the right repo (skills are repo-level, §10.5). NO repo SKILL.md is
+    written on this path (constitution §5 / AC1) — the file is replaced only on a Gate #3 *approve*
+    resume.
+
+    Two modes mirror the other graphs: an initial run halts at Gate #3; a ``--resume-decision``
+    continues the SAME ``thread_id`` past the interrupt (PRD §5.6). On *approved* the worker runs
+    ``update_repo_skill_file`` → ``mark_candidate_promoted`` (the single repo write + the AC2
+    promotion record); on *rejected* it records the rejection + a cooldown suppression. The
+    ``--reviewer`` is threaded into the resume so the promotion/rejection record names the human who
+    decided (§10.5 reviewed_by). Cross-process resume needs a durable checkpointer (the bundled
+    ``MemorySaver`` is process-local).
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT repo FROM release_runs WHERE id = %s", (release_run_id,))
+        row = cur.fetchone()
+    if row is None:
+        raise RuntimeError(f"release run {release_run_id} not found")
+    repo = row[0]
+
+    graph = build_skill_learning_graph(
+        AuroraLearningSignalSource(conn),
+        AuroraLearningSignalSink(conn),
+        AuroraRepoActiveSkillReader(conn, Path.cwd()),
+        BedrockModelClient.from_env(),
+        AuroraSuppressionStore(conn),
+        AuroraSkillCandidateSink(conn),
+        FilesystemRepoSkillWriter.from_env(),
+        dashboard_base_url=dashboard_base_url,
+    )
+    config = {"configurable": {"thread_id": thread_id}}
+
+    if resume_decision is not None:
+        # Continue the halted graph past Gate #3 with the recorded human decision + reviewer.
+        graph.invoke(
+            Command(resume={"decision": resume_decision, "reviewer": reviewer}), config
+        )
+        logger.info(
+            "skill run %s resumed at Gate #3 (%s)", release_run_id, resume_decision
+        )
+        return 0
+
+    initial = SkillLearningState(
+        release_run_id=release_run_id, thread_id=thread_id, repo=repo
+    )
+    result = graph.invoke(initial, config)
+    if "__interrupt__" in result:
+        logger.info(
+            "skill run %s halted at Gate #3 (thread %s); awaiting review",
+            release_run_id,
+            thread_id,
+        )
+    else:
+        logger.info("skill run %s completed (thread %s)", release_run_id, thread_id)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     args = _parse_args(sys.argv[1:] if argv is None else argv)
@@ -255,6 +345,19 @@ def main(argv: list[str] | None = None) -> int:
             # → ElevenLabs narration → ffmpeg → S3 → media_assets. No human gate (the script is
             # already Gate#2-approved); runs straight through on the Actions runner.
             return _run_media_generation(conn, release_run_id, thread_id)
+
+        if args.graph == "skill_learning":
+            # Spec 009 slice: mine learning signals → cluster → draft a staged skill candidate →
+            # Gate #3 interrupt. Initial run halts at Gate #3; --resume-decision continues the same
+            # thread (approve → repo SKILL.md replaced + promotion recorded; reject → suppression).
+            return _run_skill_learning(
+                conn,
+                release_run_id,
+                thread_id,
+                dashboard_base_url,
+                args.resume_decision,
+                args.reviewer,
+            )
 
         graph = build_release_intelligence_graph(
             repository,
