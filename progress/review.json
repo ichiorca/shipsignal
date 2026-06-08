@@ -1,6 +1,6 @@
 {
   "projectRoot": "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal",
-  "generatedAt": "2026-06-08T14:19:07Z",
+  "generatedAt": "2026-06-08T14:53:20Z",
   "specs": [
     {
       "id": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
@@ -95,6 +95,7 @@
       "logFiles": [
         "pass1.log",
         "pass10.log",
+        "pass11.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -113,6 +114,7 @@
       "logFiles": [
         "pass1.log",
         "pass10.log",
+        "pass11.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -131,6 +133,7 @@
       "logFiles": [
         "pass1.log",
         "pass10.log",
+        "pass11.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -149,6 +152,7 @@
       "logFiles": [
         "pass1.log",
         "pass10.log",
+        "pass11.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -167,6 +171,7 @@
       "logFiles": [
         "pass1.log",
         "pass10.log",
+        "pass11.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -175,7 +180,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 41
+      "sourceCites": 46
     },
     {
       "taskId": "T6",
@@ -196,6 +201,6 @@
   "untraced": null,
   "constitutionIndex": null,
   "uncitedPrinciples": null,
-  "sourceFilesScanned": 66,
+  "sourceFilesScanned": 71,
   "findings": null
 }

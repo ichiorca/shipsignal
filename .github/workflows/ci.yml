@@ -85,3 +85,18 @@ jobs:
       - run: sh evals/graders/gdpr-compliance.sh
       # The three named privacy categories at zero CRITICAL/HIGH failures.
       - run: sh evals/graders/privacy-eval.sh
+
+  cost-latency-eval:
+    name: Cost/latency eval gate (budget + tracked tiers)
+    # T4 (spec 011) — the cost/latency eval gate runs in CI and BLOCKS the change if the LLM
+    # pipeline would exceed its token/latency budget or an untracked model-tier change slips in
+    # (constitution §6). The grader is a code check that greps source + runs the cost unit
+    # tests, so it needs only Python + the unit deps (no DB, no AWS, no network).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pydantic==2.10.4 pytest==8.3.4
+      - run: sh evals/graders/cost-latency.sh

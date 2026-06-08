@@ -49,6 +49,7 @@ from release_worker.aurora_content import (
     AuroraArtifactSink,
     AuroraSkillSnapshotSink,
 )
+from release_worker.aurora_cost import AuroraCostTelemetrySink
 from release_worker.aurora_evidence import (
     AuroraBoundaryReader,
     S3AuroraEvidenceSink,
@@ -172,7 +173,10 @@ def _run_content_generation(
         AuroraApprovedFeatureReader(conn),
         FilesystemSkillSource.from_env(),
         AuroraSkillSnapshotSink(conn),
-        BedrockModelClient.from_env(),
+        BedrockModelClient.from_env(
+            release_run_id=release_run_id,
+            telemetry_sink=AuroraCostTelemetrySink(conn),
+        ),
         AuroraArtifactSink(conn),
         AuroraEvidenceMatcher(conn, release_run_id),
         BedrockGuardrailScanner.from_env(),
@@ -227,7 +231,10 @@ def _run_media_generation(
     media_id = uuid4().hex
     graph = build_media_generation_graph(
         AuroraDemoScriptReader(conn),
-        BedrockModelClient.from_env(),
+        BedrockModelClient.from_env(
+            release_run_id=release_run_id,
+            telemetry_sink=AuroraCostTelemetrySink(conn),
+        ),
         PlaywrightDemoCapturer.from_env(),
         ElevenLabsSynthesizer.from_env(),
         FfmpegVideoAssembler.from_env(),
@@ -284,7 +291,10 @@ def _run_skill_learning(
         AuroraLearningSignalSource(conn),
         AuroraLearningSignalSink(conn),
         AuroraRepoActiveSkillReader(conn, Path.cwd()),
-        BedrockModelClient.from_env(),
+        BedrockModelClient.from_env(
+            release_run_id=release_run_id,
+            telemetry_sink=AuroraCostTelemetrySink(conn),
+        ),
         AuroraSuppressionStore(conn),
         AuroraSkillCandidateSink(conn),
         FilesystemRepoSkillWriter.from_env(),
@@ -380,7 +390,10 @@ def main(argv: list[str] | None = None) -> int:
                 conn, s3_client_from_env(), _require_env("EVIDENCE_BUCKET")
             ),
             AuroraRedactedEvidenceReader(conn),
-            BedrockModelClient.from_env(),
+            BedrockModelClient.from_env(
+                release_run_id=release_run_id,
+                telemetry_sink=AuroraCostTelemetrySink(conn),
+            ),
             AuroraFeatureSink(conn),
             dashboard_base_url=dashboard_base_url,
         )

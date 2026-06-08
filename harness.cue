@@ -7,7 +7,7 @@ import (
 harness: schema.#Harness & {
 	schemaVersion: "1.0.0"
 	metadata: {
-		linkedSpec: "specs/010-gdpr-data-subject-rights-privacy-eval-gate/spec.md"
+		linkedSpec: "specs/011-model-tier-routing-token-budgets-and-cost-latency-eval-gate/spec.md"
 		name:        "shipsignal"
 		owner:       "me"
 		testCommand: "npm test && pytest -q"
