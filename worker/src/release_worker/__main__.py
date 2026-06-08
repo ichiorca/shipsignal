@@ -80,9 +80,11 @@ from release_worker.github_diff_source import GitHubDiffSource
 from release_worker.github_pr_source import GitHubPullRequestSource
 from release_worker.graph import build_release_intelligence_graph
 from release_worker.guardrails_client import BedrockGuardrailScanner
+from release_worker.log_scrubbing import install_pii_scrubbing
 from release_worker.media_graph import build_media_generation_graph
 from release_worker.media_state import MediaRunState
 from release_worker.playwright_capture import PlaywrightDemoCapturer
+from release_worker.privacy import main as privacy_main
 from release_worker.repo_skill_source import FilesystemSkillSource
 from release_worker.repo_skill_writer import FilesystemRepoSkillWriter
 from release_worker.s3_media_store import S3MediaStore
@@ -316,8 +318,18 @@ def _run_skill_learning(
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw = sys.argv[1:] if argv is None else argv
+    # T1/T2/T3 (spec 010) — `python -m release_worker privacy <sub>` delegates to the GDPR
+    # data-subject-rights CLI (retention-sweep / erase / export). Matched on the literal first
+    # arg so the existing flat release-worker parser (--release-run-id ...) is untouched.
+    if raw and raw[0] == "privacy":
+        return privacy_main(raw[1:])
+
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
-    args = _parse_args(sys.argv[1:] if argv is None else argv)
+    # T4 (spec 010) / P5 — scrub PII/secrets from every log record before a handler emits it,
+    # so no personal data reaches logs/telemetry even if a future log call interpolates it.
+    install_pii_scrubbing()
+    args = _parse_args(raw)
     release_run_id = args.release_run_id
 
     # Resume reuses the caller-supplied thread (PRD §5.6 "resume the same thread_id");

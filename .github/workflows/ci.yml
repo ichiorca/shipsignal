@@ -67,3 +67,21 @@ jobs:
       - run: alembic upgrade head
       - run: alembic downgrade base
       - run: alembic upgrade head
+
+  privacy-evals:
+    name: Privacy eval gate (GDPR + CRITICAL/HIGH)
+    # T5 (spec 010) — the privacy eval suite runs in CI and BLOCKS deploy on any CRITICAL/HIGH
+    # failure (constitution §6). Both graders are code checks that grep the source and run the
+    # privacy unit tests, so they need only Python + the unit deps (no DB, no AWS, no network).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pydantic==2.10.4 pytest==8.3.4
+      # The broad GDPR rails gate (redact-before-use, Guardrail PII policy, log scrubbing,
+      # erasure across Aurora+S3, escalated access export, retention/TTL).
+      - run: sh evals/graders/gdpr-compliance.sh
+      # The three named privacy categories at zero CRITICAL/HIGH failures.
+      - run: sh evals/graders/privacy-eval.sh
