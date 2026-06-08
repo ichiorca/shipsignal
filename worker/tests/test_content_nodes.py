@@ -27,7 +27,7 @@ from release_worker.content_models import (
     RawSkill,
 )
 from release_worker.content_nodes import (
-    generate_artifacts,
+    generate_artifacts_parallel,
     load_approved_features,
     parse_frontmatter,
     persist_reviewable_artifacts,
@@ -76,8 +76,22 @@ _SKILL_BLOG = (
 )
 
 
+def _format_skill(name: str) -> str:
+    return f"---\nname: {name}\nversion: 1.0.0\n---\n# {name}\nGuidance for {name}."
+
+
 def _raw_skills(sha: str = _SHA) -> tuple[RawSkill, ...]:
-    return (
+    # One format skill per initial artifact type (spec 007 T2) + the shared brand-voice,
+    # so every type's per-type selection resolves to exactly {its format skill, brand-voice}.
+    format_names = (
+        "blog-format",
+        "changelog-format",
+        "sales-onepager-format",
+        "social-post-format",
+        "demo-script-format",
+        "audio-digest-format",
+    )
+    skills = [
         RawSkill(
             skill_path="skills/blog-format/SKILL.md",
             content=_SKILL_BLOG,
@@ -88,7 +102,17 @@ def _raw_skills(sha: str = _SHA) -> tuple[RawSkill, ...]:
             content=_SKILL_BRAND,
             commit_sha=sha,
         ),
+    ]
+    skills.extend(
+        RawSkill(
+            skill_path=f"skills/{name}/SKILL.md",
+            content=_format_skill(name),
+            commit_sha=sha,
+        )
+        for name in format_names
+        if name != "blog-format"
     )
+    return tuple(skills)
 
 
 def _artifact_response() -> dict[str, object]:
@@ -123,7 +147,7 @@ def test_snapshot_records_path_commit_and_content_hash() -> None:
 
     snapshots = snapshot_active_skills(_REPO, _raw_skills(), sink, lambda: next(ids))
 
-    assert {s.skill_name for s in snapshots} == {"brand-voice", "blog-format"}
+    assert {"brand-voice", "blog-format"} <= {s.skill_name for s in snapshots}
     blog = next(s for s in snapshots if s.skill_name == "blog-format")
     assert blog.skill_path == "skills/blog-format/SKILL.md"
     assert blog.commit_sha == _SHA
@@ -175,7 +199,36 @@ def test_load_approved_features_refuses_when_none_approved() -> None:
     assert "no approved features" in str(exc.value)
 
 
-# --- T4 generate artifacts --------------------------------------------------------
+# --- T1/T2 (spec 007) generate the full initial artifact set in parallel ----------
+
+# The full initial set (PRD §8.1); deferred types (§8.2) must never be produced.
+_INITIAL_TYPES = frozenset(
+    {
+        "release_blog",
+        "changelog_entry",
+        "sales_onepager",
+        "linkedin_post",
+        "demo_script",
+        "release_audio_digest",
+    }
+)
+_DEFERRED_TYPES = frozenset(
+    {
+        "full_training_video",
+        "battlecard_delta",
+        "localized_assets",
+        "autopublished_assets",
+    }
+)
+# Each artifact type → the format skill it should be wired to (T2), alongside brand-voice.
+_FORMAT_SKILL_BY_TYPE = {
+    "release_blog": "blog-format",
+    "changelog_entry": "changelog-format",
+    "sales_onepager": "sales-onepager-format",
+    "linkedin_post": "social-post-format",
+    "demo_script": "demo-script-format",
+    "release_audio_digest": "audio-digest-format",
+}
 
 
 def _snapshots():
@@ -184,11 +237,10 @@ def _snapshots():
     return snapshot_active_skills(_REPO, _raw_skills(), sink, lambda: next(ids))
 
 
-def test_generate_produces_blog_and_changelog_as_drafts() -> None:
+def _generate():
     client = RecordingModelClient(_artifact_response())
     art_ids = (f"art-{n}" for n in itertools.count())
-
-    artifacts, _events = generate_artifacts(
+    artifacts, events = generate_artifacts_parallel(
         _RUN_ID,
         _approved_features(),
         _snapshots(),
@@ -196,9 +248,16 @@ def test_generate_produces_blog_and_changelog_as_drafts() -> None:
         lambda: next(art_ids),
         model_id="bedrock-model-x",
     )
+    return artifacts, events, client
+
+
+def test_generate_produces_full_initial_set_as_drafts() -> None:
+    """T1/AC: all initial artifact types generate as drafts; deferred types are not produced."""
+    artifacts, _events, _client = _generate()
 
     types = {a.artifact_type for a in artifacts}
-    assert types == {"release_blog", "changelog_entry"}
+    assert types == _INITIAL_TYPES  # the four new types alongside blog + changelog
+    assert types.isdisjoint(_DEFERRED_TYPES)  # §8.2 deferred types never produced
     for a in artifacts:
         assert a.status == "draft"  # no self-approval (§5)
         assert a.model_id == "bedrock-model-x"
@@ -207,57 +266,41 @@ def test_generate_produces_blog_and_changelog_as_drafts() -> None:
 
 def test_generate_prompt_carries_only_features_and_skills_no_raw() -> None:
     """§5: the prompt is built from approved features + repo skill bodies, nothing raw."""
-    client = RecordingModelClient(_artifact_response())
-    art_ids = (f"art-{n}" for n in itertools.count())
+    artifacts, _events, client = _generate()
 
-    generate_artifacts(
-        _RUN_ID,
-        _approved_features(),
-        _snapshots(),
-        client,
-        lambda: next(art_ids),
-        model_id="m",
-    )
-
-    user_prompt = client.calls[-1].messages[0]["content"]
-    assert "Admin-configurable onboarding checklist" in user_prompt
-    system_prompt = client.calls[-1].system
-    assert "Brand Voice" in system_prompt  # skill body injected
+    # Every call's user prompt carries the approved features and nothing raw; every system
+    # prompt carries brand-voice (it feeds every type).
+    assert len(client.calls) == len(artifacts)
+    for call in client.calls:
+        assert "Admin-configurable onboarding checklist" in call.messages[0]["content"]
+        assert "Brand Voice" in call.system  # shared voice skill injected per type
 
 
-def test_generate_records_skill_usage_per_artifact() -> None:
-    """AC: each generated artifact records which skill snapshot versions/hashes were loaded."""
-    snapshots = _snapshots()
-    client = RecordingModelClient(_artifact_response())
-    art_ids = (f"art-{n}" for n in itertools.count())
+def test_generate_wires_each_type_to_its_format_skill() -> None:
+    """T2: each artifact records exactly {its format skill, brand-voice} — not every skill."""
+    artifacts, events, _client = _generate()
 
-    artifacts, events = generate_artifacts(
-        _RUN_ID,
-        _approved_features(),
-        snapshots,
-        client,
-        lambda: next(art_ids),
-        model_id="m",
-    )
+    events_by_artifact: dict[str, set[str]] = {}
+    for e in events:
+        events_by_artifact.setdefault(e.artifact_id, set()).add(e.skill_name)
 
-    # One usage event per (artifact, skill snapshot).
-    assert len(events) == len(artifacts) * len(snapshots)
-    snapshot_ids = {s.snapshot_id for s in snapshots}
-    assert {e.skill_snapshot_id for e in events} == snapshot_ids
+    for a in artifacts:
+        expected = {_FORMAT_SKILL_BY_TYPE[a.artifact_type], "brand-voice"}
+        # skill_versions and the per-artifact usage events both reflect only that subset.
+        assert set(a.skill_versions) == expected
+        assert events_by_artifact[a.artifact_id] == expected
     assert all(e.usage_type == "generation" for e in events)
     assert all(e.graph_name == "content_generation_graph" for e in events)
-    # The artifact's skill_versions map records each skill's content hash.
-    for a in artifacts:
-        assert a.skill_versions == {s.skill_name: s.content_hash for s in snapshots}
+    assert all(e.node_name == "generate_artifacts_parallel" for e in events)
 
 
 def test_generate_idempotency_key_stable_for_same_inputs() -> None:
-    """aws-bedrock-rules: a retried generation reuses the same dedupe key."""
+    """aws-bedrock-rules: a retried generation reuses the same dedupe key per type."""
     snapshots = _snapshots()
     client = RecordingModelClient(_artifact_response())
     art_ids = (f"art-{n}" for n in itertools.count())
 
-    generate_artifacts(
+    generate_artifacts_parallel(
         _RUN_ID,
         _approved_features(),
         snapshots,
@@ -265,9 +308,11 @@ def test_generate_idempotency_key_stable_for_same_inputs() -> None:
         lambda: next(art_ids),
         model_id="m",
     )
-    keys_first = [c.idempotency_key for c in client.calls]
+    # Map task → key so the assertion is order-independent (the fan-out is concurrent).
+    keys_first = {c.task_name: c.idempotency_key for c in client.calls}
 
-    generate_artifacts(
+    n_first = len(client.calls)
+    generate_artifacts_parallel(
         _RUN_ID,
         tuple(reversed(_approved_features())),
         snapshots,
@@ -275,8 +320,8 @@ def test_generate_idempotency_key_stable_for_same_inputs() -> None:
         lambda: next(art_ids),
         model_id="m",
     )
-    keys_second = [c.idempotency_key for c in client.calls[len(keys_first) :]]
-    assert keys_first == keys_second  # order-independent, stable
+    keys_second = {c.task_name: c.idempotency_key for c in client.calls[n_first:]}
+    assert keys_first == keys_second  # per-type, order- and feature-order-independent
 
 
 def test_generate_rejects_malformed_model_output() -> None:
@@ -284,7 +329,7 @@ def test_generate_rejects_malformed_model_output() -> None:
     art_ids = (f"art-{n}" for n in itertools.count())
 
     with pytest.raises(MalformedArtifactOutputError) as exc:
-        generate_artifacts(
+        generate_artifacts_parallel(
             _RUN_ID,
             _approved_features(),
             _snapshots(),
@@ -303,7 +348,7 @@ def test_persist_writes_artifacts_then_usage_events() -> None:
     snapshots = _snapshots()
     client = RecordingModelClient(_artifact_response())
     art_ids = (f"art-{n}" for n in itertools.count())
-    artifacts, events = generate_artifacts(
+    artifacts, events = generate_artifacts_parallel(
         _RUN_ID,
         _approved_features(),
         snapshots,

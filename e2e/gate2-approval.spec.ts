@@ -1,5 +1,5 @@
-// T5 (spec 006) — AC5: Playwright e2e for the Gate #2 artifact-review flow, including a
-// blocked-claim case.
+// T5 (spec 006) / T4 (spec 007) — AC: Playwright e2e for the Gate #2 artifact-review flow,
+// including a blocked-claim case and the spec-007 multi-artifact (grouped-by-type) review.
 //
 // Drives the real review surface (app/releases/[id]/artifacts/review + ArtifactReview) the
 // operator uses — not a private helper (anti-pattern #4). It expects a seeded run with two
@@ -62,5 +62,21 @@ test.describe('Gate #2 artifact approval', () => {
   test('submitting the review resumes the run on the same thread', async ({ page }) => {
     await page.getByRole('button', { name: 'Submit & resume' }).click();
     await expect(page.getByRole('status')).toContainText('resuming');
+  });
+
+  // T4 (spec 007) — the expanded artifact set is presented grouped by type, each group a
+  // labelled section with a heading, so a reviewer can scan blog/sales/demo/etc. by type.
+  test('artifacts are grouped into a labelled section per artifact type', async ({ page }) => {
+    const groups = page.locator('section[data-artifact-type-group]');
+    await expect(groups.first()).toBeVisible();
+    const count = await groups.count();
+    expect(count).toBeGreaterThan(0);
+    for (let i = 0; i < count; i += 1) {
+      const group = groups.nth(i);
+      // The group is named by an <h2> heading (WCAG: a region must have an accessible name).
+      await expect(group.getByRole('heading', { level: 2 }).first()).toBeVisible();
+      // Each group holds at least one artifact subsection.
+      await expect(group.locator('section[data-artifact-id]').first()).toBeVisible();
+    }
   });
 });

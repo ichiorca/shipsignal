@@ -1,6 +1,10 @@
-"""T2/T3/T4/T5 (spec 005) — the content_generation_graph nodes (PRD §5.3):
-snapshot_active_skills → load_approved_features → generate_artifacts (blog + changelog)
-→ persist_reviewable_artifacts.
+"""T2/T3/T4/T5 (spec 005) / T1,T2 (spec 007) — the content_generation_graph nodes (PRD §5.3):
+snapshot_active_skills → load_approved_features → generate_artifacts_parallel → persist_reviewable_artifacts.
+
+T1/T2 (spec 007) expand ``generate_artifacts`` into ``generate_artifacts_parallel``: the full
+initial artifact set (PRD §8.1 — blog, changelog, sales one-pager, social post, demo script,
+audio digest) is generated concurrently, each on its own per-type format-skill selection
+(``_skills_for_spec``) plus the shared brand-voice. Deferred types (§8.2) are never produced.
 
 Each node is a pure function of ``(inputs, port)`` — no langgraph/psycopg/boto3 import —
 so it is unit-tested through the exact surface the graph invokes (anti-pattern #4). The
@@ -21,8 +25,10 @@ constitution's load-bearing rules are enforced *structurally*:
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from pydantic import ValidationError
 
@@ -159,14 +165,77 @@ def load_approved_features(
     return features
 
 
-# --- T4 — generate blog + changelog -----------------------------------------------
+# --- T1/T2 (spec 007) — generate the full initial artifact set in parallel ---------
 
-# (artifact_type, human label) — blog + changelog only this slice (PRD §8.1). All active
-# skill snapshots feed every generation; the format/voice guidance lives in their bodies.
-_ARTIFACT_TYPES: tuple[tuple[str, str], ...] = (
-    ("release_blog", "release blog post"),
-    ("changelog_entry", "product changelog entry"),
+
+@dataclass(frozen=True)
+class _ArtifactSpec:
+    """One initial artifact type (PRD §8.1) and the format SKILL.md that shapes it.
+
+    T2 (spec 007): each type is wired to its own format skill rather than feeding every
+    skill into every artifact — a sales one-pager follows ``sales-onepager-format``, a demo
+    script follows ``demo-script-format``, etc. The shared ``brand-voice`` skill applies to
+    every type (added in ``_skills_for_spec``), so each generation prompt carries exactly
+    {that type's format skill, brand-voice} and nothing else.
+    """
+
+    artifact_type: str
+    label: str
+    format_skill: str
+
+
+# The voice skill layered onto every artifact type (PRD §9.1 brand-voice).
+_BRAND_VOICE_SKILL = "brand-voice"
+
+# T1 (spec 007): the full initial artifact set (PRD §8.1). Blog + changelog shipped in
+# spec 005; this expands generation to the remaining four — sales one-pager, social post,
+# demo script, and release audio digest. Deferred types (PRD §8.2) are intentionally absent,
+# so the graph never produces them (AC: "deferred types are not produced"). Ordering is
+# canonical so the parallel fan-out yields a deterministic artifact sequence.
+_ARTIFACT_SPECS: tuple[_ArtifactSpec, ...] = (
+    _ArtifactSpec("release_blog", "release blog post", "blog-format"),
+    _ArtifactSpec("changelog_entry", "product changelog entry", "changelog-format"),
+    _ArtifactSpec(
+        "sales_onepager",
+        "sales one-pager with value prop, use cases, objections, and talk track",
+        "sales-onepager-format",
+    ),
+    _ArtifactSpec(
+        "linkedin_post",
+        "short LinkedIn/social announcement post",
+        "social-post-format",
+    ),
+    _ArtifactSpec(
+        "demo_script",
+        "demo video script with a screen-flow plan",
+        "demo-script-format",
+    ),
+    _ArtifactSpec(
+        "release_audio_digest",
+        "short narrated internal audio-digest script",
+        "audio-digest-format",
+    ),
 )
+
+# Bound the fan-out so a large artifact set can't open an unbounded number of concurrent
+# Bedrock calls (constitution §6 cost/latency; aws-bedrock-rules throttle discipline).
+_MAX_GENERATION_WORKERS = 6
+
+
+def _skills_for_spec(
+    spec: _ArtifactSpec, snapshots: tuple[SkillSnapshot, ...]
+) -> tuple[SkillSnapshot, ...]:
+    """The active skill snapshots that feed one artifact type: its format skill + brand-voice.
+
+    T2 (spec 007): selects only the relevant snapshots from the active set so the prompt and
+    the recorded ``skill_usage_events`` reflect exactly which skills shaped this artifact —
+    not the whole repo skill list. A format skill absent from the snapshot set is simply
+    skipped (the artifact still generates under brand-voice), so a missing optional skill
+    never fails the run. Order follows the snapshot order for a deterministic prompt.
+    """
+    wanted = {spec.format_skill, _BRAND_VOICE_SKILL}
+    return tuple(s for s in snapshots if s.skill_name in wanted)
+
 
 _GENERATE_SCHEMA: dict[str, object] = {
     "type": "object",
@@ -243,7 +312,34 @@ def _idempotency_key(
     return digest.hexdigest()
 
 
-def generate_artifacts(
+def _generate_one(
+    spec: _ArtifactSpec,
+    release_run_id: str,
+    features: tuple[ApprovedFeature, ...],
+    type_snapshots: tuple[SkillSnapshot, ...],
+    model_client: ModelClient,
+) -> GeneratedArtifact:
+    """Run one artifact type's Bedrock Converse call and validate the untrusted output.
+
+    The prompt carries only approved features (built from redacted evidence) and this type's
+    selected skill bodies — nothing raw (§5). A malformed payload fails closed as
+    ``MalformedArtifactOutputError`` (AC4) without echoing the offending content. Pure of any
+    id minting or list mutation so it is safe to run concurrently across types (T1)."""
+    messages = [{"role": "user", "content": _render_features(features)}]
+    raw = model_client.generate_json(
+        f"generate_{spec.artifact_type}",
+        _system_prompt(spec.label, type_snapshots),
+        messages,
+        _GENERATE_SCHEMA,
+        _idempotency_key(spec.artifact_type, release_run_id, features, type_snapshots),
+    )
+    try:
+        return GeneratedArtifact.model_validate(raw)
+    except ValidationError as err:
+        raise MalformedArtifactOutputError() from err
+
+
+def generate_artifacts_parallel(
     release_run_id: str,
     features: tuple[ApprovedFeature, ...],
     snapshots: tuple[SkillSnapshot, ...],
@@ -252,55 +348,69 @@ def generate_artifacts(
     model_id: str,
     prompt_version: str = PROMPT_VERSION,
 ) -> tuple[tuple[ArtifactDraft, ...], tuple[SkillUsageEvent, ...]]:
-    """Generate the blog + changelog drafts via Bedrock Converse (T4, PRD §5.3/§8.1).
+    """Generate the full initial artifact set in parallel via Bedrock Converse (T1, PRD §5.3/§8.1).
 
-    The prompt carries only approved features (built from redacted evidence) and repo skill
-    bodies — nothing raw (§5). Each response is validated through ``GeneratedArtifact``
-    (untrusted model output, AC) and persisted-shape ``ArtifactDraft`` rows are minted
-    ``status='draft'`` with the model/prompt/skill provenance (§18.3). For every loaded
-    snapshot a ``skill_usage_events`` row is produced (AC: each artifact records which skill
-    versions/hashes were loaded). Returns ``(artifacts, usage_events)`` for the persist node.
+    The six initial types (blog, changelog, sales one-pager, social post, demo script, audio
+    digest) fan out concurrently — each on its own per-type skill selection (T2) — because the
+    Bedrock calls are independent I/O; running them together keeps the node within the
+    latency budget (constitution §6) instead of summing six sequential round-trips. The
+    deferred types (PRD §8.2) are never in ``_ARTIFACT_SPECS`` so they are never produced (AC).
+
+    Determinism is preserved despite the concurrency: artifact ids are minted up front on the
+    calling thread in canonical order (so ``new_artifact_id`` — a generator in tests — is never
+    raced), and results are stitched back in that same order via ``executor.map``. Each
+    response is validated through ``GeneratedArtifact`` (untrusted model output, AC) and minted
+    ``status='draft'`` with the model/prompt/skill provenance (§18.3). For every skill that fed
+    a given artifact a ``skill_usage_events`` row is produced (AC: each artifact records which
+    skill versions/hashes were loaded). Returns ``(artifacts, usage_events)`` for the persist node.
     """
+    # Mint ids + resolve each type's skills on the calling thread (deterministic, race-free).
+    planned: list[tuple[_ArtifactSpec, tuple[SkillSnapshot, ...], str]] = [
+        (spec, _skills_for_spec(spec, snapshots), new_artifact_id())
+        for spec in _ARTIFACT_SPECS
+    ]
+
+    workers = min(len(planned), _MAX_GENERATION_WORKERS)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        # map preserves input order and re-raises the first exception on iteration, so a
+        # single malformed artifact fails the whole node closed (§5) rather than half-persisting.
+        generated = list(
+            executor.map(
+                lambda item: _generate_one(
+                    item[0], release_run_id, features, item[1], model_client
+                ),
+                planned,
+            )
+        )
+
     artifacts: list[ArtifactDraft] = []
     events: list[SkillUsageEvent] = []
-    skill_versions = {s.skill_name: s.content_hash for s in snapshots}
-
-    for artifact_type, label in _ARTIFACT_TYPES:
-        messages = [{"role": "user", "content": _render_features(features)}]
-        raw = model_client.generate_json(
-            f"generate_{artifact_type}",
-            _system_prompt(label, snapshots),
-            messages,
-            _GENERATE_SCHEMA,
-            _idempotency_key(artifact_type, release_run_id, features, snapshots),
-        )
-        try:
-            generated = GeneratedArtifact.model_validate(raw)
-        except ValidationError as err:
-            raise MalformedArtifactOutputError() from err
-
-        artifact_id = new_artifact_id()
+    for (spec, type_snapshots, artifact_id), result in zip(
+        planned, generated, strict=True
+    ):
+        # skill_versions records only the skills that actually shaped THIS artifact (T2).
+        skill_versions = {s.skill_name: s.content_hash for s in type_snapshots}
         artifacts.append(
             ArtifactDraft(
                 artifact_id=artifact_id,
                 release_run_id=release_run_id,
-                feature_id=None,  # release-level: blog/changelog span all features
-                artifact_type=artifact_type,
-                title=generated.title,
-                body_markdown=generated.body_markdown,
+                feature_id=None,  # release-level: artifacts span all approved features
+                artifact_type=spec.artifact_type,
+                title=result.title,
+                body_markdown=result.body_markdown,
                 status="draft",
                 model_id=model_id,
                 prompt_version=prompt_version,
                 skill_versions=skill_versions,
             )
         )
-        for snap in snapshots:
+        for snap in type_snapshots:
             events.append(
                 SkillUsageEvent(
                     release_run_id=release_run_id,
                     artifact_id=artifact_id,
                     graph_name=_GRAPH_NAME,
-                    node_name="generate_artifacts",
+                    node_name="generate_artifacts_parallel",
                     skill_snapshot_id=snap.snapshot_id,
                     skill_name=snap.skill_name,
                     skill_version=snap.skill_version,

@@ -31,7 +31,7 @@ class ContentRunState(BaseModel):
 
     Identifies the run + repo, then accumulates the approved features loaded, the skill
     snapshots taken, the draft artifacts generated, and their skill-usage events — the last
-    two produced by ``generate_artifacts`` and written by ``persist_reviewable_artifacts``.
+    two produced by ``generate_artifacts_parallel`` and written by ``persist_reviewable_artifacts``.
     ``repo`` is needed to scope the skill snapshot rows (skills are repo-level, §10.5).
     """
 

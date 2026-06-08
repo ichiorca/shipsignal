@@ -11,7 +11,7 @@ unit-tested directly against in-memory fakes (``worker/tests/test_content_nodes.
 Spec 006 extends the content slice past draft persistence to claim-level provenance + the
 second mandatory human gate (PRD §5.3):
 
-    load_approved_features → snapshot_active_skills → generate_artifacts
+    load_approved_features → snapshot_active_skills → generate_artifacts_parallel
         → extract_claims → link_claims_to_evidence → run_deterministic_policy_checks
         → run_bedrock_guardrails → persist_reviewable_artifacts → approve_artifacts (interrupt)
             approved        → complete
@@ -49,7 +49,7 @@ from release_worker.claim_ports import (
     GuardrailScanner,
 )
 from release_worker.content_nodes import (
-    generate_artifacts,
+    generate_artifacts_parallel,
     load_approved_features,
     persist_reviewable_artifacts,
     snapshot_active_skills,
@@ -103,8 +103,11 @@ def build_content_generation_graph(
         )
         return state.model_copy(update={"skill_snapshots": snapshots})
 
-    def _generate_artifacts(state: ContentRunState) -> ContentRunState:
-        artifacts, events = generate_artifacts(
+    def _generate_artifacts_parallel(state: ContentRunState) -> ContentRunState:
+        # T1 (spec 007): fans out the full initial artifact set (PRD §8.1) concurrently,
+        # each on its per-type skill selection (T2). uuid4 is thread-safe, so the parallel
+        # id minting inside the node is race-free in production.
+        artifacts, events = generate_artifacts_parallel(
             state.release_run_id,
             state.approved_features,
             state.skill_snapshots,
@@ -175,7 +178,7 @@ def build_content_generation_graph(
     graph: StateGraph = StateGraph(ContentRunState)
     graph.add_node("load_approved_features", _load_approved_features)
     graph.add_node("snapshot_active_skills", _snapshot_active_skills)
-    graph.add_node("generate_artifacts", _generate_artifacts)
+    graph.add_node("generate_artifacts_parallel", _generate_artifacts_parallel)
     graph.add_node("extract_claims", _extract_claims)
     graph.add_node("link_claims_to_evidence", _link_claims_to_evidence)
     graph.add_node("run_deterministic_policy_checks", _run_deterministic_policy_checks)
@@ -187,8 +190,8 @@ def build_content_generation_graph(
 
     graph.add_edge(START, "load_approved_features")
     graph.add_edge("load_approved_features", "snapshot_active_skills")
-    graph.add_edge("snapshot_active_skills", "generate_artifacts")
-    graph.add_edge("generate_artifacts", "extract_claims")
+    graph.add_edge("snapshot_active_skills", "generate_artifacts_parallel")
+    graph.add_edge("generate_artifacts_parallel", "extract_claims")
     graph.add_edge("extract_claims", "link_claims_to_evidence")
     graph.add_edge("link_claims_to_evidence", "run_deterministic_policy_checks")
     graph.add_edge("run_deterministic_policy_checks", "run_bedrock_guardrails")

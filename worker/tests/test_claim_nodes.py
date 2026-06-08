@@ -110,6 +110,37 @@ def _extract_one_artifact() -> tuple:
     return claims, client
 
 
+# The full initial artifact set (spec 007 §8.1) — the claim/check path must treat them all
+# identically (T3), with no per-type branch.
+_INITIAL_ARTIFACT_TYPES = (
+    "release_blog",
+    "changelog_entry",
+    "sales_onepager",
+    "linkedin_post",
+    "demo_script",
+    "release_audio_digest",
+)
+
+
+def _artifact_of(
+    artifact_type: str,
+    artifact_id: str,
+    body: str = "# Release\n\nAdmins can create onboarding checklists.",
+) -> ArtifactDraft:
+    return ArtifactDraft(
+        artifact_id=artifact_id,
+        release_run_id=_RUN_ID,
+        feature_id=None,
+        artifact_type=artifact_type,
+        title="Release highlights",
+        body_markdown=body,
+        status="draft",
+        model_id="bedrock-model-x",
+        prompt_version="content-gen-v1",
+        skill_versions={},
+    )
+
+
 # --- T2 — extract_claims ----------------------------------------------------------
 
 
@@ -320,3 +351,55 @@ def test_persist_artifact_review_applies_rejected_decision() -> None:
     affected = persist_artifact_review(GateDecision.REJECTED, (_artifact(),), sink)
     assert affected == (_ART_ID,)
     assert sink.updates == [(_ART_ID, "rejected")]
+
+
+# --- T3 (spec 007) — all initial artifact types flow through claims uniformly ------
+
+
+def test_all_initial_types_extract_and_check_uniformly() -> None:
+    """T3/AC: every initial artifact type is decomposed into claims and run through the
+    deterministic checks on the same path — none bypasses extraction or Gate #2 prep."""
+    artifacts = tuple(
+        _artifact_of(t, f"aaaaaaaa-1111-2222-3333-00000000000{i}")
+        for i, t in enumerate(_INITIAL_ARTIFACT_TYPES)
+    )
+    client = RecordingModelClient(_CLAIM_RESPONSE)
+    ids = (f"claim-{n}" for n in _claim_ids())
+
+    claims = extract_claims(artifacts, client, lambda: next(ids))
+
+    # Every artifact (regardless of type) is decomposed into the same 2 claims.
+    by_artifact: dict[str, int] = {}
+    for c in claims:
+        by_artifact[c.artifact_id] = by_artifact.get(c.artifact_id, 0) + 1
+    assert set(by_artifact) == {a.artifact_id for a in artifacts}
+    assert set(by_artifact.values()) == {2}
+
+    # Link + checks apply uniformly: each type's fabricated ROI metric blocks that artifact.
+    resolved, _links = link_claims_to_evidence(
+        claims, InMemoryClaimEvidenceMatcher(_EVIDENCE)
+    )
+    findings = run_deterministic_policy_checks(artifacts, resolved)
+    blocked = apply_check_outcomes(artifacts, findings)
+    blocked_types = {a.artifact_type for a in blocked if a.status == BLOCKED_STATUS}
+    assert blocked_types == set(_INITIAL_ARTIFACT_TYPES)
+
+
+def test_demo_script_claim_requires_evidence_linkage() -> None:
+    """T3: a demo_script's claims are grounded by the identical rule — the capability claim
+    links to evidence; the fabricated metric stays UNSUPPORTED with no link."""
+    demo = _artifact_of("demo_script", "dddddddd-1111-2222-3333-444444444444")
+    client = RecordingModelClient(_CLAIM_RESPONSE)
+    ids = (f"claim-{n}" for n in _claim_ids())
+
+    claims = extract_claims((demo,), client, lambda: next(ids))
+    resolved, links = link_claims_to_evidence(
+        claims, InMemoryClaimEvidenceMatcher(_EVIDENCE)
+    )
+
+    cap = next(c for c in resolved if "create reusable" in c.claim_text)
+    roi = next(c for c in resolved if "50%" in c.claim_text)
+    assert cap.support_status == SupportStatus.SUPPORTED.value
+    assert any(link.claim_id == cap.claim_id for link in links)
+    assert roi.support_status == SupportStatus.UNSUPPORTED.value
+    assert all(link.claim_id != roi.claim_id for link in links)

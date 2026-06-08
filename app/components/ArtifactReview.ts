@@ -1,10 +1,12 @@
-// T5 (spec 006) — Gate #2 artifact-review UI (PRD §5.6, §13.1 artifact review + claim
-// inspector). P6 (Quality bars / WCAG 2.2 AA): one labelled reviewer field, each artifact in
-// a <section> with a heading; per-claim support/risk exposed as TEXT (data-* + visible label,
-// not colour alone); supporting evidence as a list; an accessible action group (Approve /
-// Reject / Save edits) with real <button>s and a live-region status message. A blocked
-// artifact is announced and its Approve button is disabled (the API also refuses it).
-// constitution §4/§5: only redacted claim/evidence data is shown — no raw text.
+// T5 (spec 006) / T4 (spec 007) — Gate #2 artifact-review UI (PRD §5.6, §13.1 artifact review
+// + claim inspector). P6 (Quality bars / WCAG 2.2 AA): one labelled reviewer field; artifacts
+// are grouped into a labelled <section> per artifact type (T4 multi-artifact review — blog,
+// sales one-pager, social, demo script, audio digest), each artifact a headed <section> with
+// per-claim support/risk exposed as TEXT (data-* + visible label, not colour alone); supporting
+// evidence as a list; an accessible action group (Approve / Reject / Save edits) with real
+// <button>s and a live-region status message. A blocked artifact is announced and its Approve
+// button is disabled (the API also refuses it). The type label + grouping come from the shared
+// app/lib/artifactTypes module. constitution §4/§5: only redacted claim/evidence data is shown.
 //
 // "use client": this is the interactive leaf (ux-react: mark stateful components and keep
 // them small/leaf-level). It posts JSON to the §14.3/§14.1 routes; the reviewer identity is
@@ -17,6 +19,7 @@
 import { createElement, useState } from 'react';
 import type { ReactElement } from 'react';
 import type { ArtifactWithClaims, ArtifactClaimView } from '@/app/lib/db/claims.ts';
+import { typeLabel, groupByType } from '../lib/artifactTypes.ts';
 
 export interface ArtifactReviewProps {
   readonly releaseRunId: string;
@@ -25,15 +28,6 @@ export interface ArtifactReviewProps {
 }
 
 type Decision = 'approved' | 'rejected' | 'edited';
-
-const TYPE_LABELS: Readonly<Record<string, string>> = {
-  release_blog: 'Release blog',
-  changelog_entry: 'Changelog entry',
-};
-
-function typeLabel(artifactType: string): string {
-  return TYPE_LABELS[artifactType] ?? artifactType;
-}
 
 /** An artifact is cleanly approvable only if it is not blocked and every claim is supported
  *  with >=1 evidence link (mirrors the server-side isApprovable; the API is the source of
@@ -179,7 +173,7 @@ export function ArtifactReview({
         'data-artifact-status': artifact.status,
       },
       createElement(
-        'h2',
+        'h3',
         { id: headingId },
         artifact.title ?? typeLabel(artifact.artifact_type),
       ),
@@ -192,7 +186,7 @@ export function ArtifactReview({
               'leaked secret, or Guardrail). It cannot be approved — reject or edit it.',
           )
         : null,
-      createElement('h3', null, 'Claims'),
+      createElement('h4', null, 'Claims'),
       artifact.claims.length === 0
         ? createElement('p', null, 'No claims were extracted for this artifact.')
         : createElement('ul', null, ...artifact.claims.map(claimItem)),
@@ -226,6 +220,32 @@ export function ArtifactReview({
     );
   }
 
+  // T4 (spec 007): group artifacts into a labelled <section> per artifact type so a reviewer
+  // can scan the multi-artifact set by type (blog, sales one-pager, demo script, …). Each
+  // group is a region named by its <h2>; the artifact subsections keep their <h3> heading and
+  // data-* hooks, so the per-artifact controls and the e2e/a11y selectors are unchanged.
+  function typeGroupSection(group: {
+    readonly type: string;
+    readonly items: readonly ArtifactWithClaims[];
+  }): ReactElement {
+    const groupHeadingId = `artifact-type-${group.type}`;
+    const label = typeLabel(group.type);
+    return createElement(
+      'section',
+      {
+        key: group.type,
+        'aria-labelledby': groupHeadingId,
+        'data-artifact-type-group': group.type,
+      },
+      createElement(
+        'h2',
+        { id: groupHeadingId },
+        `${label} (${group.items.length})`,
+      ),
+      ...group.items.map(artifactSection),
+    );
+  }
+
   if (artifacts.length === 0) {
     return createElement(
       'div',
@@ -233,6 +253,8 @@ export function ArtifactReview({
       createElement('p', null, 'No artifacts are pending review for this run.'),
     );
   }
+
+  const groups = groupByType(artifacts, (a) => a.artifact_type);
 
   return createElement(
     'div',
@@ -251,7 +273,7 @@ export function ArtifactReview({
       onChange: (e: { target: { value: string } }) => setReviewer(e.target.value),
     }),
     createElement('p', { role: 'status', 'aria-live': 'polite' }, status),
-    ...artifacts.map(artifactSection),
+    ...groups.map(typeGroupSection),
     createElement(
       'div',
       { role: 'group', 'aria-label': 'Submit artifact review' },

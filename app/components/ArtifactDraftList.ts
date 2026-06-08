@@ -12,20 +12,10 @@
 import { createElement } from 'react';
 import type { ReactElement } from 'react';
 import type { ArtifactDraft } from '@/app/lib/db/artifacts.ts';
+import { typeLabel } from '../lib/artifactTypes.ts';
 
 export interface ArtifactDraftListProps {
   readonly artifacts: readonly ArtifactDraft[];
-}
-
-// Human labels for the artifact types this slice generates; unknown types fall back to the
-// raw value so nothing is hidden.
-const TYPE_LABELS: Readonly<Record<string, string>> = {
-  release_blog: 'Release blog',
-  changelog_entry: 'Changelog entry',
-};
-
-function typeLabel(artifactType: string): string {
-  return TYPE_LABELS[artifactType] ?? artifactType;
 }
 
 function auditTrail(artifact: ArtifactDraft): ReactElement {

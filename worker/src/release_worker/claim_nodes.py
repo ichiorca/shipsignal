@@ -19,6 +19,13 @@ constitution's load-bearing rules are enforced *structurally*:
 * §5 — no self-approval: ``persist_artifact_review`` applies only rejected/edited decisions;
   the approved path resumes the thread and the per-artifact approval is a recorded human
   action at the dashboard API.
+
+T3 (spec 007): every node here iterates ``state.artifacts`` by content, never by
+``artifact_type``, so the four new artifact types (sales one-pager, social post, demo script,
+audio digest) flow through extraction → evidence linking → deterministic + Guardrail checks →
+Gate #2 on the SAME path as blog/changelog. A demo-script claim is grounded by the identical
+evidence-linkage rule — an unlinkable or fabricated-metric demo claim stays UNSUPPORTED and
+blocks the artifact, exactly as for any other type (no per-type bypass).
 """
 
 from __future__ import annotations
