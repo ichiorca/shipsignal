@@ -13,11 +13,6 @@ managed conventions live in `memory/constitution.md`; project setup in
 `harness.cue`. This file just surfaces them to the active agent on every
 session start.
 
-## Active spec
-
-`002-evidence-collection-with-redact-before-persist-git-diff` — a previous session set this marker and the post-pass gates have
-not yet cleared it. Run `/spec-kit-implement 002-evidence-collection-with-redact-before-persist-git-diff` to resume.
-
 ## Available spec-kit slash commands
 
 - `/spec-kit-implement <spec-id>` — Implement one spec end-to-end. Post-pass gates run automatically on session end.

@@ -28,6 +28,14 @@ on:
         description: 'compare head ref'
         required: false
         type: string
+      resume_decision:
+        description: 'Gate #1 decision to resume a halted run (approved|rejected|edited)'
+        required: false
+        type: string
+      thread_id:
+        description: 'LangGraph thread to resume (PRD §5.6 — same thread_id)'
+        required: false
+        type: string
 
 # Least privilege: OIDC token to assume the AWS role + read the repo. Nothing else.
 permissions:
@@ -73,5 +81,18 @@ jobs:
           # Private S3 bucket for redacted evidence blobs (a name, not a secret; the
           # worker writes via the OIDC-assumed role, never long-lived keys).
           EVIDENCE_BUCKET: ${{ vars.EVIDENCE_BUCKET }}
+          # Bedrock Converse model + the PUBLISHED Guardrail the clustering node attaches
+          # (constitution §5: a Guardrail is mandatory). Model id is config, not a secret;
+          # the guardrail id/version come from repo vars.
+          BEDROCK_MODEL_ID: ${{ vars.BEDROCK_MODEL_ID }}
+          BEDROCK_GUARDRAIL_ID: ${{ vars.BEDROCK_GUARDRAIL_ID }}
+          BEDROCK_GUARDRAIL_VERSION: ${{ vars.BEDROCK_GUARDRAIL_VERSION }}
+          # Used to build the Gate #1 interrupt payload's dashboard_url (PRD §5.6).
+          DASHBOARD_BASE_URL: ${{ vars.DASHBOARD_BASE_URL }}
           PYTHONPATH: worker/src
-        run: python -m release_worker --release-run-id "${{ inputs.release_run_id }}"
+        # The resume args are empty on an initial run (the worker halts at Gate #1) and
+        # carry the recorded decision + thread on a resume dispatch (spec 004 T6).
+        run: |
+          python -m release_worker \
+            --release-run-id "${{ inputs.release_run_id }}" \
+            ${{ inputs.resume_decision && format('--resume-decision {0} --thread-id {1}', inputs.resume_decision, inputs.thread_id) || '' }}

@@ -7,9 +7,22 @@ import (
 harness: schema.#Harness & {
 	schemaVersion: "1.0.0"
 	metadata: {
+		linkedSpec: "specs/004-feature-clustering-scoring-gate-1-approval/spec.md"
 		name:        "shipsignal"
 		owner:       "me"
 		testCommand: "npm test && pytest -q"
+
+		// completeness — input locations for `harness spec-kit completeness`.
+		// Declared here (not just as CLI flags) so the native Stop hook's
+		// bare invocation can find shipsignal's monorepo layout (Python
+		// under worker/src, not a top-level src/). Without this the Stop
+		// hook's completeness gate hard-fails and never commits/tags.
+		completeness: {
+			srcRoots:    ["worker/src"]
+			entryPoints: ["pyproject.toml", "worker/requirements.txt"]
+			specGlobs:   ["specs/*/spec.md"]
+			docGlobs:    ["specs/PRD.md"]
+		}
 	}
 
 	active: {

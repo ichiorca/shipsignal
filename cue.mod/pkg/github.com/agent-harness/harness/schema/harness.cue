@@ -318,6 +318,20 @@ import "github.com/agent-harness/harness/schema/shared"
 	// as not-meant-to-be-passed-by-name (testability or future-API
 	// reserved slot). Keep the list short and audit periodically.
 	ignoreParamCallers?: [...string]
+
+	// --- Input locations (HC1-HC5 sources) ---
+	//
+	// Mirror the `harness spec-kit completeness` CLI flags so the bare
+	// invocation made by the native Stop hook (which passes no flags)
+	// can discover a project's layout. CLI flags take precedence; these
+	// are the fallback. Without them, completeness defaults to a
+	// top-level `src/` and HARD-FAILS on monorepo/non-`src` layouts,
+	// silently blocking the Stop hook's autocommit/autotag.
+	srcRoots?: [...string]
+	entryPoints?: [...string]
+	migrationGlobs?: [...string]
+	specGlobs?: [...string]
+	docGlobs?: [...string]
 }
 
 // #MCPServer — Model Context Protocol server registration. SPEC.md §3.11b.

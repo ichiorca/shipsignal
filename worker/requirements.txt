@@ -5,3 +5,6 @@
 langgraph==0.2.60
 psycopg[binary]==3.2.3
 pydantic==2.10.4
+# boto3 backs the Bedrock Converse model client (spec 004) and the S3 evidence sink
+# (spec 002). Only the runtime adapters import it; the unit gate does not install it.
+boto3==1.35.90

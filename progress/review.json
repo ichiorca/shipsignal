@@ -1,6 +1,6 @@
 {
   "projectRoot": "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal",
-  "generatedAt": "2026-06-07T23:43:45Z",
+  "generatedAt": "2026-06-08T04:09:41Z",
   "specs": [
     {
       "id": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
@@ -95,7 +95,8 @@
       "logFiles": [
         "pass1.log",
         "pass2.log",
-        "pass3.log"
+        "pass3.log",
+        "pass4.log"
       ],
       "sourceCites": 3
     },
@@ -106,7 +107,8 @@
       "logFiles": [
         "pass1.log",
         "pass2.log",
-        "pass3.log"
+        "pass3.log",
+        "pass4.log"
       ],
       "sourceCites": 4
     },
@@ -117,7 +119,8 @@
       "logFiles": [
         "pass1.log",
         "pass2.log",
-        "pass3.log"
+        "pass3.log",
+        "pass4.log"
       ],
       "sourceCites": 4
     },
@@ -128,7 +131,8 @@
       "logFiles": [
         "pass1.log",
         "pass2.log",
-        "pass3.log"
+        "pass3.log",
+        "pass4.log"
       ],
       "sourceCites": 4
     },
@@ -139,18 +143,20 @@
       "logFiles": [
         "pass1.log",
         "pass2.log",
-        "pass3.log"
+        "pass3.log",
+        "pass4.log"
       ],
-      "sourceCites": 12
+      "sourceCites": 22
     },
     {
       "taskId": "T6",
       "specId": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
       "citedInLog": true,
       "logFiles": [
-        "pass1.log"
+        "pass1.log",
+        "pass4.log"
       ],
-      "sourceCites": 4
+      "sourceCites": 12
     }
   ],
   "unimplemented": null,
@@ -159,6 +165,6 @@
   "untraced": null,
   "constitutionIndex": null,
   "uncitedPrinciples": null,
-  "sourceFilesScanned": 29,
+  "sourceFilesScanned": 41,
   "findings": null
 }
