@@ -38,6 +38,9 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
       <p>
         <a href={`/releases/${run.id}/artifacts`}>View draft artifacts →</a>
       </p>
+      <p>
+        <a href={`/releases/${run.id}/artifacts/review`}>Review artifacts (Gate #2) →</a>
+      </p>
       <dl>
         <dt>Compare range</dt>
         <dd>

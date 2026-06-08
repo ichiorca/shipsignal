@@ -1,22 +1,29 @@
-"""T4 (spec 005) — LangGraph graph state for ``content_generation_graph``.
+"""T4 (spec 005) / T2-T5 (spec 006) — LangGraph graph state for ``content_generation_graph``.
 
 P5 (Safety rails) + stack-python: all data threaded between nodes is validated Pydantic
 v2, never a raw dict. Only redacted/approved structured data ever enters state —
 ``ApprovedFeature`` (built from redacted evidence), ``SkillSnapshot`` (repo-authored skill
-metadata), and ``ArtifactDraft`` (the generated draft). Nothing raw or un-validated is
-carried (constitution §5).
+metadata), ``ArtifactDraft`` (the generated draft), and the spec-006 claim/check layer
+(``ArtifactClaim``, ``ClaimEvidenceLink``, ``PolicyFinding``). Nothing raw or un-validated
+is carried (constitution §5).
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from release_worker.claim_models import (
+    ArtifactClaim,
+    ClaimEvidenceLink,
+    PolicyFinding,
+)
 from release_worker.content_models import (
     ApprovedFeature,
     ArtifactDraft,
     SkillSnapshot,
     SkillUsageEvent,
 )
+from release_worker.feature_models import GateDecision
 
 
 class ContentRunState(BaseModel):
@@ -37,3 +44,9 @@ class ContentRunState(BaseModel):
     skill_snapshots: tuple[SkillSnapshot, ...] = ()
     artifacts: tuple[ArtifactDraft, ...] = ()
     usage_events: tuple[SkillUsageEvent, ...] = ()
+    # spec 006 — the claim/check layer threaded from extract_claims through Gate #2.
+    claims: tuple[ArtifactClaim, ...] = ()
+    claim_links: tuple[ClaimEvidenceLink, ...] = ()
+    check_findings: tuple[PolicyFinding, ...] = ()
+    # Set by the Gate #2 interrupt node when a human resumes with a decision (PRD §5.6).
+    gate_decision: GateDecision | None = None

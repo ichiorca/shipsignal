@@ -11,6 +11,9 @@ export interface ResumeDispatchArgs {
   readonly releaseRunId: string;
   readonly threadId: string;
   readonly decision: 'approved' | 'rejected' | 'edited';
+  // Which graph to resume. Gate #1 resumes 'release_intelligence' (default); Gate #2 (spec
+  // 006) resumes 'content_generation' past the approve_artifacts interrupt.
+  readonly graph?: 'release_intelligence' | 'content_generation' | undefined;
 }
 
 /**
@@ -41,6 +44,8 @@ export async function dispatchResume(args: ResumeDispatchArgs): Promise<void> {
         release_run_id: args.releaseRunId,
         resume_decision: args.decision,
         thread_id: args.threadId,
+        // Default keeps Gate #1 behaviour; Gate #2 passes 'content_generation'.
+        graph: args.graph ?? 'release_intelligence',
       },
     }),
   });

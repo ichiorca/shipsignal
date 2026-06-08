@@ -38,6 +38,11 @@ from uuid import uuid4
 import psycopg
 from langgraph.types import Command
 
+from release_worker.aurora_claims import (
+    AuroraArtifactReviewSink,
+    AuroraClaimSink,
+    AuroraEvidenceMatcher,
+)
 from release_worker.aurora_content import (
     AuroraApprovedFeatureReader,
     AuroraArtifactSink,
@@ -63,6 +68,7 @@ from release_worker.feature_models import GateDecision
 from release_worker.github_diff_source import GitHubDiffSource
 from release_worker.github_pr_source import GitHubPullRequestSource
 from release_worker.graph import build_release_intelligence_graph
+from release_worker.guardrails_client import BedrockGuardrailScanner
 from release_worker.repo_skill_source import FilesystemSkillSource
 from release_worker.state import ReleaseRunState
 
@@ -110,13 +116,20 @@ def _run_content_generation(
     conn: psycopg.Connection,
     release_run_id: str,
     thread_id: str,
+    dashboard_base_url: str,
+    resume_decision: str | None,
 ) -> int:
-    """Run content_generation_graph for one run: load approved features → snapshot skills →
-    generate blog+changelog → persist drafts (spec 005, PRD §5.3).
+    """Run content_generation_graph for one run through Gate #2 (spec 005/006, PRD §5.3).
 
-    The run's repo is read from ``release_runs`` so skill snapshots are scoped correctly
-    (skills are repo-level, §10.5). The graph fails closed if no features are approved
-    (constitution §5), so a premature trigger produces no artifacts.
+    load approved features → snapshot skills → generate blog+changelog → extract claims →
+    link claims to evidence → deterministic checks → Bedrock Guardrails → persist drafts +
+    claims → HALT at the Gate #2 interrupt. The run's repo is read from ``release_runs`` so
+    skill snapshots are scoped correctly (skills are repo-level, §10.5). The graph fails
+    closed if no features are approved (constitution §5).
+
+    Two modes mirror the release graph: an initial run halts at Gate #2; a ``--resume-decision``
+    continues the SAME ``thread_id`` past the interrupt (PRD §5.6). Cross-process resume needs
+    a durable checkpointer (the bundled ``MemorySaver`` is process-local).
     """
     with conn.cursor() as cur:
         cur.execute("SELECT repo FROM release_runs WHERE id = %s", (release_run_id,))
@@ -131,13 +144,35 @@ def _run_content_generation(
         AuroraSkillSnapshotSink(conn),
         BedrockModelClient.from_env(),
         AuroraArtifactSink(conn),
+        AuroraEvidenceMatcher(conn, release_run_id),
+        BedrockGuardrailScanner.from_env(),
+        AuroraClaimSink(conn),
+        AuroraArtifactReviewSink(conn),
         model_id=os.environ.get("BEDROCK_MODEL_ID", _DEFAULT_MODEL_ID),
+        dashboard_base_url=dashboard_base_url,
     )
+    config = {"configurable": {"thread_id": thread_id}}
+
+    if resume_decision is not None:
+        # Continue the halted graph past Gate #2 with the recorded human decision.
+        graph.invoke(Command(resume=resume_decision), config)
+        logger.info(
+            "content run %s resumed at Gate #2 (%s)", release_run_id, resume_decision
+        )
+        return 0
+
     initial = ContentRunState(
         release_run_id=release_run_id, thread_id=thread_id, repo=repo
     )
-    graph.invoke(initial, {"configurable": {"thread_id": thread_id}})
-    logger.info("content generation for run %s persisted drafts", release_run_id)
+    result = graph.invoke(initial, config)
+    if "__interrupt__" in result:
+        logger.info(
+            "content run %s halted at Gate #2 (thread %s); awaiting review",
+            release_run_id,
+            thread_id,
+        )
+    else:
+        logger.info("content run %s completed (thread %s)", release_run_id, thread_id)
     return 0
 
 
@@ -156,9 +191,15 @@ def main(argv: list[str] | None = None) -> int:
     repository = AuroraReleaseRunRepository(conn)
     try:
         if args.graph == "content_generation":
-            # Spec 005 slice: generate blog/changelog drafts from approved features.
-            # No interrupt/gate yet (that is spec 006), so it runs straight through.
-            return _run_content_generation(conn, release_run_id, thread_id)
+            # Spec 005/006 slice: generate drafts → claims → checks → Gate #2 interrupt.
+            # Initial run halts at Gate #2; --resume-decision continues the same thread.
+            return _run_content_generation(
+                conn,
+                release_run_id,
+                thread_id,
+                dashboard_base_url,
+                args.resume_decision,
+            )
 
         graph = build_release_intelligence_graph(
             repository,

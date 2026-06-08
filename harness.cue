@@ -7,7 +7,7 @@ import (
 harness: schema.#Harness & {
 	schemaVersion: "1.0.0"
 	metadata: {
-		linkedSpec: "specs/005-content-generation-blog-changelog-from-approved-features/spec.md"
+		linkedSpec: "specs/006-claim-extraction-evidence-linking-checks-gate-2/spec.md"
 		name:        "shipsignal"
 		owner:       "me"
 		testCommand: "npm test && pytest -q"
