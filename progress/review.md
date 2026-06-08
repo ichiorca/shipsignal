@@ -1,6 +1,6 @@
 # spec-kit review
 
-_Generated at 2026-06-08T18:31:57Z â€” projectRoot "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal" â€” 82 source file(s) scanned._
+_Generated at 2026-06-08T19:59:00Z â€” projectRoot "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal" â€” 100 source file(s) scanned._
 
 ## Specs (18)
 

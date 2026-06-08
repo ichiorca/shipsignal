@@ -70,13 +70,14 @@ export interface CreateReleaseRunArgs {
   readonly run_metadata?: Readonly<Record<string, unknown>>;
 }
 
-/** Insert a new run in `queued` status; returns the created row (incl. generated id). */
+/** Insert a new run in `created` status (PRD §13.2 initial state); returns the created
+ *  row (incl. generated id). The worker advances it through the lifecycle from here. */
 export async function insertReleaseRun(args: CreateReleaseRunArgs): Promise<ReleaseRun> {
   const id = randomUUID();
   const result = await query<ReleaseRunRow>(
     `INSERT INTO release_runs
        (id, repo, base_ref, head_ref, trigger_type, status, run_metadata_json)
-     VALUES ($1, $2, $3, $4, $5, 'queued', $6)
+     VALUES ($1, $2, $3, $4, $5, 'created', $6)
      RETURNING ${SELECT_COLUMNS}`,
     [
       id,

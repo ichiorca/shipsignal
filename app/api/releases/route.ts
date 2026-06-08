@@ -27,7 +27,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // Persist first (status=queued) so the run exists even if dispatch is retried.
+  // Persist first (status=created) so the run exists even if dispatch is retried.
   const run = await insertReleaseRun({
     repo: parsed.value.repo,
     base_ref: parsed.value.base_ref,

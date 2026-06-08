@@ -13,7 +13,12 @@ import os
 
 import psycopg
 
-from release_worker.status import RunStatus
+from release_worker.status import (
+    RunStatus,
+    assert_transition,
+    is_redundant_advance,
+    is_terminal,
+)
 
 
 def _require_tls(dsn: str) -> str:
@@ -65,26 +70,40 @@ class AuroraReleaseRunRepository:
             raise KeyError(release_run_id)
         return RunStatus(row[0])
 
-    def mark_running(self, release_run_id: str, thread_id: str) -> None:
+    def set_thread_id(self, release_run_id: str, thread_id: str) -> None:
+        """Persist the resumable thread id and stamp ``started_at`` once."""
         with self._conn.cursor() as cur:
             cur.execute(
                 """UPDATE release_runs
-                       SET status = %s,
-                           langgraph_thread_id = %s,
+                       SET langgraph_thread_id = %s,
                            started_at = COALESCE(started_at, now())
                      WHERE id = %s""",
-                (RunStatus.RUNNING.value, thread_id, release_run_id),
+                (thread_id, release_run_id),
             )
 
-    def mark_completed(self, release_run_id: str) -> None:
+    def advance(self, release_run_id: str, target: RunStatus) -> None:
+        """Advance the run to ``target``, validating the hop through the lattice.
+
+        Idempotent under re-dispatch (a no-op when the run is already at or past
+        ``target`` on the progress path); ``completed_at`` is stamped on a terminal hop.
+        Raises ``InvalidStatusTransitionError`` on an illegal out-of-order move.
+        """
+        current = self.get_status(release_run_id)
+        if is_redundant_advance(current, target):
+            return
+        assert_transition(current, target)
         with self._conn.cursor() as cur:
-            cur.execute(
-                """UPDATE release_runs
-                       SET status = %s,
-                           completed_at = now()
-                     WHERE id = %s""",
-                (RunStatus.COMPLETED.value, release_run_id),
-            )
+            if is_terminal(target):
+                cur.execute(
+                    "UPDATE release_runs SET status = %s, completed_at = now() "
+                    "WHERE id = %s",
+                    (target.value, release_run_id),
+                )
+            else:
+                cur.execute(
+                    "UPDATE release_runs SET status = %s WHERE id = %s",
+                    (target.value, release_run_id),
+                )
 
     def mark_failed(self, release_run_id: str) -> None:
         """Best-effort terminal-fail used by the entry point's error path."""

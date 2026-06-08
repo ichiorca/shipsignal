@@ -47,7 +47,12 @@ from release_worker.feature_nodes import (
 )
 from release_worker.feature_ports import FeatureSink, RedactedEvidenceReader
 from release_worker.model_client import ModelClient
-from release_worker.nodes import run_passthrough
+from release_worker.nodes import (
+    begin_run,
+    finalize_gate1,
+    mark_evidence_ready,
+    mark_features_pending_review,
+)
 from release_worker.repository import ReleaseRunRepository
 from release_worker.state import ReleaseRunState
 
@@ -74,16 +79,20 @@ def build_release_intelligence_graph(
     """
 
     def _collect_evidence(state: ReleaseRunState) -> ReleaseRunState:
-        # Side-effecting (S3 + Aurora writes), redacted-only by construction. State
-        # unchanged — raw evidence never enters it (constitution §5).
+        # T1 (spec 015): persist the thread id + move created → collecting_evidence
+        # before the work, then → evidence_ready once it is persisted, so the dashboard
+        # reflects the run's real position (PRD §13.2). The collect itself is
+        # side-effecting (S3 + Aurora writes), redacted-only by construction; state
+        # carries only the status (raw evidence never enters it, constitution §5).
+        advanced = begin_run(state, repository)
         collect_redact_persist_all(
-            state.release_run_id,
+            advanced.release_run_id,
             boundary_reader,
             diff_source,
             pr_source,
             evidence_sink,
         )
-        return state
+        return mark_evidence_ready(advanced, repository)
 
     def _cluster_score_persist(state: ReleaseRunState) -> ReleaseRunState:
         evidence = evidence_reader.list_redacted_evidence(state.release_run_id)
@@ -98,7 +107,9 @@ def build_release_intelligence_graph(
             feature_sink,
             lambda: uuid4().hex,
         )
-        return state.model_copy(update={"features": records})
+        # T1 (spec 015): the manifest is persisted → the run is now awaiting Gate #1.
+        pending = mark_features_pending_review(state, repository)
+        return pending.model_copy(update={"features": records})
 
     def _approve_feature_manifest(state: ReleaseRunState) -> ReleaseRunState:
         payload = build_gate1_payload(
@@ -119,11 +130,12 @@ def build_release_intelligence_graph(
         return state
 
     def _complete(state: ReleaseRunState) -> ReleaseRunState:
-        # Reuse the spec-001 completion node: it advances the run queued -> running ->
-        # completed (writing langgraph_thread_id), validating each hop through the shared
-        # status lattice. Reached only after Gate #1 resolves, so a run halted at the
-        # interrupt never auto-completes (constitution §5).
-        return run_passthrough(state, repository)
+        # T1 (spec 015): finalize the run from the Gate #1 decision — approved →
+        # features_approved (content generation takes over), rejected → cancelled, edited
+        # → stays pending for re-review. Each hop is validated through the shared status
+        # lattice. Reached only after the interrupt resolves, so a run halted at the gate
+        # never auto-advances (constitution §5 — no self-approval).
+        return finalize_gate1(state, repository)
 
     def _route(state: ReleaseRunState) -> str:
         assert state.gate_decision is not None  # set by the gate node before routing

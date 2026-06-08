@@ -41,6 +41,20 @@ export default async function ArtifactsPage({ params }: ArtifactsPageProps) {
           : `${artifacts.length} draft artifact${artifacts.length === 1 ? '' : 's'}.`}
       </p>
       <ArtifactDraftList artifacts={artifacts} />
+      {artifacts.length > 0 ? (
+        <nav aria-label="Claim inspector">
+          <h2>Inspect claims</h2>
+          <ul>
+            {artifacts.map((artifact) => (
+              <li key={artifact.id}>
+                <a href={`/artifacts/${artifact.id}`}>
+                  {artifact.title ?? artifact.artifact_type}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      ) : null}
     </main>
   );
 }

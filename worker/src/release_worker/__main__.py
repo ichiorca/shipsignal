@@ -99,6 +99,7 @@ from release_worker.s3_media_store import S3MediaStore
 from release_worker.skill_learning_graph import build_skill_learning_graph
 from release_worker.skill_learning_state import SkillLearningState
 from release_worker.state import ReleaseRunState
+from release_worker.status import RunStatus
 from release_worker.transient_retry import with_retries
 
 logger = logging.getLogger("release_worker")
@@ -160,8 +161,27 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _finalize_gate2_status(
+    repository: AuroraReleaseRunRepository,
+    release_run_id: str,
+    resume_decision: str,
+) -> None:
+    """Record the Gate #2 artifact decision on the run lifecycle (T1, spec 015).
+
+    approved → artifacts_approved (optional demo media may follow); rejected → cancelled;
+    edited → a re-review is required, so the run stays artifacts_pending_review (the
+    advance no-ops). Each hop is validated through the shared status lattice.
+    """
+    if resume_decision == GateDecision.APPROVED.value:
+        repository.advance(release_run_id, RunStatus.ARTIFACTS_APPROVED)
+    elif resume_decision == GateDecision.REJECTED.value:
+        repository.advance(release_run_id, RunStatus.CANCELLED)
+    # EDITED: stays artifacts_pending_review for re-review (no status change).
+
+
 def _run_content_generation(
     conn: psycopg.Connection,
+    repository: AuroraReleaseRunRepository,
     release_run_id: str,
     thread_id: str,
     dashboard_base_url: str,
@@ -212,11 +232,16 @@ def _run_content_generation(
             lambda: graph.invoke(Command(resume=resume_decision), config),
             label=f"content resume {release_run_id}",
         )
+        # T1 (spec 015): record the Gate #2 outcome on the run — approved →
+        # artifacts_approved (media may follow), rejected → cancelled, edited → no-op.
+        _finalize_gate2_status(repository, release_run_id, resume_decision)
         logger.info(
             "content run %s resumed at Gate #2 (%s)", release_run_id, resume_decision
         )
         return 0
 
+    # T1 (spec 015): features_approved → generating_artifacts as the content graph starts.
+    repository.advance(release_run_id, RunStatus.GENERATING_ARTIFACTS)
     initial = ContentRunState(
         release_run_id=release_run_id, thread_id=thread_id, repo=repo
     )
@@ -224,6 +249,8 @@ def _run_content_generation(
         lambda: graph.invoke(initial, config), label=f"content run {release_run_id}"
     )
     if "__interrupt__" in result:
+        # Drafts + claims are persisted; the run now awaits Gate #2.
+        repository.advance(release_run_id, RunStatus.ARTIFACTS_PENDING_REVIEW)
         logger.info(
             "content run %s halted at Gate #2 (thread %s); awaiting review",
             release_run_id,
@@ -236,6 +263,7 @@ def _run_content_generation(
 
 def _run_media_generation(
     conn: psycopg.Connection,
+    repository: AuroraReleaseRunRepository,
     release_run_id: str,
     thread_id: str,
     feature_id: str | None,
@@ -273,6 +301,8 @@ def _run_media_generation(
         AuroraMediaAssetSink(conn),
     )
     config = {"configurable": {"thread_id": thread_id}}
+    # T1 (spec 015): artifacts_approved → generating_media as the media graph starts.
+    repository.advance(release_run_id, RunStatus.GENERATING_MEDIA)
     initial = MediaRunState(
         release_run_id=release_run_id,
         thread_id=thread_id,
@@ -289,6 +319,8 @@ def _run_media_generation(
     with_retries(
         lambda: graph.invoke(initial, config), label=f"media run {release_run_id}"
     )
+    # T1 (spec 015): media assembled + stored → the run reaches its terminal completed.
+    repository.advance(release_run_id, RunStatus.COMPLETED)
     logger.info("media run %s completed (thread %s)", release_run_id, thread_id)
     return 0
 
@@ -444,6 +476,7 @@ def main(argv: list[str] | None = None) -> int:
             # Initial run halts at Gate #2; --resume-decision continues the same thread.
             return _run_content_generation(
                 conn,
+                repository,
                 release_run_id,
                 thread_id,
                 dashboard_base_url,
@@ -457,7 +490,7 @@ def main(argv: list[str] | None = None) -> int:
             # --feature-id scopes the demo_script to a triggered feature; spec 014 T3: a broken
             # step is surfaced as a 'broken' asset rather than failing the run opaquely.
             return _run_media_generation(
-                conn, release_run_id, thread_id, args.feature_id
+                conn, repository, release_run_id, thread_id, args.feature_id
             )
 
         if args.graph == "skill_learning":

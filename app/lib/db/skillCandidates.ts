@@ -8,6 +8,10 @@
 // parameterised and a run's candidates are scoped through their supporting learning_signals.
 
 import { query } from '@/app/lib/aurora.ts';
+import {
+  parseSkillCandidateStatus,
+  type SkillCandidateStatus,
+} from '@/app/lib/skillCandidateStatus.ts';
 
 /** One supporting learning signal shown in the Gate #3 "supporting evidence" panel (PRD §9.5). */
 export interface SupportingSignalView {
@@ -33,7 +37,7 @@ export interface SkillCandidateView {
   readonly proposal_reason: string;
   readonly miner_type: string;
   readonly confidence: number | null;
-  readonly status: string;
+  readonly status: SkillCandidateStatus;
   readonly supporting_signals: readonly SupportingSignalView[];
 }
 
@@ -115,7 +119,9 @@ function mapCandidate(
     proposal_reason: row.proposal_reason,
     miner_type: row.miner_type,
     confidence: asNum(row.confidence),
-    status: row.status,
+    // The DB is the source of truth; an out-of-lattice status means schema drift, which
+    // we surface loudly rather than rendering a bogus state (P5 / constitution §9.3).
+    status: parseSkillCandidateStatus(row.status),
     supporting_signals: signals,
   };
 }
@@ -149,4 +155,75 @@ export async function listSkillCandidatesForRun(
     candidates.push(mapCandidate(row, signals));
   }
   return candidates;
+}
+
+// --- T4 (spec 015): the §14.4 skills read API (not run-scoped, any status) -------------
+
+/** A lightweight candidate row for the admin list (no bodies/signals) — enough to show a
+ *  candidate's skill, proposed version, source, confidence, and lifecycle status. */
+export interface SkillCandidateSummary {
+  readonly id: string;
+  readonly skill_name: string;
+  readonly skill_path: string;
+  readonly proposed_version: string;
+  readonly miner_type: string;
+  readonly confidence: number | null;
+  readonly status: SkillCandidateStatus;
+  readonly created_at: string;
+}
+
+interface SummaryRow {
+  id: string;
+  skill_name: string;
+  skill_path: string;
+  proposed_version: string;
+  miner_type: string;
+  confidence: string | number | null;
+  status: string;
+  created_at: string | Date;
+}
+
+/** List skill-revision candidates across all runs and statuses (newest-first) for the
+ *  skill-admin surface (PRD §14.4 `GET /api/skills/candidates`). Lightweight: no bodies
+ *  or signals — `getSkillCandidate` loads those for one candidate. */
+export async function listSkillCandidates(
+  limit = 100,
+): Promise<readonly SkillCandidateSummary[]> {
+  const result = await query<SummaryRow>(
+    `SELECT id, skill_name, skill_path, proposed_version, miner_type, confidence,
+            status, created_at
+       FROM skill_revision_candidates
+      ORDER BY created_at DESC
+      LIMIT $1`,
+    [limit],
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    skill_name: row.skill_name,
+    skill_path: row.skill_path,
+    proposed_version: row.proposed_version,
+    miner_type: row.miner_type,
+    confidence: asNum(row.confidence),
+    status: parseSkillCandidateStatus(row.status),
+    created_at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+  }));
+}
+
+/** Fetch one skill-revision candidate by id — with its current/proposed body and
+ *  supporting signals — or null if it does not exist (PRD §14.4
+ *  `GET /api/skills/candidates/{candidateId}`). Any status (not just draft). */
+export async function getSkillCandidate(
+  candidateId: string,
+): Promise<SkillCandidateView | null> {
+  const result = await query<CandidateRow>(
+    `SELECT ${CANDIDATE_COLUMNS}
+       FROM skill_revision_candidates c
+       LEFT JOIN skill_repo_snapshots s ON s.id = c.base_skill_snapshot_id
+      WHERE c.id = $1`,
+    [candidateId],
+  );
+  const row = result.rows[0];
+  if (row === undefined) return null;
+  const signals = await loadSignals(asIdList(row.supporting_signal_ids));
+  return mapCandidate(row, signals);
 }

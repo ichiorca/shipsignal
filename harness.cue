@@ -7,7 +7,7 @@ import (
 harness: schema.#Harness & {
 	schemaVersion: "1.0.0"
 	metadata: {
-		linkedSpec: "specs/014-demo-media-trigger-broken-step-surfacing-and-schema-fix/spec.md"
+		linkedSpec: "specs/015-release-status-model-read-apis-and-skill-admin/spec.md"
 		name:        "shipsignal"
 		owner:       "me"
 		testCommand: "npm test && python -m pytest -q"

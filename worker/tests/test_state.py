@@ -13,15 +13,15 @@ from release_worker.state import ReleaseRunState
 from release_worker.status import RunStatus
 
 
-def test_defaults_to_queued() -> None:
+def test_defaults_to_created() -> None:
     state = ReleaseRunState(release_run_id="run-1", thread_id="lg_abc")
-    assert state.status is RunStatus.QUEUED
+    assert state.status is RunStatus.CREATED
 
 
 def test_is_frozen() -> None:
     state = ReleaseRunState(release_run_id="run-1", thread_id="lg_abc")
     with pytest.raises(ValidationError):
-        state.status = RunStatus.RUNNING  # type: ignore[misc]
+        state.status = RunStatus.COLLECTING_EVIDENCE  # type: ignore[misc]
 
 
 def test_rejects_empty_identifiers() -> None:
@@ -40,4 +40,4 @@ def test_model_copy_update_status_is_independent() -> None:
     state = ReleaseRunState(release_run_id="run-1", thread_id="lg_abc")
     advanced = state.model_copy(update={"status": RunStatus.COMPLETED})
     assert advanced.status is RunStatus.COMPLETED
-    assert state.status is RunStatus.QUEUED
+    assert state.status is RunStatus.CREATED

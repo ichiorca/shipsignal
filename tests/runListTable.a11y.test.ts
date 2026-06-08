@@ -30,7 +30,7 @@ const SAMPLE_RUNS: readonly ReleaseRun[] = [
     base_ref: 'v1.13.0^',
     head_ref: 'v1.13.0',
     trigger_type: 'release_tag',
-    status: 'running',
+    status: 'collecting_evidence',
     langgraph_thread_id: null,
     started_at: '2026-06-07T11:00:00.000Z',
     completed_at: null,
@@ -77,7 +77,7 @@ test('table is semantically structured: caption + column headers', () => {
 test('status is conveyed as text, not colour alone', () => {
   const doc = render(SAMPLE_RUNS);
   const statuses = [...doc.querySelectorAll('td[data-status] span')].map((s) => s.textContent);
-  assert.deepEqual(statuses, ['completed', 'running']);
+  assert.deepEqual(statuses, ['completed', 'collecting_evidence']);
 });
 
 test('each run links to its detail route (keyboard-focusable)', () => {

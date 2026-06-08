@@ -28,7 +28,7 @@ class ReleaseRunState(BaseModel):
 
     release_run_id: str = Field(min_length=1)
     thread_id: str = Field(min_length=1)
-    status: RunStatus = RunStatus.QUEUED
+    status: RunStatus = RunStatus.CREATED
     # Persisted feature manifest (pending_review) the gate surfaces for approval.
     features: tuple[FeatureRecord, ...] = ()
     # Resolved at the Gate #1 interrupt; drives the approved vs reject/edit routing.

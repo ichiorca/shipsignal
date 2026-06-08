@@ -12,11 +12,26 @@ import {
   setArtifactStatus,
 } from '@/app/lib/db/claims.ts';
 import { recordApproval } from '@/app/lib/db/approvals.ts';
+import { resolveOne } from '@/app/lib/readApi.ts';
 
 export const runtime = 'nodejs';
 
 interface RouteContext {
   readonly params: Promise<{ artifactId: string }>;
+}
+
+// T3 (spec 015) — GET /api/artifacts/{artifactId} (PRD §14.3). Read-only: returns one
+// artifact with its decomposed claims + evidence links (the claim-inspector payload), or
+// 404. P5 / constitution §5: claims are built from REDACTED evidence, so no raw text is
+// returned. Resolution logic lives in the unit-tested readApi helper.
+export async function GET(_request: Request, context: RouteContext): Promise<NextResponse> {
+  const { artifactId } = await context.params;
+  const result = await resolveOne(
+    () => getArtifactWithClaims(artifactId),
+    'artifact not found',
+    (artifact) => ({ artifact }),
+  );
+  return NextResponse.json(result.body, { status: result.status });
 }
 
 export async function PATCH(request: Request, context: RouteContext): Promise<NextResponse> {

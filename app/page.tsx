@@ -14,6 +14,9 @@ export default async function ReleaseFeedPage() {
   return (
     <main id="main">
       <h1>Release runs</h1>
+      <p>
+        <a href="/skills">Skill admin →</a>
+      </p>
       <p>{runs.length === 1 ? '1 run' : `${runs.length} runs`}</p>
       <RunListTable runs={runs} />
     </main>
