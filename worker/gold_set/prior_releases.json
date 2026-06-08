@@ -1,0 +1,48 @@
+{
+  "_comment": "T4 (spec 013) — internal gold set (PRD §17.3). Small, hand-curated set drawn from prior releases of THIS engine, used to regression-test graph/prompt/model changes. Synthetic/internal data only — no PII, no customer names, no secrets (constitution §5, domain-gdpr). Each case names a release boundary, the features that SHOULD be surfaced as marketable, the approved copy snippets a good draft echoes, the changes that must NOT be marketed (noise the clusterer should drop), and the claims a correct pipeline must flag as risky/unsupported.",
+  "cases": [
+    {
+      "case_id": "gold-001-evidence-redaction",
+      "base_ref": "v0.1.0",
+      "head_ref": "v0.2.0",
+      "expected_marketable_features": [
+        "Evidence redaction before persistence",
+        "Gate #1 feature manifest approval"
+      ],
+      "approved_copy": [
+        "Sensitive data is redacted before it ever reaches storage.",
+        "Reviewers approve a feature manifest before any content is generated."
+      ],
+      "non_marketable_changes": [
+        "Bump ruff to 0.6.9 in dev dependencies",
+        "Rename internal variable in evidence_nodes.py",
+        "Add debug logging to the boundary reader"
+      ],
+      "risky_claims": [
+        "Our redaction is 100% guaranteed to remove all personal data.",
+        "ShipSignal is fully GDPR-certified by the EU."
+      ]
+    },
+    {
+      "case_id": "gold-002-media-pipeline",
+      "base_ref": "v0.2.0",
+      "head_ref": "v0.3.0",
+      "expected_marketable_features": [
+        "Validated click-path demo capture",
+        "Audio narration digest"
+      ],
+      "approved_copy": [
+        "Generate a validated demo video straight from an approved script.",
+        "Ship an audio digest of every release for busy stakeholders."
+      ],
+      "non_marketable_changes": [
+        "Increase ffmpeg assembler timeout from 30s to 60s",
+        "Refactor the S3 key builder for readability"
+      ],
+      "risky_claims": [
+        "Demo videos render in under one second every time.",
+        "The narration voice is indistinguishable from a specific named celebrity."
+      ]
+    }
+  ]
+}

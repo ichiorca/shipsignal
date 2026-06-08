@@ -110,6 +110,16 @@ _NODE_ROUTES: tuple[NodeRoute, ...] = (
             "low-volume reasoning; Sonnet over Haiku for fidelity."
         ),
     ),
+    NodeRoute(
+        # spec 013 T3 — the LLM-as-judge rubric (PRD §17.2 / §12.1 "evaluation rubrics").
+        node="evaluate_rubric",
+        tier=ModelTier.STANDARD,
+        rationale=(
+            "Judging marketable-content quality across eight nuanced dimensions is real "
+            "evaluative reasoning; Haiku scores too coarsely to be a useful regression "
+            "signal, so the judge runs on Sonnet (the cheapest tier that meets the bar)."
+        ),
+    ),
 )
 
 

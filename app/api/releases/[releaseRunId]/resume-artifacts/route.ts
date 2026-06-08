@@ -11,6 +11,7 @@ import { artifactResumeSchema, parseBody } from '@/app/lib/artifactReview.ts';
 import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
 import { recordApproval } from '@/app/lib/db/approvals.ts';
 import { dispatchResume } from '@/app/lib/resumeDispatch.ts';
+import { dispatchEval } from '@/app/lib/evalDispatch.ts';
 
 export const runtime = 'nodejs';
 
@@ -70,8 +71,31 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
     );
   }
 
+  // T6 (spec 013) — eval runs AFTER artifact approval (PRD §17 / §8 DoD). On an approved
+  // manifest, trigger the worker's deterministic-metrics + LLM-as-judge eval step. Best-effort:
+  // a failed eval dispatch must NOT fail the approval (the gate decision already succeeded), so
+  // it is surfaced as a non-blocking warning. A rejected/edited manifest produces no shipped
+  // content to evaluate, so no eval is triggered.
+  let evalTriggered = false;
+  if (parsed.value.decision === 'approved') {
+    try {
+      await dispatchEval({ releaseRunId });
+      evalTriggered = true;
+    } catch (err) {
+      console.error('post-approval eval dispatch failed', {
+        runId: releaseRunId,
+        message: String(err),
+      });
+    }
+  }
+
   return NextResponse.json(
-    { release_run_id: releaseRunId, decision: parsed.value.decision, resumed: true },
+    {
+      release_run_id: releaseRunId,
+      decision: parsed.value.decision,
+      resumed: true,
+      eval_triggered: evalTriggered,
+    },
     { status: 200 },
   );
 }

@@ -50,6 +50,11 @@ from release_worker.aurora_content import (
     AuroraSkillSnapshotSink,
 )
 from release_worker.aurora_cost import AuroraCostTelemetrySink
+from release_worker.aurora_eval import (
+    AuroraApprovedArtifactReader,
+    AuroraEvalSink,
+    AuroraMetricInputsReader,
+)
 from release_worker.aurora_evidence import (
     AuroraBoundaryReader,
     S3AuroraEvidenceSink,
@@ -75,6 +80,7 @@ from release_worker.bedrock_client import BedrockModelClient
 from release_worker.content_graph import build_content_generation_graph
 from release_worker.content_state import ContentRunState
 from release_worker.elevenlabs_client import ElevenLabsSynthesizer
+from release_worker.eval_orchestration import run_product_evaluation
 from release_worker.feature_models import GateDecision
 from release_worker.ffmpeg_assembler import FfmpegVideoAssembler
 from release_worker.github_diff_source import GitHubDiffSource
@@ -138,6 +144,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
             "content_generation",
             "media_generation",
             "skill_learning",
+            "eval",
         ],
         default="release_intelligence",
         help="Which graph to run for this release run (default: release_intelligence).",
@@ -349,6 +356,34 @@ def _run_skill_learning(
     return 0
 
 
+def _run_eval(conn: psycopg.Connection, release_run_id: str) -> int:
+    """Run the product-evaluation step for one run AFTER artifact approval (spec 013, PRD §17).
+
+    Compute the deterministic §17.1 metrics (evidence coverage, unsupported-claim rate, edit
+    distance, approval latency, feature rejection rate, skill-candidate acceptance rate, media
+    success rate) and run the §17.2 LLM-as-judge rubric over each Gate#2-approved artifact, then
+    persist every result to ``eval_runs`` (migration 0012). This is a deterministic measurement
+    step, not a LangGraph graph — like the ``privacy`` CLI — so it owns no graph state or gate.
+
+    constitution §2 — every row scoped by ``release_run_id``; §5 — only scores + counts are
+    written (the artifact body the rubric reads never reaches a row); §1 — runs on the Actions
+    runner, never the Vercel app. The rubric uses the same Bedrock Converse seam (routed +
+    budgeted via the ``evaluate_rubric`` NodeRoute) and cost telemetry as every other call.
+    """
+    produced = run_product_evaluation(
+        release_run_id,
+        AuroraMetricInputsReader(conn, release_run_id),
+        AuroraApprovedArtifactReader(conn, release_run_id),
+        BedrockModelClient.from_env(
+            release_run_id=release_run_id,
+            telemetry_sink=AuroraCostTelemetrySink(conn),
+        ),
+        AuroraEvalSink(conn),
+    )
+    logger.info("eval run %s recorded %d eval rows", release_run_id, len(produced))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     raw = sys.argv[1:] if argv is None else argv
     # T1/T2/T3 (spec 010) — `python -m release_worker privacy <sub>` delegates to the GDPR
@@ -369,15 +404,24 @@ def main(argv: list[str] | None = None) -> int:
     # otherwise we derive a DETERMINISTIC per-(run, phase) id from loop_orchestration, so
     # re-dispatching a graph for a run lands on the SAME checkpointed thread rather than
     # forking a fresh one. Distinct per phase so the four graphs never collide on one run.
-    thread_id = args.thread_id or thread_id_for(
-        release_run_id, phase_from_graph(args.graph)
-    )
+    # The ``eval`` step is not a LangGraph graph (no checkpoint/thread); every other graph
+    # derives a deterministic per-(run, phase) thread id. Guard the derivation so ``eval``
+    # never hits ``phase_from_graph`` (which only knows the four graph phases).
+    thread_id = args.thread_id
+    if thread_id is None and args.graph != "eval":
+        thread_id = thread_id_for(release_run_id, phase_from_graph(args.graph))
     dashboard_base_url = os.environ.get("DASHBOARD_BASE_URL", "https://app.example.com")
 
     # One shared connection for the whole short-lived job (aurora-postgresql-rules).
     conn = connect_from_env()
     repository = AuroraReleaseRunRepository(conn)
     try:
+        if args.graph == "eval":
+            # Spec 013 slice: after artifact approval, compute §17.1 metrics + run the §17.2
+            # LLM-as-judge rubric over approved artifacts and persist to eval_runs. Not a graph
+            # (no gate/thread), so it branches before any thread-id use.
+            return _run_eval(conn, release_run_id)
+
         if args.graph == "content_generation":
             # Spec 005/006 slice: generate drafts → claims → checks → Gate #2 interrupt.
             # Initial run halts at Gate #2; --resume-decision continues the same thread.
