@@ -76,7 +76,8 @@ from release_worker.aurora_skill_learning import (
     AuroraSkillCandidateSink,
     AuroraSuppressionStore,
 )
-from release_worker.bedrock_client import BedrockModelClient
+from release_worker.bedrock_client import BedrockEmbeddingClient, BedrockModelClient
+from release_worker.checkpointer import build_checkpointer
 from release_worker.content_graph import build_content_generation_graph
 from release_worker.content_policy import load_named_entity_policy
 from release_worker.content_state import ContentRunState
@@ -187,6 +188,8 @@ def _run_content_generation(
     thread_id: str,
     dashboard_base_url: str,
     resume_decision: str | None,
+    embedder: BedrockEmbeddingClient,
+    checkpointer: object,
 ) -> int:
     """Run content_generation_graph for one run through Gate #2 (spec 005/006, PRD §5.3).
 
@@ -216,7 +219,9 @@ def _run_content_generation(
             telemetry_sink=AuroraCostTelemetrySink(conn),
         ),
         AuroraArtifactSink(conn),
-        AuroraEvidenceMatcher(conn, release_run_id),
+        # T3 (spec 017): inject the embedding seam so claim grounding ranks evidence by the
+        # pgvector cosine path (lexical fallback when a run has no embedded rows). PRD §11.
+        AuroraEvidenceMatcher(conn, release_run_id, embed_claim=embedder.embed),
         BedrockGuardrailScanner.from_env(),
         AuroraClaimSink(conn),
         AuroraArtifactReviewSink(conn),
@@ -225,6 +230,9 @@ def _run_content_generation(
         # T3 (spec 016) — the §18.2 layer-2 named checks use the project-supplied policy
         # (codenames/customer names/internal hostnames), loaded from CONTENT_POLICY_PATH.
         named_entity_policy=load_named_entity_policy(),
+        # T1 (spec 017): durable checkpointer so a Gate #2 thread resumes across the separate
+        # Actions invocation that records the reviewer's decision (PRD §5.6).
+        checkpointer=checkpointer,
     )
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -271,6 +279,7 @@ def _run_media_generation(
     release_run_id: str,
     thread_id: str,
     feature_id: str | None,
+    checkpointer: object,
 ) -> int:
     """Run media_generation_graph for one run (spec 008, PRD §5.4).
 
@@ -303,6 +312,9 @@ def _run_media_generation(
         FfmpegVideoAssembler.from_env(),
         S3MediaStore(s3_client_from_env(), _require_env("MEDIA_BUCKET")),
         AuroraMediaAssetSink(conn),
+        # T1 (spec 017): durable checkpointer so a transient-retry re-entry resumes the same
+        # checkpointed media thread across process boundaries rather than forking (PRD §5.6).
+        checkpointer=checkpointer,
     )
     config = {"configurable": {"thread_id": thread_id}}
     # T1 (spec 015): artifacts_approved → generating_media as the media graph starts.
@@ -336,6 +348,7 @@ def _run_skill_learning(
     dashboard_base_url: str,
     resume_decision: str | None,
     reviewer: str | None,
+    checkpointer: object,
 ) -> int:
     """Run skill_learning_graph for one run through Gate #3 (spec 009, PRD §5.5).
 
@@ -377,6 +390,9 @@ def _run_skill_learning(
         BedrockGuardrailScanner.from_env(),
         dashboard_base_url=dashboard_base_url,
         named_entity_policy=load_named_entity_policy(),
+        # T1 (spec 017): durable checkpointer so a Gate #3 thread resumes across the separate
+        # Actions invocation that records the reviewer's approve/reject decision (PRD §5.6).
+        checkpointer=checkpointer,
     )
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -479,6 +495,15 @@ def main(argv: list[str] | None = None) -> int:
             # (no gate/thread), so it branches before any thread-id use.
             return _run_eval(conn, release_run_id)
 
+        # T1 (spec 017): one durable checkpointer for whichever graph this invocation runs, so
+        # a thread written by the initial invocation survives into the separate Actions
+        # invocation that resumes it (PRD §5.6). Falls back to MemorySaver when no DSN is set
+        # (dev/test). T2/T3 (spec 017): one embedding seam shared by evidence persistence
+        # (release graph) and claim grounding (content graph). Built after the eval early-return
+        # so the non-graph eval step pays for neither.
+        checkpointer = build_checkpointer()
+        embedder = BedrockEmbeddingClient.from_env()
+
         if args.graph == "content_generation":
             # Spec 005/006 slice: generate drafts → claims → checks → Gate #2 interrupt.
             # Initial run halts at Gate #2; --resume-decision continues the same thread.
@@ -489,6 +514,8 @@ def main(argv: list[str] | None = None) -> int:
                 thread_id,
                 dashboard_base_url,
                 args.resume_decision,
+                embedder,
+                checkpointer,
             )
 
         if args.graph == "media_generation":
@@ -498,7 +525,12 @@ def main(argv: list[str] | None = None) -> int:
             # --feature-id scopes the demo_script to a triggered feature; spec 014 T3: a broken
             # step is surfaced as a 'broken' asset rather than failing the run opaquely.
             return _run_media_generation(
-                conn, repository, release_run_id, thread_id, args.feature_id
+                conn,
+                repository,
+                release_run_id,
+                thread_id,
+                args.feature_id,
+                checkpointer,
             )
 
         if args.graph == "skill_learning":
@@ -512,6 +544,7 @@ def main(argv: list[str] | None = None) -> int:
                 dashboard_base_url,
                 args.resume_decision,
                 args.reviewer,
+                checkpointer,
             )
 
         graph = build_release_intelligence_graph(
@@ -529,6 +562,11 @@ def main(argv: list[str] | None = None) -> int:
             ),
             AuroraFeatureSink(conn),
             dashboard_base_url=dashboard_base_url,
+            # T2 (spec 017): embed each redacted evidence row on persist so §11 semantic
+            # retrieval has vectors to rank. T1: durable checkpointer so the Gate #1 thread
+            # resumes across the separate Actions invocation that records the decision.
+            embedder=embedder,
+            checkpointer=checkpointer,
         )
         config = {"configurable": {"thread_id": thread_id}}
 

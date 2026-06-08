@@ -143,6 +143,11 @@ class EvidenceRecord(BaseModel):
     risk_flags: tuple[str, ...] = ()
     confidence: float | None = None
     metadata: dict[str, str | int] = Field(default_factory=dict)
+    # T2 (spec 017) — the pgvector embedding of ``redacted_excerpt`` (PRD §11 semantic
+    # retrieval). ``None`` when no embedding seam was wired (the claim-grounding /
+    # clustering paths then fall back to lexical matching). Computed only from the
+    # already-redacted excerpt, so the embedding never derives from raw PII/secrets (§5).
+    embedding: tuple[float, ...] | None = None
 
 
 # --- T1 (spec 003) — PR/issue collection contract ---------------------------------

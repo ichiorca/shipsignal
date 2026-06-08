@@ -38,6 +38,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from release_worker.cost_telemetry import CostTelemetrySink, meter_call
+from release_worker.embedding_ports import EMBEDDING_DIMS
 from release_worker.model_routing import resolve_model
 from release_worker.token_budget import BudgetTracker, TokenBudget
 
@@ -213,3 +214,56 @@ class BedrockModelClient:
 
         self._cache[idempotency_key] = parsed
         return parsed
+
+
+class BedrockEmbeddingClient:
+    """``EmbeddingClient`` over a Bedrock text-embedding model (T2, spec 017 / PRD §11).
+
+    Embeddings are a distinct Bedrock modality with no Converse surface, so this uses
+    ``invoke_model`` against the configured embedding model (Titan Text Embeddings v2 by
+    default) rather than Converse — the "Converse, not InvokeModel" rule (aws-bedrock-rules)
+    governs *generation* payloads, which still route through ``BedrockModelClient``. Same
+    Bedrock service, same IAM-role credentials (no static keys), same region as the
+    generation client; the embedding model id is read from env as config, never hardcoded.
+
+    constitution §5: callers only ever pass ``redacted_excerpt`` text (the seam is
+    downstream of the redact node), so no raw PII/secret reaches the embedding model, and we
+    never log the embedded text or the vector.
+    """
+
+    _DEFAULT_EMBED_MODEL = "amazon.titan-embed-text-v2:0"
+
+    def __init__(
+        self, client: object, model_id: str, dims: int = EMBEDDING_DIMS
+    ) -> None:
+        self._client = client
+        self._model_id = model_id
+        self._dims = dims
+
+    @classmethod
+    def from_env(cls) -> BedrockEmbeddingClient:
+        """Build from the ambient IAM-role credentials. ``BEDROCK_EMBED_MODEL_ID`` overrides
+        the default embedding model; ``AWS_REGION`` selects the region (default us-east-1)."""
+        region = os.environ.get("AWS_REGION", "us-east-1")
+        model_id = os.environ.get("BEDROCK_EMBED_MODEL_ID", cls._DEFAULT_EMBED_MODEL)
+        client = boto3.client("bedrock-runtime", region_name=region)
+        return cls(client, model_id)
+
+    def embed(self, text: str) -> list[float]:
+        """Return the embedding of one redacted text as an ``EMBEDDING_DIMS``-long vector.
+
+        ``dimensions`` is requested explicitly so the returned vector always matches the
+        ``evidence_items.embedding vector(1536)`` column. The response is treated as
+        untrusted boundary data: a missing/short/non-numeric vector fails fast rather than
+        persisting a malformed embedding."""
+        body = json.dumps({"inputText": text, "dimensions": self._dims})
+        response = self._client.invoke_model(  # type: ignore[attr-defined]
+            modelId=self._model_id, body=body
+        )
+        payload = json.loads(response["body"].read())
+        raw = payload.get("embedding")
+        if not isinstance(raw, list) or len(raw) != self._dims:
+            raise ValueError(
+                f"Bedrock embedding model {self._model_id} returned an unexpected vector"
+            )
+        return [float(component) for component in raw]

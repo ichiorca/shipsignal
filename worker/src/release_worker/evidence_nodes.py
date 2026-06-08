@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from release_worker.embedding_ports import EmbeddingClient
 from release_worker.evidence_models import (
     CodeSignal,
     CollectedEvidence,
@@ -141,6 +142,7 @@ def persist_evidence(
     release_run_id: str,
     redacted: tuple[RedactedEvidence, ...],
     sink: EvidenceSink,
+    embedder: EmbeddingClient | None = None,
 ) -> tuple[EvidenceRecord, ...]:
     """Upload each redacted full excerpt to S3 and insert its Aurora row (T4).
 
@@ -148,11 +150,22 @@ def persist_evidence(
     The S3 object holds the redacted full excerpt; the row carries the redacted
     summary inline plus the object's URI (AC2/AC3). Raw text is never inlined in
     Aurora and never returned to the caller.
+
+    T2 (spec 017): when an ``embedder`` is wired, each row also carries the pgvector
+    embedding of its (already redacted) excerpt so §11 semantic retrieval has something to
+    rank; with no embedder the embedding stays ``None`` and downstream retrieval falls back
+    to lexical. The embedding is computed only from ``redacted_excerpt`` — the seam is
+    strictly downstream of the redact node (§5), so no raw text reaches the embedding model.
     """
     records: list[EvidenceRecord] = []
     for item in redacted:
         evidence_id = uuid4().hex
         s3_uri = sink.store_blob(release_run_id, evidence_id, item.redacted_excerpt)
+        embedding = (
+            tuple(embedder.embed(item.redacted_excerpt))
+            if embedder is not None
+            else None
+        )
         record = EvidenceRecord(
             evidence_id=evidence_id,
             release_run_id=release_run_id,
@@ -167,6 +180,7 @@ def persist_evidence(
             risk_flags=item.risk_flags,
             confidence=item.confidence,
             metadata=item.metadata,
+            embedding=embedding,
         )
         sink.record(record)
         records.append(record)
@@ -178,17 +192,19 @@ def collect_redact_persist(
     reader: BoundaryReader,
     source: DiffSource,
     sink: EvidenceSink,
+    embedder: EmbeddingClient | None = None,
 ) -> tuple[EvidenceRecord, ...]:
     """Run the four evidence nodes in order for one run (PRD §5.2 sub-chain).
 
     This is the composition the graph node wraps: load → collect → redact → persist.
     Keeping it as one tested function means the redact-before-persist ordering is
-    proven end-to-end against the fakes, independent of langgraph wiring.
+    proven end-to-end against the fakes, independent of langgraph wiring. ``embedder``
+    (T2, spec 017) is threaded to persist so embeddings are computed post-redaction.
     """
     boundary = load_release_boundary(release_run_id, reader)
     collected = collect_git_diff(boundary, source)
     redacted = redact_evidence(collected)
-    return persist_evidence(release_run_id, redacted, sink)
+    return persist_evidence(release_run_id, redacted, sink, embedder)
 
 
 # --- T1 (spec 003) — collect_prs_and_issues ---------------------------------------
@@ -321,6 +337,7 @@ def collect_redact_persist_all(
     diff_source: DiffSource,
     pr_source: PullRequestSource,
     sink: EvidenceSink,
+    embedder: EmbeddingClient | None = None,
 ) -> tuple[EvidenceRecord, ...]:
     """The full release-intelligence collection chain for one run (PRD §5.2, T4).
 
@@ -330,6 +347,11 @@ def collect_redact_persist_all(
     *local* scope and redacted before persist — raw excerpts never enter LangGraph
     state, Aurora, or S3 (constitution §5 "redact before persist, before state"). The
     diff is fetched and validated exactly once and reused across the diff-derived nodes.
+
+    T2 (spec 017): ``embedder`` is threaded to persist so each redacted row also carries a
+    pgvector embedding for §11 semantic retrieval (``None`` ⇒ lexical fallback downstream).
+    The embedding is derived from the redacted excerpt only, so it stays downstream of the
+    redact gate (§5).
     """
     boundary = load_release_boundary(release_run_id, reader)
     source_url = _compare_url(boundary)
@@ -342,4 +364,4 @@ def collect_redact_persist_all(
         *extract_code_signals(diff, source_url),
     )
     redacted = redact_evidence(collected)
-    return persist_evidence(release_run_id, redacted, sink)
+    return persist_evidence(release_run_id, redacted, sink, embedder)

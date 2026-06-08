@@ -19,6 +19,7 @@ import boto3
 import psycopg
 
 from release_worker.evidence_models import EvidenceRecord, ReleaseBoundary
+from release_worker.vector_retrieval import format_vector_literal
 
 # evidence_id / release_run_id are uuid4 hex or canonical UUIDs we mint — never
 # attacker-controlled — but we still validate before composing an S3 key so a future
@@ -86,15 +87,27 @@ class S3AuroraEvidenceSink:
         return f"s3://{self._bucket}/{key}"
 
     def record(self, item: EvidenceRecord) -> None:
+        # T2 (spec 017): persist the pgvector ``embedding`` alongside the redacted row so
+        # §11 semantic retrieval has a vector to rank. ``None`` binds as SQL NULL (older
+        # runs / no embedder) and the cosine query's ``embedding IS NOT NULL`` filter then
+        # leaves that row to the lexical fallback. The vector is built from the redacted
+        # excerpt only (§5). The value is bound as a parameter (cast ::vector), never
+        # string-interpolated, so it carries no injection surface.
+        embedding_literal = (
+            format_vector_literal(item.embedding)
+            if item.embedding is not None
+            else None
+        )
         with self._conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO evidence_items (
                     id, release_run_id, evidence_type, source, source_url, repo,
                     file_path, symbol_name, raw_excerpt_s3_uri, redacted_excerpt,
-                    confidence, risk_flags, metadata_json
+                    embedding, confidence, risk_flags, metadata_json
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s::vector, %s, %s::jsonb, %s::jsonb
                 )
                 """,
                 (
@@ -108,6 +121,7 @@ class S3AuroraEvidenceSink:
                     item.symbol_name,
                     item.raw_excerpt_s3_uri,
                     item.redacted_excerpt,
+                    embedding_literal,
                     item.confidence,
                     json.dumps(list(item.risk_flags)),
                     json.dumps(item.metadata),

@@ -22,6 +22,12 @@ from release_worker.claim_models import (
     ClaimEvidenceCandidate,
     ClaimEvidenceLink,
 )
+from release_worker.vector_retrieval import (
+    VECTOR_CANDIDATE_SQL,
+    choose_candidates,
+    format_vector_literal,
+    rows_to_candidates,
+)
 
 # Bound the candidate set the matcher returns so one claim can't pull an unbounded scan into
 # the deterministic scorer (constitution §6 cost/latency).
@@ -54,9 +60,15 @@ class AuroraEvidenceMatcher:
     def candidates_for_claim(
         self, claim_text: str
     ) -> tuple[ClaimEvidenceCandidate, ...]:
-        if self._embed_claim is not None:
-            return self._pgvector_candidates(claim_text)
-        return self._all_candidates()
+        # T3 (spec 017): when an embedding seam is wired, rank by pgvector cosine distance
+        # and fall back to the all-rows lexical set only when the run has no embedded rows
+        # (the "vector path with lexical fallback" AC). Without a seam, lexical is the sole
+        # path. Either way only ``redacted_excerpt`` leaves the DB (§5).
+        if self._embed_claim is None:
+            return self._all_candidates()
+        return choose_candidates(
+            self._pgvector_candidates(claim_text), self._all_candidates
+        )
 
     def _pgvector_candidates(
         self, claim_text: str
@@ -64,30 +76,19 @@ class AuroraEvidenceMatcher:
         """Top-K evidence ranked by pgvector cosine distance to the claim embedding.
 
         ``1 - (embedding <=> %s)`` is the cosine similarity carried for transparency; the
-        node still applies the deterministic lexical score on top before grounding."""
-        embedding = self._embed_claim(claim_text) if self._embed_claim else None
-        vector_literal = "[" + ",".join(repr(float(x)) for x in (embedding or [])) + "]"
+        node still applies the deterministic lexical score on top before grounding. Returns
+        empty when no run evidence carries an embedding — the caller then falls back to the
+        lexical all-rows set."""
+        if self._embed_claim is None:  # pragma: no cover - guarded by the caller
+            return ()
+        vector_literal = format_vector_literal(self._embed_claim(claim_text))
         with self._conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT id, redacted_excerpt,
-                       1 - (embedding <=> %s::vector) AS similarity
-                  FROM evidence_items
-                 WHERE release_run_id = %s AND embedding IS NOT NULL
-                 ORDER BY embedding <=> %s::vector
-                 LIMIT %s
-                """,
+                VECTOR_CANDIDATE_SQL,
                 (vector_literal, self._release_run_id, vector_literal, self._top_k),
             )
             rows = cur.fetchall()
-        return tuple(
-            ClaimEvidenceCandidate(
-                evidence_id=str(row[0]),
-                redacted_excerpt=row[1] or "",
-                similarity=float(row[2]) if row[2] is not None else None,
-            )
-            for row in rows
-        )
+        return rows_to_candidates(rows)
 
     def _all_candidates(self) -> tuple[ClaimEvidenceCandidate, ...]:
         """Every redacted evidence item for the run (no semantic ranking available)."""

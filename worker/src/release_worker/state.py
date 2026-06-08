@@ -13,7 +13,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from release_worker.feature_models import FeatureRecord, GateDecision
+from release_worker.evidence_models import EvidenceRecord
+from release_worker.feature_models import (
+    CandidateFeature,
+    FeatureRecord,
+    GateDecision,
+    ScoredFeature,
+)
 from release_worker.status import RunStatus
 
 
@@ -22,6 +28,12 @@ class ReleaseRunState(BaseModel):
 
     Carries enough to identify the run and drive its status, plus (spec 004) the feature
     manifest persisted before Gate #1 and the human decision resolved at the gate.
+
+    T4 (spec 017): the §5.2 manifest stage is now three discrete graph nodes
+    (cluster → score → persist) instead of one fused node, so the redacted evidence and
+    the intermediate candidate/scored features are threaded through state for per-node
+    checkpoint/observability granularity matching the other three graphs. Every field here
+    is redacted/structured data — no raw excerpt ever enters state (constitution §5).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -29,6 +41,12 @@ class ReleaseRunState(BaseModel):
     release_run_id: str = Field(min_length=1)
     thread_id: str = Field(min_length=1)
     status: RunStatus = RunStatus.CREATED
+    # T4 (spec 017): redacted evidence loaded once, then reused by the score + persist
+    # nodes (no raw field on EvidenceRecord, so this is safe to checkpoint, §5).
+    evidence: tuple[EvidenceRecord, ...] = ()
+    # T4 (spec 017): clustered-but-unscored, then scored candidates between the split nodes.
+    candidates: tuple[CandidateFeature, ...] = ()
+    scored: tuple[ScoredFeature, ...] = ()
     # Persisted feature manifest (pending_review) the gate surfaces for approval.
     features: tuple[FeatureRecord, ...] = ()
     # Resolved at the Gate #1 interrupt; drives the approved vs reject/edit routing.
