@@ -29,9 +29,12 @@ from collections.abc import Callable
 
 from pydantic import ValidationError
 
+from release_worker.claim_ports import GuardrailScanner
 from release_worker.content_nodes import parse_frontmatter
+from release_worker.content_policy import NamedEntityPolicy, scan_named_entities
 from release_worker.feature_models import GateDecision
 from release_worker.model_client import ModelClient
+from release_worker.redaction import redact
 from release_worker.skill_learning_models import (
     Gate3Payload,
     ImpactedSkill,
@@ -41,6 +44,7 @@ from release_worker.skill_learning_models import (
     PromotionRecord,
     RawReviewSignal,
     SignalCluster,
+    SkillCandidatePromotionBlockedError,
     SkillGateResolution,
     SkillRevisionCandidate,
     SkillRevisionDraft,
@@ -53,6 +57,10 @@ from release_worker.skill_learning_ports import (
     SkillCandidateSink,
     SuppressionStore,
 )
+
+# T4 (spec 016) — the empty/default named-entity policy for the layer-3 scan: the pattern-based
+# private-URL / internal-hostname / default-security checks run even with no project config.
+_DEFAULT_NAMED_POLICY = NamedEntityPolicy()
 
 # Bumped whenever the draft prompt/template changes so the audit trail records which template
 # produced a candidate body (§18.3).
@@ -503,6 +511,63 @@ def route_after_gate3(resolution: SkillGateResolution) -> str:
         if decision is GateDecision.APPROVED
         else "record_rejection_and_suppression"
     )
+
+
+# --- T4 (spec 016) — pre-promotion content scan (§18.2 layer 3) --------------------
+
+
+def scan_skill_candidate_body(
+    candidate: SkillRevisionCandidate,
+    scanner: GuardrailScanner,
+    policy: NamedEntityPolicy,
+) -> tuple[str, ...]:
+    """Scan ONE proposed skill candidate's rendered file through the §18.2 layer-3 checks (T4).
+
+    Runs the SAME two-stage content scan as a generated artifact, over the exact bytes that would
+    replace the repo SKILL.md (frontmatter + proposed body):
+
+    * deterministic — the redaction secret/PII patterns + the §12.3/§18.1 named checks
+      (codenames, customer names, private URLs, internal hostnames, security-implementation
+      details), independent of Guardrails;
+    * Bedrock Guardrails — a ``GUARDRAIL_INTERVENED`` verdict on the rendered file.
+
+    Returns the sorted set of finding codes that fired (``secret_leak`` for any redaction flag, the
+    named-check codes, ``guardrail_blocked``); ``()`` means the candidate is clean. Never echoes the
+    matched value (constitution §5). Pure of any repo write — it only reads + scans.
+    """
+    file_content = render_skill_file(
+        candidate.proposed_frontmatter, candidate.proposed_body
+    )
+    codes: set[str] = set()
+    if redact(file_content).risk_flags:
+        codes.add("secret_leak")
+    codes.update(scan_named_entities(file_content, policy))
+    if scanner.scan(file_content).blocked:
+        codes.add("guardrail_blocked")
+    return tuple(sorted(codes))
+
+
+def prevent_unsafe_promotion(
+    candidates: tuple[SkillRevisionCandidate, ...],
+    scanner: GuardrailScanner,
+    policy: NamedEntityPolicy | None = None,
+) -> tuple[SkillRevisionCandidate, ...]:
+    """Gate the approved candidates through the layer-3 scan before any repo write (T4, AC3).
+
+    Reached on the approved branch of Gate #3, BEFORE ``update_repo_skill_file``. Every candidate's
+    rendered body is scanned (``scan_skill_candidate_body``); if ANY candidate trips a check the
+    whole promotion is refused with ``SkillCandidatePromotionBlockedError`` — fail closed, so a
+    failing scan blocks the promotion and NO ``SKILL.md`` is overwritten (constitution §5 / §18.2
+    layer 3). When every candidate is clean the candidates pass through unchanged. ``policy`` carries
+    the project-supplied lists; ``None`` runs the pattern-based + default-security checks only.
+    """
+    named_policy = policy if policy is not None else _DEFAULT_NAMED_POLICY
+    fired: set[str] = set()
+    for candidate in candidates:
+        fired.update(scan_skill_candidate_body(candidate, scanner, named_policy))
+    if fired:
+        raise SkillCandidatePromotionBlockedError(tuple(sorted(fired)))
+    return candidates
 
 
 # --- T6 — promote (approved) | reject + suppress (rejected) ------------------------

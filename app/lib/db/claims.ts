@@ -217,7 +217,10 @@ export async function setArtifactStatus(
   );
 }
 
-/** Apply a reviewer edit to an artifact's title/body (the narrative, never the claims). */
+/** Apply a reviewer edit to an artifact's title/body (the narrative, never the claims).
+ *  T1 (spec 016) / §18.3: recompute content_hash from the POST-edit title/body in the same
+ *  statement ("hash on update"), using the same canonical pre-image (title || E'\n\n' || body) as
+ *  the worker and migration 0015, so an edited artifact's stored hash always matches its content. */
 export async function applyArtifactEdit(
   artifactId: string,
   edit: { readonly title?: string | undefined; readonly body_markdown?: string | undefined },
@@ -226,6 +229,14 @@ export async function applyArtifactEdit(
     `UPDATE artifacts
         SET title         = COALESCE($2, title),
             body_markdown = COALESCE($3, body_markdown),
+            content_hash  = encode(
+              digest(
+                coalesce(COALESCE($2, title), '') || E'\n\n' ||
+                coalesce(COALESCE($3, body_markdown), ''),
+                'sha256'
+              ),
+              'hex'
+            ),
             updated_at    = now()
       WHERE id = $1`,
     [artifactId, edit.title ?? null, edit.body_markdown ?? null],

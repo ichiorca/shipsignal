@@ -234,3 +234,20 @@ class MalformedSkillDraftError(ValueError):
         super().__init__(
             "the model skill-revision draft was malformed and was rejected"
         )
+
+
+class SkillCandidatePromotionBlockedError(ValueError):
+    """Raised when a proposed skill body fails the §18.2 layer-3 pre-promotion content scan (T4,
+    spec 016).
+
+    Fails closed: a deterministic secret/named-entity hit or a Bedrock Guardrails intervention on
+    the rendered candidate file blocks promotion BEFORE any repo SKILL.md is written (constitution
+    §5 — no unsafe overwrite). The codes that fired are carried for the audit trail; the message is
+    user-safe and never echoes the matched value.
+    """
+
+    def __init__(self, codes: tuple[str, ...]) -> None:
+        self.codes = codes
+        super().__init__(
+            "skill candidate blocked by pre-promotion content scan; promotion refused"
+        )

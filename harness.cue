@@ -7,7 +7,7 @@ import (
 harness: schema.#Harness & {
 	schemaVersion: "1.0.0"
 	metadata: {
-		linkedSpec: "specs/015-release-status-model-read-apis-and-skill-admin/spec.md"
+		linkedSpec: "specs/016-audit-trail-hashing-and-redaction-hardening/spec.md"
 		name:        "shipsignal"
 		owner:       "me"
 		testCommand: "npm test && python -m pytest -q"

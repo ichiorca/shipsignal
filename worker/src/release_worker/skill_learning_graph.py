@@ -26,6 +26,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from release_worker.claim_ports import GuardrailScanner
+from release_worker.content_policy import NamedEntityPolicy
 from release_worker.model_client import ModelClient
 from release_worker.skill_learning_nodes import (
     build_gate3_payload,
@@ -36,6 +38,7 @@ from release_worker.skill_learning_nodes import (
     mark_candidate_promoted,
     parse_skill_gate,
     persist_candidate_in_aurora,
+    prevent_unsafe_promotion,
     record_rejection_and_suppression,
     route_after_gate3,
     select_impacted_skills,
@@ -60,8 +63,10 @@ def build_skill_learning_graph(
     suppressions: SuppressionStore,
     candidate_sink: SkillCandidateSink,
     repo_writer: RepoSkillWriter,
+    guardrail_scanner: GuardrailScanner,
     *,
     dashboard_base_url: str,
+    named_entity_policy: NamedEntityPolicy | None = None,
     checkpointer: object | None = None,
 ):
     """Compile the skill-learning graph through Gate #3 (PRD §5.5).
@@ -122,8 +127,19 @@ def build_skill_learning_graph(
             update={"gate_resolution": parse_skill_gate(decision_raw)}
         )
 
+    def _scan_skill_candidate(state: SkillLearningState) -> SkillLearningState:
+        # T4 (spec 016) — §18.2 layer-3 pre-promotion content scan. Reached on the approved branch
+        # BEFORE the repo write: a deterministic secret/named-entity hit or a Guardrails
+        # intervention on the rendered candidate raises SkillCandidatePromotionBlockedError, so the
+        # run fails closed and NO SKILL.md is overwritten (constitution §5 / AC3).
+        prevent_unsafe_promotion(
+            state.candidates, guardrail_scanner, named_entity_policy
+        )
+        return state
+
     def _update_repo_skill_file(state: SkillLearningState) -> SkillLearningState:
-        # Reached only on the approved branch — the single repo write (§5 blast radius).
+        # Reached only on the approved branch, AFTER the layer-3 scan passed — the single repo
+        # write (§5 blast radius).
         assert state.gate_resolution is not None  # set by the gate node before routing
         records = update_repo_skill_file(
             state.candidates, state.gate_resolution, repo_writer
@@ -155,6 +171,7 @@ def build_skill_learning_graph(
     graph.add_node("draft_skill_revision_candidate", _draft_skill_revision_candidate)
     graph.add_node("persist_candidate_in_aurora", _persist_candidate_in_aurora)
     graph.add_node("approve_skill_candidate", _approve_skill_candidate)
+    graph.add_node("scan_skill_candidate", _scan_skill_candidate)
     graph.add_node("update_repo_skill_file", _update_repo_skill_file)
     graph.add_node("mark_candidate_promoted", _mark_candidate_promoted)
     graph.add_node(
@@ -168,14 +185,17 @@ def build_skill_learning_graph(
     graph.add_edge("select_impacted_skills", "draft_skill_revision_candidate")
     graph.add_edge("draft_skill_revision_candidate", "persist_candidate_in_aurora")
     graph.add_edge("persist_candidate_in_aurora", "approve_skill_candidate")
+    # Approved → layer-3 scan → (if it passes) the single repo write. The scan node fails the run
+    # closed if any candidate trips a check, so promotion is blocked before any SKILL.md is written.
     graph.add_conditional_edges(
         "approve_skill_candidate",
         _route,
         {
-            "update_repo_skill_file": "update_repo_skill_file",
+            "update_repo_skill_file": "scan_skill_candidate",
             "record_rejection_and_suppression": "record_rejection_and_suppression",
         },
     )
+    graph.add_edge("scan_skill_candidate", "update_repo_skill_file")
     graph.add_edge("update_repo_skill_file", "mark_candidate_promoted")
     graph.add_edge("mark_candidate_promoted", END)
     graph.add_edge("record_rejection_and_suppression", END)

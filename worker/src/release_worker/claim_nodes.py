@@ -56,9 +56,14 @@ from release_worker.claim_ports import (
     GuardrailScanner,
 )
 from release_worker.content_models import ArtifactDraft
+from release_worker.content_policy import NamedEntityPolicy, scan_named_entities
 from release_worker.feature_models import GateDecision
 from release_worker.model_client import ModelClient
 from release_worker.redaction import redact
+
+# T3 (spec 016) — the empty/default named-entity policy: no configured codenames/customer names,
+# but the pattern-based private-URL / internal-hostname / default-security checks still run.
+_DEFAULT_NAMED_POLICY = NamedEntityPolicy()
 
 # Bumped whenever the extraction prompt/template changes so the audit trail (§18.3) records
 # which template produced a claim set.
@@ -350,15 +355,25 @@ def _finding(
 def run_deterministic_policy_checks(
     artifacts: tuple[ArtifactDraft, ...],
     claims: tuple[ArtifactClaim, ...],
+    policy: NamedEntityPolicy | None = None,
 ) -> tuple[PolicyFinding, ...]:
-    """Deterministic pre-Guardrail checks over each artifact + its claims (T4, PRD §12.3).
+    """Deterministic pre-Guardrail checks over each artifact + its claims (T4 spec 006 / T3 spec 016).
 
-    Blocking findings (the artifact cannot reach Gate #2 approval): a leaked secret/PII in
-    the body or a claim (reusing the redaction patterns), an unsupported high-risk claim, and
-    an unsupported metric claim (a cited figure with no grounding evidence — the fabricated-ROI
-    case). Advisory findings (flag, don't block): unsupported low/medium claims and
-    unverifiable superlatives. ``detail`` is user-safe — it never echoes the matched value.
+    This is the §18.2 layer-2 (pre-review artifact validation) gate, independent of Bedrock
+    Guardrails. Blocking findings (the artifact cannot reach Gate #2 approval):
+
+    * a leaked secret/PII in the body or a claim (reusing the redaction patterns);
+    * a named §12.3/§18.1 entity in the body — a codename, customer name, private URL, internal
+      hostname, or security-implementation detail (T3, spec 016, project-configurable via ``policy``);
+    * an unsupported high-risk claim, and an unsupported metric claim (a cited figure with no
+      grounding evidence — the fabricated-ROI case).
+
+    Advisory findings (flag, don't block): unsupported low/medium claims and unverifiable
+    superlatives. ``detail`` is user-safe — it never echoes the matched value. ``policy`` carries
+    the project-supplied codename/customer/hostname lists; ``None`` runs the pattern-based +
+    default-security checks only (the gate is never empty, AC4 — new checks fail closed).
     """
+    named_policy = policy if policy is not None else _DEFAULT_NAMED_POLICY
     findings: list[PolicyFinding] = []
     claims_by_artifact: dict[str, list[ArtifactClaim]] = {}
     for claim in claims:
@@ -373,6 +388,19 @@ def run_deterministic_policy_checks(
                     "secret_leak",
                     FindingSeverity.BLOCKING,
                     f"redaction patterns fired in the body: {', '.join(body_flags)}",
+                )
+            )
+
+        # T3 (spec 016) — named §12.3/§18.1 checks on the publishable body. Each category that
+        # fires is a BLOCKING finding so the leak can never reach Gate #2 (fail closed). The
+        # detail names only the category code, never the matched codename/customer/host value (§5).
+        for code in scan_named_entities(artifact.body_markdown, named_policy):
+            findings.append(
+                _finding(
+                    artifact.artifact_id,
+                    code,
+                    FindingSeverity.BLOCKING,
+                    f"deterministic content check fired: {code}",
                 )
             )
 

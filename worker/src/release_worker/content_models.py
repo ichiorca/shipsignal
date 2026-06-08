@@ -20,7 +20,9 @@ versions that produced it (§18.3 audit trail).
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from release_worker.content_hash import artifact_content_hash
 
 # Frozen + extra="forbid" everywhere: skill files and model output are untrusted input,
 # so unknown fields are rejected rather than silently carried, and values can't be mutated
@@ -121,6 +123,18 @@ class ArtifactDraft(BaseModel):
     prompt_version: str = Field(min_length=1)
     # skill_name -> content_hash of the snapshot that fed this artifact's prompt.
     skill_versions: dict[str, str] = Field(default_factory=dict)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def content_hash(self) -> str:
+        """T1 (spec 016) — the §18.3 tamper-evident artifact hash, derived from the content.
+
+        A ``computed_field`` (not an input) so EVERY draft inherently carries a content hash and
+        it can never drift from the title/body it describes: ``model_copy`` (used by the check
+        nodes to flip ``status='blocked'``) recomputes it from the carried content, and the
+        persist sink writes exactly this value. Same content → same hash (stable across retries),
+        matching the dashboard's recompute on edit/approval and the SQL backfill."""
+        return artifact_content_hash(self.title, self.body_markdown)
 
 
 class SkillUsageEvent(BaseModel):

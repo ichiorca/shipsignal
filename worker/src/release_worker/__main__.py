@@ -78,6 +78,7 @@ from release_worker.aurora_skill_learning import (
 )
 from release_worker.bedrock_client import BedrockModelClient
 from release_worker.content_graph import build_content_generation_graph
+from release_worker.content_policy import load_named_entity_policy
 from release_worker.content_state import ContentRunState
 from release_worker.elevenlabs_client import ElevenLabsSynthesizer
 from release_worker.eval_orchestration import run_product_evaluation
@@ -221,6 +222,9 @@ def _run_content_generation(
         AuroraArtifactReviewSink(conn),
         model_id=os.environ.get("BEDROCK_MODEL_ID", _DEFAULT_MODEL_ID),
         dashboard_base_url=dashboard_base_url,
+        # T3 (spec 016) — the §18.2 layer-2 named checks use the project-supplied policy
+        # (codenames/customer names/internal hostnames), loaded from CONTENT_POLICY_PATH.
+        named_entity_policy=load_named_entity_policy(),
     )
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -368,7 +372,11 @@ def _run_skill_learning(
         AuroraSuppressionStore(conn),
         AuroraSkillCandidateSink(conn),
         FilesystemRepoSkillWriter.from_env(),
+        # T4 (spec 016) — §18.2 layer-3: the proposed skill body is scanned through the SAME
+        # published Bedrock Guardrail as artifacts before any repo SKILL.md is overwritten.
+        BedrockGuardrailScanner.from_env(),
         dashboard_base_url=dashboard_base_url,
+        named_entity_policy=load_named_entity_policy(),
     )
     config = {"configurable": {"thread_id": thread_id}}
 

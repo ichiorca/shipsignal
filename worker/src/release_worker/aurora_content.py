@@ -133,13 +133,17 @@ class AuroraArtifactSink:
         self._conn = conn
 
     def insert_artifact(self, record: ArtifactDraft) -> None:
+        # T1 (spec 016) / §18.3 — persist the tamper-evident content_hash alongside the draft so
+        # every artifact row carries it from insert (the computed_field is a pure function of the
+        # title/body, stable across retries and matching the dashboard/SQL recompute).
         with self._conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO artifacts (
                     id, release_run_id, feature_id, artifact_type, title,
-                    body_markdown, status, model_id, prompt_version, skill_versions_json
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    body_markdown, status, model_id, prompt_version, skill_versions_json,
+                    content_hash
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     record.artifact_id,
@@ -152,6 +156,7 @@ class AuroraArtifactSink:
                     record.model_id,
                     record.prompt_version,
                     json.dumps(record.skill_versions),
+                    record.content_hash,
                 ),
             )
 

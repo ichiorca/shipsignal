@@ -14,6 +14,7 @@ import {
   setArtifactStatus,
 } from '@/app/lib/db/claims.ts';
 import { recordApproval } from '@/app/lib/db/approvals.ts';
+import { snapshotApprovedArtifact } from '@/app/lib/db/approvedSnapshots.ts';
 
 export const runtime = 'nodejs';
 
@@ -58,13 +59,23 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
     );
   }
 
-  // Record the human decision first (immutable audit trail), then apply the status.
-  await recordApproval({
+  // Record the human decision first (immutable audit trail), then snapshot the approved content,
+  // then flip the status. T2 (spec 016) / §18.3: the approved content is captured into the
+  // immutable approved_artifact_snapshots record (distinct from the mutable artifact row) BEFORE
+  // the status flips — if the snapshot write fails the request fails (500) and the artifact is
+  // never marked approved, so an approval can never exist without its tamper-evident audit record
+  // (fail closed, constitution §5).
+  const approvalId = await recordApproval({
     target_type: 'artifact',
     target_id: artifactId,
     decision: 'approved',
     reviewer: parsed.value.reviewer,
     notes: parsed.value.notes,
+  });
+  await snapshotApprovedArtifact(artifact, {
+    reviewer: parsed.value.reviewer,
+    decision: 'approved',
+    approval_id: approvalId,
   });
   await setArtifactStatus(artifactId, 'approved');
 

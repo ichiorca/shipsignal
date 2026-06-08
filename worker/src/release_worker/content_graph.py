@@ -54,6 +54,7 @@ from release_worker.content_nodes import (
     persist_reviewable_artifacts,
     snapshot_active_skills,
 )
+from release_worker.content_policy import NamedEntityPolicy
 from release_worker.content_ports import (
     ApprovedFeatureReader,
     ArtifactSink,
@@ -78,6 +79,7 @@ def build_content_generation_graph(
     *,
     model_id: str,
     dashboard_base_url: str,
+    named_entity_policy: NamedEntityPolicy | None = None,
     checkpointer: object | None = None,
 ):
     """Compile the content-generation graph through Gate #2.
@@ -126,7 +128,11 @@ def build_content_generation_graph(
         return state.model_copy(update={"claims": claims, "claim_links": links})
 
     def _run_deterministic_policy_checks(state: ContentRunState) -> ContentRunState:
-        findings = run_deterministic_policy_checks(state.artifacts, state.claims)
+        # T3 (spec 016) — the §18.2 layer-2 named checks (codenames/customer names/private URLs/
+        # internal hostnames/security details) run here with the project-supplied policy.
+        findings = run_deterministic_policy_checks(
+            state.artifacts, state.claims, named_entity_policy
+        )
         return state.model_copy(update={"check_findings": findings})
 
     def _run_bedrock_guardrails(state: ContentRunState) -> ContentRunState:
