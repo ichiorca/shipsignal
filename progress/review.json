@@ -1,6 +1,6 @@
 {
   "projectRoot": "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal",
-  "generatedAt": "2026-06-08T17:53:44Z",
+  "generatedAt": "2026-06-08T18:31:57Z",
   "specs": [
     {
       "id": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
@@ -140,6 +140,7 @@
         "pass11.log",
         "pass12.log",
         "pass13.log",
+        "pass14.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -149,7 +150,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 3
+      "sourceCites": 8
     },
     {
       "taskId": "T2",
@@ -161,6 +162,7 @@
         "pass11.log",
         "pass12.log",
         "pass13.log",
+        "pass14.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -170,7 +172,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 4
+      "sourceCites": 6
     },
     {
       "taskId": "T3",
@@ -182,6 +184,7 @@
         "pass11.log",
         "pass12.log",
         "pass13.log",
+        "pass14.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -191,7 +194,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 4
+      "sourceCites": 5
     },
     {
       "taskId": "T4",
@@ -203,6 +206,7 @@
         "pass11.log",
         "pass12.log",
         "pass13.log",
+        "pass14.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -212,7 +216,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 10
+      "sourceCites": 15
     },
     {
       "taskId": "T5",
@@ -224,6 +228,7 @@
         "pass11.log",
         "pass12.log",
         "pass13.log",
+        "pass14.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -254,6 +259,6 @@
   "untraced": null,
   "constitutionIndex": null,
   "uncitedPrinciples": null,
-  "sourceFilesScanned": 79,
+  "sourceFilesScanned": 82,
   "findings": null
 }

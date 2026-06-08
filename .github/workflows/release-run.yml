@@ -65,6 +65,14 @@ on:
         description: 'Reviewer who resolved the gate (Gate #3 promotion/rejection record)'
         required: false
         type: string
+      feature_id:
+        # T1 (spec 014) — the approved feature a reviewer triggered generate-demo for; the
+        # media_generation worker scopes the demo_script lookup to it. Declared here so the
+        # dispatch from app/lib/mediaDispatch.ts (which sends `feature_id`) is accepted;
+        # ignored by the other graphs.
+        description: 'Approved feature to render demo media for (media_generation only)'
+        required: false
+        type: string
 
 # Least privilege: OIDC token to assume the AWS role + read the repo. Nothing else.
 permissions:
@@ -138,4 +146,5 @@ jobs:
             --graph "${{ inputs.graph }}" \
             ${{ inputs.resume_decision && format('--resume-decision {0}', inputs.resume_decision) || '' }} \
             ${{ inputs.thread_id && format('--thread-id {0}', inputs.thread_id) || '' }} \
-            ${{ inputs.reviewer && format('--reviewer {0}', inputs.reviewer) || '' }}
+            ${{ inputs.reviewer && format('--reviewer {0}', inputs.reviewer) || '' }} \
+            ${{ inputs.feature_id && format('--feature-id {0}', inputs.feature_id) || '' }}

@@ -26,10 +26,12 @@ class AuroraDemoScriptReader:
         self._conn = conn
 
     def load_approved_demo_script(
-        self, release_run_id: str
+        self, release_run_id: str, feature_id: str | None = None
     ) -> tuple[str, str, str, str | None]:
         # Scoped to the run + artifact_type + status='approved' (constitution §2 tenancy / §5
-        # no unapproved content). Newest approved demo_script wins if more than one exists.
+        # no unapproved content). spec 014 T1 — when the reviewer triggered generate-demo for a
+        # SPECIFIC feature, scope to that feature's approved demo_script; otherwise the run's
+        # newest approved demo_script wins. The feature filter is parameterised, never inlined.
         with self._conn.cursor() as cur:
             cur.execute(
                 """
@@ -38,10 +40,11 @@ class AuroraDemoScriptReader:
                  WHERE release_run_id = %s
                    AND artifact_type = 'demo_script'
                    AND status = 'approved'
+                   AND (%s::uuid IS NULL OR feature_id = %s::uuid)
                  ORDER BY updated_at DESC
                  LIMIT 1
                 """,
-                (release_run_id,),
+                (release_run_id, feature_id, feature_id),
             )
             row = cur.fetchone()
         if row is None:
@@ -61,13 +64,17 @@ class AuroraMediaAssetSink:
         self._conn = conn
 
     def insert_media_asset(self, asset: MediaAsset) -> None:
+        # spec 014 T2 — the §10.6 columns are artifact_id / metadata_json / transcript; the app
+        # model keeps its semantic names (source_artifact_id / provenance) and maps to them here
+        # (the documented, consistent mapping applied app-wide). A broken-step asset (§16.3) may
+        # carry a NULL s3_uri/content_type — the 0013 CHECK permits that only for status='broken'.
         with self._conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO media_assets (
-                    id, release_run_id, feature_id, source_artifact_id, media_type,
-                    s3_uri, content_type, duration_seconds, status, provenance_json
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    id, release_run_id, feature_id, artifact_id, media_type,
+                    s3_uri, content_type, duration_seconds, transcript, status, metadata_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                 """,
                 (
                     asset.media_id,
@@ -78,6 +85,7 @@ class AuroraMediaAssetSink:
                     asset.s3_uri,
                     asset.content_type,
                     asset.duration_seconds,
+                    asset.transcript,
                     asset.status,
                     json.dumps(asset.provenance),
                 ),

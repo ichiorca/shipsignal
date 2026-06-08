@@ -39,6 +39,10 @@ class MediaRunState(BaseModel):
     model_id: str = Field(min_length=1)
     output_format: str = Field(min_length=1)
 
+    # spec 014 T1 — when generate-demo was triggered for a SPECIFIC approved feature, the load
+    # node scopes the demo_script lookup to it; None keeps the run-wide newest-approved behaviour.
+    requested_feature_id: str | None = None
+
     # Set by load_approved_demo_script (fails closed if no approved demo_script).
     source_artifact_id: str | None = None
     feature_id: str | None = None
@@ -53,4 +57,13 @@ class MediaRunState(BaseModel):
     narration: NarrationResult | None = None
     assembled_media: AssembledMedia | None = None
     s3_uri: str | None = None
+    # spec 014 T3 / §16.3 — the raw recording stored SEPARATELY from the final video.
+    raw_s3_uri: str | None = None
     media_asset: MediaAsset | None = None
+
+    # spec 014 T3 / §16.3 — set by the node guard when a step raises a NON-transient error: the
+    # graph then routes to handle_broken_step (which persists a broken asset) instead of letting
+    # the failure crash the whole run opaquely. ``failed_step`` is the node name; ``failure_detail``
+    # is a user-safe summary (never the offending model output / selector — constitution §5).
+    failed_step: str | None = None
+    failure_detail: str | None = None

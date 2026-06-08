@@ -59,11 +59,13 @@ function player(asset: MediaAsset): ReactElement {
   const accessibleName = `${mediaTypeLabel(asset.media_type)} player`;
   const src = playbackSrc(asset.id);
   const isAudio = asset.media_type === 'release_audio_digest';
+  // content_type is nullable on a broken asset; default to a generic type for the <source>.
+  const sourceType = asset.content_type ?? 'application/octet-stream';
   if (isAudio) {
     return createElement(
       'audio',
       { controls: true, preload: 'none', 'aria-label': accessibleName, 'data-media-id': asset.id },
-      createElement('source', { src, type: asset.content_type }),
+      createElement('source', { src, type: sourceType }),
       'Your browser does not support the audio element.',
     );
   }
@@ -76,8 +78,45 @@ function player(asset: MediaAsset): ReactElement {
       'data-media-id': asset.id,
       width: 640,
     },
-    createElement('source', { src, type: asset.content_type }),
+    createElement('source', { src, type: sourceType }),
     'Your browser does not support the video element.',
+  );
+}
+
+/** spec 014 T4 / §16.3 — surface a BROKEN media asset: name the step that failed and the
+ *  user-safe reason, instead of a player (there is no playable final media). The broken step is
+ *  carried in provenance.broken_step (the §10.6 metadata_json) by the worker. */
+function brokenNotice(asset: MediaAsset): ReactElement {
+  const step = asset.provenance['broken_step'] ?? 'unknown step';
+  const reason = asset.provenance['failure'];
+  const children: ReactElement[] = [
+    createElement(
+      'p',
+      { key: 'step', 'data-broken-step': step },
+      `Demo generation broke at step: ${step}.`,
+    ),
+  ];
+  if (reason !== undefined) {
+    children.push(createElement('p', { key: 'reason' }, `Reason: ${reason}`));
+  }
+  children.push(
+    createElement(
+      'p',
+      { key: 'recover' },
+      'Re-trigger generation from the feature once the issue is resolved.',
+    ),
+  );
+  return createElement('div', { 'data-broken-for': asset.id }, ...children);
+}
+
+/** spec 014 T4 / §16.3 — the preserved narration transcript, shown as text when captured. */
+function transcriptText(asset: MediaAsset): ReactElement | null {
+  if (asset.transcript === null || asset.transcript.trim() === '') return null;
+  return createElement(
+    'details',
+    { 'data-transcript-for': asset.id },
+    createElement('summary', null, 'Narration transcript'),
+    createElement('p', null, asset.transcript),
   );
 }
 
@@ -101,8 +140,19 @@ function durationText(asset: MediaAsset): string {
   return `Duration: ${Math.round(asset.duration_seconds)}s`;
 }
 
-function assetSection(asset: MediaAsset): ReactElement {
+function assetSection(asset: MediaAsset, index: number, total: number): ReactElement {
   const headingId = `media-${asset.id}`;
+  const isBroken = asset.status === 'broken';
+  // Each headed <section> is a `region` landmark; axe requires a UNIQUE accessible name per
+  // landmark, and a run can hold several assets of the same media_type (e.g. two demo videos),
+  // so disambiguate the heading with a 1-based ordinal when there is more than one asset.
+  const headingText =
+    total > 1 ? `${mediaTypeLabel(asset.media_type)} (${index + 1} of ${total})` : mediaTypeLabel(asset.media_type);
+  // A broken asset has no playable final media — surface the broken step instead of a player
+  // (spec 014 T4 / §16.3). A ready asset plays its final media and shows its duration.
+  const body: (ReactElement | null)[] = isBroken
+    ? [brokenNotice(asset)]
+    : [createElement('p', { key: 'dur' }, durationText(asset)), player(asset)];
   return createElement(
     'section',
     {
@@ -111,10 +161,10 @@ function assetSection(asset: MediaAsset): ReactElement {
       'data-media-id': asset.id,
       'data-media-status': asset.status,
     },
-    createElement('h2', { id: headingId }, mediaTypeLabel(asset.media_type)),
+    createElement('h2', { id: headingId }, headingText),
     createElement('p', { 'data-status': asset.status }, `Status: ${asset.status}`),
-    createElement('p', null, durationText(asset)),
-    player(asset),
+    ...body,
+    transcriptText(asset),
     transcriptLink(asset),
     createElement('h3', null, 'Provenance'),
     provenanceList(asset),
@@ -129,5 +179,9 @@ export function MediaPreview({ assets }: MediaPreviewProps): ReactElement {
       createElement('p', null, 'No demo media has been generated for this run yet.'),
     );
   }
-  return createElement('div', null, ...assets.map(assetSection));
+  return createElement(
+    'div',
+    null,
+    ...assets.map((asset, index) => assetSection(asset, index, assets.length)),
+  );
 }

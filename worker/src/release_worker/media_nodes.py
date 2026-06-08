@@ -59,20 +59,25 @@ from release_worker.model_client import ModelClient
 CLICKPATH_PROMPT_VERSION = "clickpath-v1"
 # The media kinds this graph renders (PRD §8.1 demo_script → demo_video, audio digest).
 MEDIA_TYPE_DEMO_VIDEO = "demo_video"
+# spec 014 T3 / §16.3 — a media asset whose generation broke at a step. Persisted (not raised)
+# so the dashboard surfaces WHICH step broke instead of the run failing opaquely.
+MEDIA_STATUS_BROKEN = "broken"
 
 
 # --- load_approved_demo_script ----------------------------------------------------
 
 
 def load_approved_demo_script(
-    release_run_id: str, reader: DemoScriptReader
+    release_run_id: str, reader: DemoScriptReader, feature_id: str | None = None
 ) -> tuple[str, str, str, str | None]:
     """Load the run's Gate#2-approved ``demo_script`` (PRD §5.4).
 
     Fails closed via the reader (``NoApprovedDemoScriptError``) if none is approved — the media
-    graph renders nothing from an unapproved script (constitution §5). Returns
-    ``(artifact_id, title, body_markdown, feature_id)``."""
-    return reader.load_approved_demo_script(release_run_id)
+    graph renders nothing from an unapproved script (constitution §5). spec 014 T1: when
+    ``feature_id`` is given (generate-demo triggered for a specific approved feature), the lookup
+    is scoped to that feature's demo_script. Returns ``(artifact_id, title, body_markdown,
+    feature_id)``."""
+    return reader.load_approved_demo_script(release_run_id, feature_id)
 
 
 # --- T2 — generate + validate click-path ------------------------------------------
@@ -278,6 +283,8 @@ def persist_media_asset(
     narration: NarrationResult,
     click_path: ValidatedClickPath,
     sink: MediaAssetSink,
+    transcript: str | None = None,
+    raw_s3_uri: str | None = None,
 ) -> MediaAsset:
     """Persist the ``media_assets`` row (T5, PRD §5.4 / migration 0007).
 
@@ -285,7 +292,8 @@ def persist_media_asset(
     provenance is the §18.3 audit trail: the source demo_script artifact, the validated
     click-path hash Playwright executed, the narration content hash (the ElevenLabs idempotency
     key), and the voice/model ids — so the rendered media is traceable to its approved source +
-    inputs. Returns the persisted ``MediaAsset``."""
+    inputs. spec 014 T3/§16.3 — ``raw_s3_uri`` records the SEPARATELY-stored raw recording's key
+    in the provenance, and ``transcript`` preserves the narrated script. Returns the ``MediaAsset``."""
     provenance = {
         "source_artifact_id": source_artifact_id or "",
         "clickpath_hash": _click_path_hash(click_path),
@@ -295,6 +303,8 @@ def persist_media_asset(
         "output_format": narration.output_format,
         "prompt_version": CLICKPATH_PROMPT_VERSION,
     }
+    if raw_s3_uri:
+        provenance["raw_s3_uri"] = raw_s3_uri
     asset = MediaAsset(
         media_id=media_id,
         release_run_id=release_run_id,
@@ -304,7 +314,71 @@ def persist_media_asset(
         s3_uri=s3_uri,
         content_type=media.content_type,
         duration_seconds=media.duration_seconds,
+        transcript=transcript,
         status="ready",
+        provenance=provenance,
+    )
+    sink.insert_media_asset(asset)
+    return asset
+
+
+# --- T3 (spec 014) — store the raw recording separately; persist a broken-step asset ----------
+
+
+def store_raw_recording(
+    release_run_id: str,
+    media_id: str,
+    capture: CaptureResult,
+    store: MediaStore,
+) -> str:
+    """Upload the raw Playwright recording to a SEPARATE S3 key and return its ``s3://`` URI
+    (spec 014 T3 / §16.3 "store raw recording and final video separately").
+
+    Run before narration/assembly so the pre-narration capture is durably stored even if a later
+    step breaks — the broken-step asset can then point a reviewer at what was captured. s3-rules:
+    the store writes a private, SSE, run-scoped sanitized key distinct from the final media key."""
+    return store.store_raw(release_run_id, media_id, capture)
+
+
+def record_broken_step(
+    media_id: str,
+    release_run_id: str,
+    source_artifact_id: str | None,
+    feature_id: str | None,
+    broken_step: str,
+    failure_detail: str,
+    sink: MediaAssetSink,
+    raw_s3_uri: str | None = None,
+    transcript: str | None = None,
+) -> MediaAsset:
+    """Persist a §16.3 BROKEN media asset that names the step that failed (spec 014 T3).
+
+    Instead of letting a media-step failure fail the whole run opaquely, the graph routes here and
+    records a ``status='broken'`` row whose ``provenance`` (the §10.6 ``metadata_json``) carries the
+    broken step name + a USER-SAFE failure summary (never the offending model output / selector —
+    constitution §5). ``s3_uri`` is the separately-stored raw recording if capture had succeeded,
+    else ``None`` (the 0013 CHECK permits a null s3_uri only for a broken row). ``transcript``
+    preserves the narration script when narration had completed before the break. The dashboard
+    renders this row's broken state + step (spec 014 T4)."""
+    provenance = {
+        "source_artifact_id": source_artifact_id or "",
+        "broken_step": broken_step,
+        "failure": failure_detail,
+        "prompt_version": CLICKPATH_PROMPT_VERSION,
+    }
+    if raw_s3_uri:
+        provenance["raw_s3_uri"] = raw_s3_uri
+    asset = MediaAsset(
+        media_id=media_id,
+        release_run_id=release_run_id,
+        feature_id=feature_id,
+        source_artifact_id=source_artifact_id,
+        media_type=MEDIA_TYPE_DEMO_VIDEO,
+        s3_uri=raw_s3_uri,  # the raw recording if we got that far, else None (broken-before-capture)
+        content_type=None,
+        duration_seconds=None,
+        transcript=transcript,
+        status=MEDIA_STATUS_BROKEN,
         provenance=provenance,
     )
     sink.insert_media_asset(asset)

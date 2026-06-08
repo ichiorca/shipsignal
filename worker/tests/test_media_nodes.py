@@ -33,6 +33,7 @@ from release_worker.media_models import (
     ValidatedClickPath,
 )
 from release_worker.media_nodes import (
+    MEDIA_STATUS_BROKEN,
     MEDIA_TYPE_DEMO_VIDEO,
     assemble_video_ffmpeg,
     generate_click_path_json,
@@ -40,8 +41,10 @@ from release_worker.media_nodes import (
     load_approved_demo_script,
     narration_content_hash,
     persist_media_asset,
+    record_broken_step,
     run_playwright_capture,
     store_media_s3,
+    store_raw_recording,
     validate_click_path,
 )
 from release_worker.media_ports import (
@@ -318,6 +321,7 @@ def test_persist_media_asset_records_provenance_and_uri() -> None:
     )
 
     assert sink.assets == [asset]
+    assert asset.s3_uri is not None  # a successful asset always has stored media
     assert asset.s3_uri.startswith("s3://")
     assert asset.media_type == MEDIA_TYPE_DEMO_VIDEO
     # Provenance carries the audit trail (source artifact, click-path hash, narration key, voice).
@@ -353,3 +357,111 @@ def test_persist_media_asset_clickpath_hash_is_deterministic() -> None:
         return asset.provenance["clickpath_hash"]
 
     assert _persist() == _persist()
+
+
+# --- T1 (spec 014) — the load node scopes to the reviewer's chosen feature ---------
+
+
+def test_load_forwards_requested_feature_id() -> None:
+    """AC (T1): generate-demo for a specific feature scopes the demo_script lookup to it."""
+    reader = _reader()
+    load_approved_demo_script(_RUN_ID, reader, _FEATURE_ID)
+    assert reader.requested_feature_ids == [_FEATURE_ID]
+
+
+def test_load_without_feature_id_is_run_wide() -> None:
+    reader = _reader()
+    load_approved_demo_script(_RUN_ID, reader)
+    assert reader.requested_feature_ids == [None]
+
+
+# --- T3 (spec 014) — raw recording stored separately; broken-step asset persisted --
+
+
+def test_store_raw_recording_uses_a_separate_key_from_the_final_media() -> None:
+    """AC/§16.3: the raw recording and the final video are stored separately."""
+    store = InMemoryMediaStore()
+    final = AssembledMedia(
+        local_path="/tmp/demo.mp4", content_type="video/mp4", duration_seconds=8.0
+    )
+    final_uri = store_media_s3(_RUN_ID, _MEDIA_ID, final, store)
+    raw_uri = store_raw_recording(_RUN_ID, _MEDIA_ID, _capture(), store)
+    assert raw_uri != final_uri  # distinct objects
+    assert store.stored == [f"media/{_RUN_ID}/{_MEDIA_ID}.mp4"]
+    assert store.stored_raw == [f"media/{_RUN_ID}/{_MEDIA_ID}-raw.mp4"]
+
+
+def test_record_broken_step_persists_status_and_step() -> None:
+    """AC/§16.3: a failed media step is persisted as a 'broken' asset naming the step, instead
+    of failing the whole run opaquely. The raw recording (if any) is its s3_uri; the narration
+    script is preserved as the transcript."""
+    sink = InMemoryMediaAssetSink()
+    raw_uri = f"s3://media-bucket/media/{_RUN_ID}/{_MEDIA_ID}-raw.webm"
+    asset = record_broken_step(
+        _MEDIA_ID,
+        _RUN_ID,
+        _ART_ID,
+        _FEATURE_ID,
+        "assemble_video_ffmpeg",
+        "ValueError: narration audio is not fully materialized",
+        sink,
+        raw_s3_uri=raw_uri,
+        transcript="Welcome to the demo.",
+    )
+    assert sink.assets == [asset]
+    assert asset.status == MEDIA_STATUS_BROKEN
+    assert asset.provenance["broken_step"] == "assemble_video_ffmpeg"
+    assert "materialized" in asset.provenance["failure"]
+    # The separately-stored raw recording is the broken asset's playable artifact + provenance.
+    assert asset.s3_uri == raw_uri
+    assert asset.provenance["raw_s3_uri"] == raw_uri
+    assert asset.transcript == "Welcome to the demo."
+
+
+def test_record_broken_step_before_capture_has_no_media() -> None:
+    """A step that breaks before any capture (e.g. an unsafe click-path) records a broken asset
+    with no stored media (null s3_uri) — the 0013 CHECK permits that only for a broken row."""
+    sink = InMemoryMediaAssetSink()
+    asset = record_broken_step(
+        _MEDIA_ID,
+        _RUN_ID,
+        _ART_ID,
+        _FEATURE_ID,
+        "validate_click_path",
+        "ClickPathValidationError: click-path step 0 rejected: unsafe selector",
+        sink,
+    )
+    assert asset.status == MEDIA_STATUS_BROKEN
+    assert asset.s3_uri is None  # nothing was stored
+    assert asset.provenance["broken_step"] == "validate_click_path"
+    assert "raw_s3_uri" not in asset.provenance
+
+
+def test_persist_media_asset_records_transcript_and_raw_uri() -> None:
+    """T3: a successful asset preserves the transcript and records the separately-stored raw
+    recording's URI in provenance (§16.3)."""
+    synth = InMemoryNarrationSynthesizer()
+    narration = generate_narration("Welcome.", synth, _CONFIG)
+    validated = validate_click_path(GeneratedClickPath.model_validate(_GOOD_CLICKPATH))
+    media = AssembledMedia(
+        local_path="/tmp/demo.mp4", content_type="video/mp4", duration_seconds=8.0
+    )
+    sink = InMemoryMediaAssetSink()
+    raw_uri = "s3://media-bucket/media/run/x-raw.webm"
+    asset = persist_media_asset(
+        _MEDIA_ID,
+        _RUN_ID,
+        _ART_ID,
+        _FEATURE_ID,
+        MEDIA_TYPE_DEMO_VIDEO,
+        "s3://media-bucket/x.mp4",
+        media,
+        narration,
+        validated,
+        sink,
+        transcript="The full narration script.",
+        raw_s3_uri=raw_uri,
+    )
+    assert asset.transcript == "The full narration script."
+    assert asset.provenance["raw_s3_uri"] == raw_uri
+    assert asset.status == "ready"

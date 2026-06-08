@@ -1,4 +1,4 @@
-"""T2-T5 (spec 008) — LangGraph wiring for ``media_generation_graph`` (PRD §5.4).
+"""T2-T5 (spec 008) + T3 (spec 014) — LangGraph wiring for ``media_generation_graph`` (PRD §5.4).
 
 P1 (Substrate): orchestration is LangGraph only. This module owns the *graph* (its nodes and
 edges); LangGraph owns state threading, retries, and checkpointing. It imports ``langgraph`` so
@@ -7,23 +7,37 @@ node logic itself is pure and unit-tested directly against in-memory fakes
 (``worker/tests/test_media_nodes.py``).
 
     load_approved_demo_script → generate_click_path_json → validate_click_path
-        → run_playwright_capture → generate_narration → assemble_video_ffmpeg
-        → store_media_s3 → persist_media_asset
+        → run_playwright_capture → store_raw_recording → generate_narration
+        → assemble_video_ffmpeg → store_media_s3 → persist_media_asset
 
 constitution §5 is enforced *structurally*, not by an interrupt: there is no human gate in
 this graph (the human gates are upstream — the demo_script is already Gate#2-approved). The
 safety rails are the two click-path validators (a malicious path is rejected at
 ``validate_click_path`` and ``run_playwright_capture`` only accepts a ``ValidatedClickPath``)
-and the materialized-audio guard before ffmpeg. A failure in any node propagates so ``__main__``
-marks the run failed — capture/narration/assembly never silently half-render.
+and the materialized-audio guard before ffmpeg.
+
+spec 014 T3 / §16.3 — "fail gracefully and show broken step." Every node is wrapped in a guard:
+a NON-transient failure (a rejected click-path, a missing approved script, an ffmpeg/synthesis
+error) is captured into ``state.failed_step`` and the graph routes to ``handle_broken_step``,
+which persists a ``status='broken'`` ``media_assets`` row naming the step — instead of crashing
+the whole run opaquely. A TRANSIENT failure (throttle / 5xx / timeout) is RE-RAISED so the
+``with_retries`` wrapper in ``__main__`` retries the idempotent re-entry (spec 012 T2) rather
+than mislabelling a blip as a broken step. The raw recording is stored SEPARATELY from the final
+video (a distinct S3 key) so a reviewer can inspect the capture even when a later step broke.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from release_worker.media_models import NarrationConfig
+from release_worker.media_models import (
+    ClickPathValidationError,
+    MalformedClickPathError,
+    NarrationConfig,
+)
 from release_worker.media_nodes import (
     MEDIA_TYPE_DEMO_VIDEO,
     assemble_video_ffmpeg,
@@ -31,8 +45,10 @@ from release_worker.media_nodes import (
     generate_narration,
     load_approved_demo_script,
     persist_media_asset,
+    record_broken_step,
     run_playwright_capture,
     store_media_s3,
+    store_raw_recording,
     validate_click_path,
 )
 from release_worker.media_ports import (
@@ -40,11 +56,45 @@ from release_worker.media_ports import (
     MediaAssetSink,
     MediaStore,
     NarrationSynthesizer,
+    NoApprovedDemoScriptError,
     PlaywrightCapturer,
     VideoAssembler,
 )
 from release_worker.media_state import MediaRunState
 from release_worker.model_client import ModelClient
+from release_worker.transient_retry import is_transient_error
+
+# The ordered media steps, by node name (also the broken-step label surfaced to the dashboard).
+_STEP_SEQUENCE = (
+    "load_approved_demo_script",
+    "generate_click_path_json",
+    "validate_click_path",
+    "run_playwright_capture",
+    "store_raw_recording",
+    "generate_narration",
+    "assemble_video_ffmpeg",
+    "store_media_s3",
+    "persist_media_asset",
+)
+
+# Our own domain errors carry deliberately user-safe messages (they never echo the offending
+# model output / selector / target — constitution §5), so it is safe to surface their text.
+_USER_SAFE_ERRORS = (
+    ClickPathValidationError,
+    MalformedClickPathError,
+    NoApprovedDemoScriptError,
+)
+
+
+def _user_safe_failure_detail(exc: Exception) -> str:
+    """A bounded, user-safe summary of a node failure for the dashboard + audit (constitution §5).
+
+    For our own domain errors the message is known-safe, so include it; for any other exception we
+    surface only the class name (a third-party error could carry a bucket/key/credential in its
+    text). Never the raw model output."""
+    if isinstance(exc, _USER_SAFE_ERRORS):
+        return f"{type(exc).__name__}: {exc}"[:300]
+    return type(exc).__name__
 
 
 def build_media_generation_graph(
@@ -63,12 +113,16 @@ def build_media_generation_graph(
     The ports are captured in node closures so each node stays a pure function of its
     ``(inputs, port)`` while LangGraph only sees ``state -> state`` callables. The graph has no
     human interrupt — its demo_script input is already Gate#2-approved — so the bundled default
-    ``MemorySaver`` is sufficient; a durable checkpointer can still be injected for resume."""
+    ``MemorySaver`` is sufficient; a durable checkpointer can still be injected for resume.
+
+    spec 014 T3: each step is wrapped in ``_guard`` and followed by a conditional edge that routes
+    to ``handle_broken_step`` the moment a step records a non-transient failure (§16.3)."""
 
     def _load_approved_demo_script(state: MediaRunState) -> MediaRunState:
         # Fails closed (NoApprovedDemoScriptError) if no approved demo_script (constitution §5).
+        # spec 014 T1: scope to the reviewer's chosen feature when one was supplied.
         artifact_id, title, body, feature_id = load_approved_demo_script(
-            state.release_run_id, demo_script_reader
+            state.release_run_id, demo_script_reader, state.requested_feature_id
         )
         return state.model_copy(
             update={
@@ -98,6 +152,15 @@ def build_media_generation_graph(
         assert state.validated_click_path is not None
         capture = run_playwright_capture(state.validated_click_path, capturer)
         return state.model_copy(update={"capture": capture})
+
+    def _store_raw_recording(state: MediaRunState) -> MediaRunState:
+        # §16.3 — store the raw recording on a DISTINCT key from the final video, before
+        # narration/assembly, so it survives a later break.
+        assert state.capture is not None
+        raw_uri = store_raw_recording(
+            state.release_run_id, state.media_id, state.capture, media_store
+        )
+        return state.model_copy(update={"raw_s3_uri": raw_uri})
 
     def _generate_narration(state: MediaRunState) -> MediaRunState:
         config = NarrationConfig(
@@ -141,27 +204,78 @@ def build_media_generation_graph(
             state.narration,
             state.validated_click_path,
             media_sink,
+            transcript=state.demo_body or None,
+            raw_s3_uri=state.raw_s3_uri,
         )
         return state.model_copy(update={"media_asset": asset})
 
-    graph: StateGraph = StateGraph(MediaRunState)
-    graph.add_node("load_approved_demo_script", _load_approved_demo_script)
-    graph.add_node("generate_click_path_json", _generate_click_path_json)
-    graph.add_node("validate_click_path", _validate_click_path)
-    graph.add_node("run_playwright_capture", _run_playwright_capture)
-    graph.add_node("generate_narration", _generate_narration)
-    graph.add_node("assemble_video_ffmpeg", _assemble_video_ffmpeg)
-    graph.add_node("store_media_s3", _store_media_s3)
-    graph.add_node("persist_media_asset", _persist_media_asset)
+    def _handle_broken_step(state: MediaRunState) -> MediaRunState:
+        # §16.3 — persist a 'broken' asset naming the step that failed instead of failing the
+        # whole run opaquely. The raw recording (if captured) is its s3_uri; the narration script
+        # is preserved as the transcript when narration had completed.
+        asset = record_broken_step(
+            state.media_id,
+            state.release_run_id,
+            state.source_artifact_id,
+            state.feature_id,
+            state.failed_step or "unknown",
+            state.failure_detail or "media generation failed",
+            media_sink,
+            raw_s3_uri=state.raw_s3_uri,
+            transcript=state.demo_body or None if state.narration is not None else None,
+        )
+        return state.model_copy(update={"media_asset": asset})
 
-    graph.add_edge(START, "load_approved_demo_script")
-    graph.add_edge("load_approved_demo_script", "generate_click_path_json")
-    graph.add_edge("generate_click_path_json", "validate_click_path")
-    graph.add_edge("validate_click_path", "run_playwright_capture")
-    graph.add_edge("run_playwright_capture", "generate_narration")
-    graph.add_edge("generate_narration", "assemble_video_ffmpeg")
-    graph.add_edge("assemble_video_ffmpeg", "store_media_s3")
-    graph.add_edge("store_media_s3", "persist_media_asset")
-    graph.add_edge("persist_media_asset", END)
+    def _guard(
+        step_name: str, fn: Callable[[MediaRunState], MediaRunState]
+    ) -> Callable[[MediaRunState], MediaRunState]:
+        # spec 014 T3 — run the node; on a NON-transient error capture the step + a user-safe
+        # detail into state (the graph then routes to handle_broken_step). RE-RAISE a transient
+        # error so __main__'s with_retries retries the idempotent re-entry (spec 012 T2), never
+        # mislabelling a throttle/5xx/timeout as a broken step.
+        def wrapped(state: MediaRunState) -> MediaRunState:
+            try:
+                return fn(state)
+            except Exception as err:  # noqa: BLE001 — re-raised below unless captured as broken
+                if is_transient_error(err):
+                    raise
+                return state.model_copy(
+                    update={
+                        "failed_step": step_name,
+                        "failure_detail": _user_safe_failure_detail(err),
+                    }
+                )
+
+        return wrapped
+
+    def _route(state: MediaRunState) -> str:
+        return "broken" if state.failed_step is not None else "continue"
+
+    _node_fns: dict[str, Callable[[MediaRunState], MediaRunState]] = {
+        "load_approved_demo_script": _load_approved_demo_script,
+        "generate_click_path_json": _generate_click_path_json,
+        "validate_click_path": _validate_click_path,
+        "run_playwright_capture": _run_playwright_capture,
+        "store_raw_recording": _store_raw_recording,
+        "generate_narration": _generate_narration,
+        "assemble_video_ffmpeg": _assemble_video_ffmpeg,
+        "store_media_s3": _store_media_s3,
+        "persist_media_asset": _persist_media_asset,
+    }
+
+    graph: StateGraph = StateGraph(MediaRunState)
+    for name in _STEP_SEQUENCE:
+        graph.add_node(name, _guard(name, _node_fns[name]))
+    graph.add_node("handle_broken_step", _handle_broken_step)
+
+    graph.add_edge(START, _STEP_SEQUENCE[0])
+    for index, name in enumerate(_STEP_SEQUENCE):
+        nxt = _STEP_SEQUENCE[index + 1] if index + 1 < len(_STEP_SEQUENCE) else END
+        # After every step: a captured failure short-circuits to the broken-step handler;
+        # otherwise continue to the next step (§16.3 fail-gracefully routing).
+        graph.add_conditional_edges(
+            name, _route, {"broken": "handle_broken_step", "continue": nxt}
+        )
+    graph.add_edge("handle_broken_step", END)
 
     return graph.compile(checkpointer=checkpointer or MemorySaver())

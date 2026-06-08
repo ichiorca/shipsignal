@@ -199,11 +199,17 @@ class AssembledMedia(BaseModel):
 
 
 class MediaAsset(BaseModel):
-    """A persisted ``media_assets`` row (PRD §5.4 / migration 0007).
+    """A persisted ``media_assets`` row (PRD §5.4 / §10.6, migrations 0007 + 0013).
 
     ``s3_uri`` references the stored binary (never inlined). ``provenance`` is the §18.3 audit
     trail (source demo_script artifact id, validated click-path hash, narration content hash,
-    voice/model ids) so the rendered media is traceable to its approved source + inputs."""
+    voice/model ids) — it is the §10.6 ``metadata_json`` column under the app's semantic name
+    (a documented, consistent mapping; spec 014 T2). ``transcript`` is the preserved narration
+    script (§16.3). ``source_artifact_id`` maps to the §10.6 ``artifact_id`` column.
+
+    A §16.3 BROKEN asset (``status='broken'``) records which step failed in ``provenance`` and may
+    legitimately carry no final media — so ``s3_uri``/``content_type`` are optional here (the DB
+    CHECK in 0013 still requires ``s3_uri`` on every non-broken row)."""
 
     model_config = _StrictModel
 
@@ -212,9 +218,12 @@ class MediaAsset(BaseModel):
     feature_id: str | None = None
     source_artifact_id: str | None = None
     media_type: str = Field(min_length=1)  # demo_video | release_audio_digest
-    s3_uri: str = Field(min_length=1)
-    content_type: str = Field(min_length=1)
+    s3_uri: str | None = None  # None only on a broken-before-storage asset (§16.3)
+    content_type: str | None = None
     duration_seconds: float | None = None
+    transcript: str | None = (
+        None  # §10.6 transcript — preserved narration script (§16.3)
+    )
     status: str = "ready"
     provenance: dict[str, str] = Field(default_factory=dict)
 

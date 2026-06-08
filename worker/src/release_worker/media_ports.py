@@ -46,10 +46,14 @@ class DemoScriptReader(Protocol):
     MUST return only an artifact whose ``status='approved'`` (constitution §5). Returns the
     ``(artifact_id, title, body_markdown, feature_id)`` the click-path + narration are built
     from, or raises ``NoApprovedDemoScriptError``. ``AuroraDemoScriptReader`` satisfies it at
-    runtime."""
+    runtime.
+
+    ``feature_id`` (spec 014 T1) scopes the lookup to a SPECIFIC approved feature's demo_script
+    when the reviewer triggered generate-demo for one feature; ``None`` keeps the run-wide
+    newest-approved behaviour. Still run-scoped + approved-only either way (constitution §2/§5)."""
 
     def load_approved_demo_script(
-        self, release_run_id: str
+        self, release_run_id: str, feature_id: str | None = None
     ) -> tuple[str, str, str, str | None]: ...
 
 
@@ -100,13 +104,24 @@ class MediaStore(Protocol):
 
     s3-rules: private bucket, server-side encryption, keys sanitized (no traversal / untrusted
     bucket). The UI reaches the object only via a server-minted presigned URL (the Next.js
-    layer), never a public object. ``S3MediaStore`` satisfies it at runtime."""
+    layer), never a public object. ``S3MediaStore`` satisfies it at runtime.
+
+    ``store_raw`` writes the RAW Playwright recording to a DISTINCT key from the final assembled
+    media (§16.3 "store raw recording and final video separately") — so a reviewer can inspect the
+    pre-narration capture even when a later step (narration/assembly) breaks."""
 
     def store(
         self,
         release_run_id: str,
         media_id: str,
         media: AssembledMedia,
+    ) -> str: ...
+
+    def store_raw(
+        self,
+        release_run_id: str,
+        media_id: str,
+        capture: CaptureResult,
     ) -> str: ...
 
 
@@ -128,10 +143,14 @@ class InMemoryDemoScriptReader:
 
     def __init__(self, script: tuple[str, str, str, str | None] | None) -> None:
         self._script = script
+        # Records the feature_id each call was scoped to, so a test can assert the node
+        # forwards the reviewer's chosen feature (spec 014 T1).
+        self.requested_feature_ids: list[str | None] = []
 
     def load_approved_demo_script(
-        self, release_run_id: str
+        self, release_run_id: str, feature_id: str | None = None
     ) -> tuple[str, str, str, str | None]:
+        self.requested_feature_ids.append(feature_id)
         if self._script is None:
             raise NoApprovedDemoScriptError()
         return self._script
@@ -206,10 +225,20 @@ class InMemoryMediaStore:
     def __init__(self, bucket: str = "media-bucket") -> None:
         self._bucket = bucket
         self.stored: list[str] = []
+        self.stored_raw: list[str] = []
 
     def store(self, release_run_id: str, media_id: str, media: AssembledMedia) -> str:
         key = f"media/{release_run_id}/{media_id}.mp4"
         self.stored.append(key)
+        return f"s3://{self._bucket}/{key}"
+
+    def store_raw(
+        self, release_run_id: str, media_id: str, capture: CaptureResult
+    ) -> str:
+        # A DISTINCT key from store() (the ``-raw`` suffix) so the raw recording and the final
+        # video are separate objects (§16.3). Records the key so a test can assert separation.
+        key = f"media/{release_run_id}/{media_id}-raw.mp4"
+        self.stored_raw.append(key)
         return f"s3://{self._bucket}/{key}"
 
 

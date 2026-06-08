@@ -20,7 +20,11 @@ export type ApprovalTargetType =
   | 'artifact'
   | 'artifact_manifest'
   | 'skill_candidate'
-  | 'skill_candidate_manifest';
+  | 'skill_candidate_manifest'
+  // spec 014 T1 — records the reviewer who triggered demo-media generation for a feature
+  // (PRD §14.5). Not a gate decision, but logged in the same gate-agnostic audit table
+  // (§10.4, free-text target_type) so the trigger names an accountable human.
+  | 'media_trigger';
 
 export interface RecordApprovalArgs {
   readonly target_type: ApprovalTargetType;

@@ -138,6 +138,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Reviewer who resolved a gate (recorded on a skill_learning Gate #3 resume).",
     )
     parser.add_argument(
+        "--feature-id",
+        default=None,
+        help=(
+            "Approved feature whose demo_script the media graph should render "
+            "(spec 014 T1; media_generation only). Omitted = the run's newest approved script."
+        ),
+    )
+    parser.add_argument(
         "--graph",
         choices=[
             "release_intelligence",
@@ -230,6 +238,7 @@ def _run_media_generation(
     conn: psycopg.Connection,
     release_run_id: str,
     thread_id: str,
+    feature_id: str | None,
 ) -> int:
     """Run media_generation_graph for one run (spec 008, PRD §5.4).
 
@@ -243,6 +252,12 @@ def _run_media_generation(
 
     The narration voice/model/output-format are read from env as CONFIG (elevenlabs-rules), not
     hardcoded. The media id is minted per run (P1: we record provenance, LangGraph owns state).
+
+    spec 014 T1 — ``feature_id`` scopes the demo_script lookup to the approved feature the reviewer
+    triggered generate-demo for (None = the run's newest approved script). spec 014 T3 — a media
+    step that fails for a non-transient reason no longer fails the whole run opaquely: the graph
+    persists a 'broken' media asset naming the step (§16.3); only a genuinely transient blip is
+    retried by ``with_retries``.
     """
     media_id = uuid4().hex
     graph = build_media_generation_graph(
@@ -265,6 +280,8 @@ def _run_media_generation(
         voice_id=_require_env("ELEVENLABS_VOICE_ID"),
         model_id=os.environ.get("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2"),
         output_format=os.environ.get("ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_128"),
+        # spec 014 T1 — scope the demo_script to the feature the reviewer triggered (if any).
+        requested_feature_id=feature_id,
     )
     # T2 (spec 012) — the media graph runs straight through (no gate) but touches Bedrock /
     # ElevenLabs / S3; retry the whole invocation on a transient blip. The node-level
@@ -436,8 +453,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.graph == "media_generation":
             # Spec 008 slice: approved demo_script → validated click-path → Playwright capture
             # → ElevenLabs narration → ffmpeg → S3 → media_assets. No human gate (the script is
-            # already Gate#2-approved); runs straight through on the Actions runner.
-            return _run_media_generation(conn, release_run_id, thread_id)
+            # already Gate#2-approved); runs straight through on the Actions runner. spec 014 T1:
+            # --feature-id scopes the demo_script to a triggered feature; spec 014 T3: a broken
+            # step is surfaced as a 'broken' asset rather than failing the run opaquely.
+            return _run_media_generation(
+                conn, release_run_id, thread_id, args.feature_id
+            )
 
         if args.graph == "skill_learning":
             # Spec 009 slice: mine learning signals → cluster → draft a staged skill candidate →

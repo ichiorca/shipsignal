@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from release_worker.media_models import AssembledMedia
+from release_worker.media_models import AssembledMedia, CaptureResult
 
 # release_run_id / media_id are uuid4 hex or canonical UUIDs we mint — never attacker-
 # controlled — but we still validate before composing an S3 key so a future caller can't
@@ -46,12 +46,29 @@ class S3MediaStore:
         ext = _EXTENSIONS.get(media.content_type, "bin")
         key = f"media/{run}/{mid}.{ext}"
         body = Path(media.local_path).read_bytes()
+        self._put(key, body, media.content_type)
+        return f"s3://{self._bucket}/{key}"
+
+    def store_raw(
+        self, release_run_id: str, media_id: str, capture: CaptureResult
+    ) -> str:
+        # spec 014 T3 / §16.3 — the RAW Playwright recording goes to a DISTINCT key (``-raw``)
+        # from the final assembled media, so the two are stored separately and a reviewer can
+        # inspect the pre-narration capture even when a later step broke. Same private bucket +
+        # SSE + sanitized run-scoped key (s3-rules).
+        run = _safe_segment(release_run_id, "release_run_id")
+        mid = _safe_segment(media_id, "media_id")
+        key = f"media/{run}/{mid}-raw.webm"
+        body = Path(capture.video_local_path).read_bytes()
+        self._put(key, body, "video/webm")
+        return f"s3://{self._bucket}/{key}"
+
+    def _put(self, key: str, body: bytes, content_type: str) -> None:
         # mypy can't see boto3's dynamic client surface; call via the bound method.
         self._s3.put_object(  # type: ignore[attr-defined]
             Bucket=self._bucket,
             Key=key,
             Body=body,
-            ContentType=media.content_type,
+            ContentType=content_type,
             ServerSideEncryption="AES256",
         )
-        return f"s3://{self._bucket}/{key}"

@@ -27,6 +27,7 @@ const ASSETS: readonly MediaAsset[] = [
     media_type: 'demo_video',
     content_type: 'video/mp4',
     duration_seconds: 18,
+    transcript: 'Welcome to the demo. Open releases, then create a checklist.',
     status: 'ready',
     provenance: {
       source_artifact_id: 'dddddddd-1111-2222-3333-444444444444',
@@ -44,9 +45,28 @@ const ASSETS: readonly MediaAsset[] = [
     media_type: 'release_audio_digest',
     content_type: 'audio/mpeg',
     duration_seconds: null,
+    transcript: null,
     status: 'ready',
     provenance: {},
     created_at: '2026-06-08T10:01:00.000Z',
+  },
+  // spec 014 T3/T4 — a §16.3 broken-step asset: no final media, names the broken step.
+  {
+    id: 'cccccccc-1111-2222-3333-444444444444',
+    release_run_id: RUN_ID,
+    feature_id: 'ffffffff-1111-2222-3333-444444444444',
+    source_artifact_id: 'dddddddd-1111-2222-3333-444444444444',
+    media_type: 'demo_video',
+    content_type: null,
+    duration_seconds: null,
+    transcript: null,
+    status: 'broken',
+    provenance: {
+      broken_step: 'assemble_video_ffmpeg',
+      failure: 'ValueError',
+      source_artifact_id: 'dddddddd-1111-2222-3333-444444444444',
+    },
+    created_at: '2026-06-08T10:02:00.000Z',
   },
 ];
 
@@ -85,12 +105,40 @@ test('empty media preview has zero axe violations', async () => {
 test('each media asset is a headed section with an accessible name', () => {
   const { doc } = render(ASSETS);
   const sections = [...doc.querySelectorAll('section[data-media-id]')];
-  assert.equal(sections.length, 2);
+  assert.equal(sections.length, 3);
   for (const section of sections) {
     const labelledby = section.getAttribute('aria-labelledby');
     assert.ok(labelledby, 'section is labelled by its heading');
     assert.equal(section.querySelector('h2')?.id, labelledby);
   }
+});
+
+test('a broken-step asset surfaces the broken step and renders no player', () => {
+  const { doc } = render(ASSETS);
+  const broken = doc.querySelector(
+    'section[data-media-id="cccccccc-1111-2222-3333-444444444444"]',
+  );
+  assert.ok(broken, 'the broken asset renders its own section');
+  assert.equal(broken?.getAttribute('data-media-status'), 'broken');
+  // The broken step name is surfaced (spec 014 T4 / §16.3).
+  const note = broken?.querySelector('[data-broken-step]');
+  assert.ok(note, 'a broken-step notice is shown');
+  assert.equal(note?.getAttribute('data-broken-step'), 'assemble_video_ffmpeg');
+  // No player for a broken asset — there is no playable final media.
+  assert.equal(broken?.querySelector('video, audio'), null, 'no player for a broken asset');
+});
+
+test('a captured transcript is shown as text', () => {
+  const { doc } = render(ASSETS);
+  const videoSection = doc.querySelector(
+    'section[data-media-id="aaaaaaaa-1111-2222-3333-444444444444"]',
+  );
+  const transcript = videoSection?.querySelector('[data-transcript-for]');
+  assert.ok(transcript, 'the narration transcript renders when captured');
+  assert.ok(
+    transcript?.textContent?.includes('Open releases'),
+    'the transcript text is present',
+  );
 });
 
 test('the demo video uses a native keyboard-operable player with an accessible name', () => {
