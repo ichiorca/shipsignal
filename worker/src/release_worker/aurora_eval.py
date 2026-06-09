@@ -164,12 +164,16 @@ class AuroraMetricInputsReader:
         with self._conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT EXTRACT(EPOCH FROM (ap.created_at - a.created_at))
+                -- DISTINCT ON keeps one latency per artifact (its FIRST approval), so duplicate
+                -- re-submitted approval rows (approvals has no UNIQUE) don't skew the average.
+                SELECT DISTINCT ON (a.id)
+                       EXTRACT(EPOCH FROM (ap.created_at - a.created_at))
                   FROM approvals ap
                   JOIN artifacts a ON a.id = ap.target_id
                  WHERE ap.target_type = 'artifact'
                    AND ap.decision = 'approved'
                    AND a.release_run_id = %s
+                 ORDER BY a.id, ap.created_at ASC
                 """,
                 (self._release_run_id,),
             )

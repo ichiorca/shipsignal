@@ -28,6 +28,7 @@ video (a distinct S3 key) so a reviewer can inspect the capture even when a late
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -83,6 +84,20 @@ _USER_SAFE_ERRORS = (
     ClickPathValidationError,
     MalformedClickPathError,
     NoApprovedDemoScriptError,
+)
+
+logger = logging.getLogger("release_worker.media")
+
+# Genuine programming errors must NOT be downgraded to a "broken media step": they surface as a
+# run failure so they get caught and fixed, instead of masquerading as a content-generation
+# failure with only a class name in the DB (spec 014 T3 is for real content/tooling failures).
+_FATAL_PROGRAMMING_ERRORS = (
+    AssertionError,
+    AttributeError,
+    KeyError,
+    TypeError,
+    NameError,
+    ImportError,
 )
 
 
@@ -238,6 +253,16 @@ def build_media_generation_graph(
                 return fn(state)
             except Exception as err:  # noqa: BLE001 — re-raised below unless captured as broken
                 if is_transient_error(err):
+                    raise  # a throttle/5xx/timeout: with_retries retries; not a broken step
+                # Always log the full traceback with step context — the user-safe detail that
+                # reaches the DB/UI is only a class name, so the trace must live in the (already
+                # PII-scrubbed) log or the failure is undebuggable (observability).
+                logger.exception(
+                    "media step %s failed for run %s", step_name, state.release_run_id
+                )
+                if isinstance(err, _FATAL_PROGRAMMING_ERRORS):
+                    # A real bug, not a content failure — surface it as a run failure rather
+                    # than masking it behind a 'broken' media asset.
                     raise
                 return state.model_copy(
                     update={

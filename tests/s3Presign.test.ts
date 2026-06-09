@@ -76,6 +76,33 @@ test('expiry is clamped to a 15-minute maximum', () => {
   assert.equal(url.searchParams.get('X-Amz-Expires'), '900');
 });
 
+test('an endpoint override signs path-style against that host (LocalStack)', () => {
+  const url = new URL(presign({ endpoint: 'http://localhost:4566' }));
+  // http scheme + the endpoint host (including the non-default port)
+  assert.equal(url.protocol, 'http:');
+  assert.equal(url.host, 'localhost:4566');
+  // path-style: bucket is the first path segment, then the key
+  assert.equal(url.pathname, '/release-content/evidence/relrun_001/ev_123.txt');
+  // still a valid SigV4 GET presign
+  assert.equal(url.searchParams.get('X-Amz-SignedHeaders'), 'host');
+  assert.match(url.searchParams.get('X-Amz-Signature') ?? '', /^[0-9a-f]{64}$/);
+});
+
+test('the endpoint host is bound into the signature (host is a signed header)', () => {
+  const a = new URL(presign({ endpoint: 'http://localhost:4566' }));
+  const b = new URL(presign({ endpoint: 'http://localhost:9999' }));
+  assert.notEqual(
+    a.searchParams.get('X-Amz-Signature'),
+    b.searchParams.get('X-Amz-Signature'),
+  );
+});
+
+test('the default (no endpoint) path stays AWS virtual-hosted', () => {
+  const url = new URL(presign());
+  assert.equal(url.host, 'release-content.s3.us-east-1.amazonaws.com');
+  assert.equal(url.pathname, '/evidence/relrun_001/ev_123.txt');
+});
+
 test('a request without a session token omits the security-token param', () => {
   const url = new URL(
     presignS3GetUrl({

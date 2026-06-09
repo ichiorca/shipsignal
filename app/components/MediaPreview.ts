@@ -17,6 +17,7 @@
 import { createElement } from 'react';
 import type { ReactElement } from 'react';
 import type { MediaAsset } from '@/app/lib/db/mediaAssets.ts';
+import { humanizeKey, humanizeStatus } from '../lib/displayFormat.ts';
 
 export interface MediaPreviewProps {
   readonly assets: readonly MediaAsset[];
@@ -46,7 +47,8 @@ function provenanceList(asset: MediaAsset): ReactElement {
     'dl',
     { 'data-provenance-for': asset.id },
     ...entries.flatMap(([key, value]) => [
-      createElement('dt', { key: `${key}-t` }, key),
+      // Humanized label for the reader; the raw value (hash/id) stays verbatim.
+      createElement('dt', { key: `${key}-t`, 'data-provenance-key': key }, humanizeKey(key)),
       createElement('dd', { key: `${key}-d` }, value),
     ]),
   );
@@ -87,17 +89,26 @@ function player(asset: MediaAsset): ReactElement {
  *  user-safe reason, instead of a player (there is no playable final media). The broken step is
  *  carried in provenance.broken_step (the §10.6 metadata_json) by the worker. */
 function brokenNotice(asset: MediaAsset): ReactElement {
-  const step = asset.provenance['broken_step'] ?? 'unknown step';
-  const reason = asset.provenance['failure'];
+  const rawStep = asset.provenance['broken_step'] ?? 'unknown step';
+  const stepLabel = rawStep === 'unknown step' ? rawStep : humanizeStatus(rawStep);
+  const hasFailure = asset.provenance['failure'] !== undefined;
   const children: ReactElement[] = [
     createElement(
       'p',
-      { key: 'step', 'data-broken-step': step },
-      `Demo generation broke at step: ${step}.`,
+      { key: 'step', 'data-broken-step': rawStep },
+      `Demo generation broke at step: ${stepLabel}.`,
     ),
   ];
-  if (reason !== undefined) {
-    children.push(createElement('p', { key: 'reason' }, `Reason: ${reason}`));
+  if (hasFailure) {
+    // User-safe: state that an error occurred without echoing the raw internal failure
+    // value (which could carry a stack trace or diagnostic string) (UX review M6).
+    children.push(
+      createElement(
+        'p',
+        { key: 'reason' },
+        'The media pipeline reported an error while completing this step.',
+      ),
+    );
   }
   children.push(
     createElement(
@@ -124,12 +135,15 @@ function transcriptText(asset: MediaAsset): ReactElement | null {
  *  (WCAG 1.2.x). Rendered only when the source artifact is known. */
 function transcriptLink(asset: MediaAsset): ReactElement | null {
   if (asset.source_artifact_id === null) return null;
+  // Link to the stable per-artifact page (the claim inspector), which exists regardless of
+  // the artifact's gate status — unlike a #anchor into the Gate #2 review list, which only
+  // holds still-pending artifacts and has no focus target (UX review M3).
   return createElement(
     'p',
     null,
     createElement(
       'a',
-      { href: `/releases/${asset.release_run_id}/artifacts/review#artifact-${asset.source_artifact_id}` },
+      { href: `/artifacts/${asset.source_artifact_id}` },
       'View the demo script this media was narrated from (transcript)',
     ),
   );
@@ -162,7 +176,7 @@ function assetSection(asset: MediaAsset, index: number, total: number): ReactEle
       'data-media-status': asset.status,
     },
     createElement('h2', { id: headingId }, headingText),
-    createElement('p', { 'data-status': asset.status }, `Status: ${asset.status}`),
+    createElement('p', { 'data-status': asset.status }, `Status: ${humanizeStatus(asset.status)}`),
     ...body,
     transcriptText(asset),
     transcriptLink(asset),

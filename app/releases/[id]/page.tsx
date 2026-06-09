@@ -6,15 +6,30 @@
 
 import { notFound } from 'next/navigation';
 import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
+import type { ReleaseRun } from '@/app/lib/db/releaseRuns.ts';
 import { listEvidenceForRun } from '@/app/lib/db/evidenceItems.ts';
 import { EvidenceTable } from '@/app/components/EvidenceTable.ts';
 import { CategorizedSignals } from '@/app/components/CategorizedSignals.ts';
+import { humanizeStatus, formatTimestamp } from '@/app/lib/displayFormat.ts';
 
 // Always reflect the latest evidence for the run; not statically cacheable.
 export const dynamic = 'force-dynamic';
 
 interface RunDetailPageProps {
   readonly params: Promise<{ id: string }>;
+}
+
+/** The action a reviewer should take next, derived from the run's status, so the page tells
+ *  them what to do instead of presenting every link with equal weight (UX review H3). */
+function nextStep(run: ReleaseRun): { readonly label: string; readonly href: string } | null {
+  switch (run.status) {
+    case 'features_pending_review':
+      return { label: 'Review the feature manifest (Gate #1)', href: `/releases/${run.id}/review` };
+    case 'artifacts_pending_review':
+      return { label: 'Review the generated artifacts (Gate #2)', href: `/releases/${run.id}/artifacts/review` };
+    default:
+      return null;
+  }
 }
 
 export default async function RunDetailPage({ params }: RunDetailPageProps) {
@@ -25,37 +40,60 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
   }
 
   const evidence = await listEvidenceForRun(run.id);
+  const next = nextStep(run);
+
+  // Every screen that exists for a run, in pipeline order. Previously Media, Gate #3
+  // skills review, and Evals had no link in from the run and were reachable only by URL.
+  const sections: ReadonlyArray<{ readonly label: string; readonly href: string }> = [
+    { label: 'Review feature manifest (Gate #1)', href: `/releases/${run.id}/review` },
+    { label: 'Draft artifacts', href: `/releases/${run.id}/artifacts` },
+    { label: 'Review artifacts (Gate #2)', href: `/releases/${run.id}/artifacts/review` },
+    { label: 'Demo media', href: `/releases/${run.id}/media` },
+    { label: 'Review skill revisions (Gate #3)', href: `/releases/${run.id}/skills/review` },
+    { label: 'Evaluations', href: `/releases/${run.id}/evals` },
+    { label: 'Model cost & latency', href: `/releases/${run.id}/cost` },
+  ];
 
   return (
     <main id="main">
-      <p>
+      <nav aria-label="Breadcrumb">
         <a href="/">← All release runs</a>
-      </p>
+      </nav>
       <h1>Release run {run.repo}</h1>
-      <p>
-        <a href={`/releases/${run.id}/review`}>Review feature manifest (Gate #1) →</a>
-      </p>
-      <p>
-        <a href={`/releases/${run.id}/artifacts`}>View draft artifacts →</a>
-      </p>
-      <p>
-        <a href={`/releases/${run.id}/artifacts/review`}>Review artifacts (Gate #2) →</a>
-      </p>
-      <p>
-        <a href={`/releases/${run.id}/cost`}>View model cost &amp; latency →</a>
-      </p>
+
+      {next !== null ? (
+        <p role="status">
+          Next step: <a href={next.href}>{next.label}</a>
+        </p>
+      ) : (
+        <p>
+          Current status: <strong>{humanizeStatus(run.status)}</strong>. No reviewer action is
+          required right now.
+        </p>
+      )}
+
+      <nav aria-label="Run sections">
+        <ul>
+          {sections.map((section) => (
+            <li key={section.href}>
+              <a href={section.href}>{section.label}</a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
       <dl>
         <dt>Compare range</dt>
         <dd>
           {run.base_ref}…{run.head_ref}
         </dd>
         <dt>Status</dt>
-        <dd>{run.status}</dd>
+        <dd data-status={run.status}>{humanizeStatus(run.status)}</dd>
         <dt>Trigger</dt>
-        <dd>{run.trigger_type}</dd>
+        <dd>{humanizeStatus(run.trigger_type)}</dd>
         <dt>Started</dt>
         <dd>
-          <time dateTime={run.started_at}>{run.started_at}</time>
+          <time dateTime={run.started_at}>{formatTimestamp(run.started_at)}</time>
         </dd>
       </dl>
 

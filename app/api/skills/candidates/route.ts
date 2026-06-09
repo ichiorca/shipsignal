@@ -5,11 +5,12 @@
 
 import { NextResponse } from 'next/server';
 import { listSkillCandidates } from '@/app/lib/db/skillCandidates.ts';
-import { ok } from '@/app/lib/readApi.ts';
+import { ok, parseLimit } from '@/app/lib/readApi.ts';
 
 export const runtime = 'nodejs';
 
-export async function GET(): Promise<NextResponse> {
-  const result = ok({ candidates: await listSkillCandidates() });
+export async function GET(request: Request): Promise<NextResponse> {
+  const limit = parseLimit(request.url, 100, 500);
+  const result = ok({ candidates: await listSkillCandidates(limit) });
   return NextResponse.json(result.body, { status: result.status });
 }

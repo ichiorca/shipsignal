@@ -6,6 +6,7 @@
 
 import 'server-only';
 import { requireEnv, optionalEnv } from '@/app/lib/env.ts';
+import { assertRepoSlug, assertGitRef } from '@/app/lib/githubRefs.ts';
 
 export interface ResumeDispatchArgs {
   readonly releaseRunId: string;
@@ -31,9 +32,10 @@ export interface ResumeDispatchArgs {
  */
 export async function dispatchResume(args: ResumeDispatchArgs): Promise<void> {
   const token = requireEnv('GITHUB_TOKEN');
-  const repo = requireEnv('GITHUB_REPO');
+  // Validate the env-supplied repo/ref before they go into the URL/body (no injection).
+  const repo = assertRepoSlug(requireEnv('GITHUB_REPO'));
   const workflowFile = optionalEnv('GITHUB_WORKFLOW_FILE', 'release-run.yml');
-  const ref = optionalEnv('GITHUB_WORKFLOW_REF', 'main');
+  const ref = assertGitRef(optionalEnv('GITHUB_WORKFLOW_REF', 'main'));
 
   const url = `https://api.github.com/repos/${repo}/actions/workflows/${encodeURIComponent(
     workflowFile,

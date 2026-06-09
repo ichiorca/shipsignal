@@ -87,32 +87,60 @@ class AuroraReleaseRunRepository:
         Idempotent under re-dispatch (a no-op when the run is already at or past
         ``target`` on the progress path); ``completed_at`` is stamped on a terminal hop.
         Raises ``InvalidStatusTransitionError`` on an illegal out-of-order move.
+
+        The write is a COMPARE-AND-SET against the status read a moment earlier, so a
+        concurrent invocation (a redelivered dispatch or an overlapping retry — expected
+        under the §3.1 separate-invocation model) cannot silently clobber a hop. If we lose
+        the race the UPDATE matches no row; we re-read and re-evaluate against the new state
+        (a now-redundant hop becomes a no-op, an illegal one raises).
         """
         current = self.get_status(release_run_id)
         if is_redundant_advance(current, target):
             return
         assert_transition(current, target)
+        if self._compare_and_set(release_run_id, current, target):
+            return
+        # Lost the race with a concurrent invocation; re-evaluate against the new state.
+        new_current = self.get_status(release_run_id)
+        if is_redundant_advance(new_current, target):
+            return
+        assert_transition(new_current, target)
+        if not self._compare_and_set(release_run_id, new_current, target):
+            raise RuntimeError(
+                f"concurrent status change advancing {release_run_id} to {target.value}"
+            )
+
+    def _compare_and_set(
+        self, release_run_id: str, expected: RunStatus, target: RunStatus
+    ) -> bool:
+        """Set status to ``target`` only while it is still ``expected``; True iff a row changed."""
         with self._conn.cursor() as cur:
             if is_terminal(target):
                 cur.execute(
                     "UPDATE release_runs SET status = %s, completed_at = now() "
-                    "WHERE id = %s",
-                    (target.value, release_run_id),
+                    "WHERE id = %s AND status = %s",
+                    (target.value, release_run_id, expected.value),
                 )
             else:
                 cur.execute(
-                    "UPDATE release_runs SET status = %s WHERE id = %s",
-                    (target.value, release_run_id),
+                    "UPDATE release_runs SET status = %s WHERE id = %s AND status = %s",
+                    (target.value, release_run_id, expected.value),
                 )
+            return cur.rowcount > 0
 
     def mark_failed(self, release_run_id: str) -> None:
-        """Best-effort terminal-fail used by the entry point's error path."""
+        """Best-effort terminal-fail used by the entry point's error path.
+
+        Guarded so a late error (e.g. during post-success accounting) cannot relabel a run
+        that already reached a terminal state as ``failed``.
+        """
         with self._conn.cursor() as cur:
             cur.execute(
                 """UPDATE release_runs
                        SET status = %s,
                            completed_at = now()
-                     WHERE id = %s""",
+                     WHERE id = %s
+                       AND status NOT IN ('completed', 'cancelled', 'failed')""",
                 (RunStatus.FAILED.value, release_run_id),
             )
 

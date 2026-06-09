@@ -33,11 +33,16 @@ import json
 import logging
 import os
 import time
+from decimal import Decimal
 
 import boto3
 from botocore.exceptions import ClientError
 
-from release_worker.cost_telemetry import CostTelemetrySink, meter_call
+from release_worker.cost_telemetry import (
+    CostTelemetrySink,
+    ModelCallTelemetry,
+    meter_call,
+)
 from release_worker.embedding_ports import EMBEDDING_DIMS
 from release_worker.model_routing import resolve_model
 from release_worker.token_budget import BudgetTracker, TokenBudget
@@ -234,20 +239,41 @@ class BedrockEmbeddingClient:
     _DEFAULT_EMBED_MODEL = "amazon.titan-embed-text-v2:0"
 
     def __init__(
-        self, client: object, model_id: str, dims: int = EMBEDDING_DIMS
+        self,
+        client: object,
+        model_id: str,
+        dims: int = EMBEDDING_DIMS,
+        *,
+        release_run_id: str | None = None,
+        telemetry_sink: CostTelemetrySink | None = None,
     ) -> None:
         self._client = client
         self._model_id = model_id
         self._dims = dims
+        # When both are wired, every embed call records a cost/latency telemetry row so
+        # embeddings (a real per-row Bedrock cost) are no longer invisible to the §6 dashboard.
+        self._release_run_id = release_run_id
+        self._telemetry_sink = telemetry_sink
 
     @classmethod
-    def from_env(cls) -> BedrockEmbeddingClient:
+    def from_env(
+        cls,
+        *,
+        release_run_id: str | None = None,
+        telemetry_sink: CostTelemetrySink | None = None,
+    ) -> BedrockEmbeddingClient:
         """Build from the ambient IAM-role credentials. ``BEDROCK_EMBED_MODEL_ID`` overrides
-        the default embedding model; ``AWS_REGION`` selects the region (default us-east-1)."""
+        the default embedding model; ``AWS_REGION`` selects the region (default us-east-1).
+        A ``release_run_id`` + ``telemetry_sink`` enable per-call cost/latency telemetry."""
         region = os.environ.get("AWS_REGION", "us-east-1")
         model_id = os.environ.get("BEDROCK_EMBED_MODEL_ID", cls._DEFAULT_EMBED_MODEL)
         client = boto3.client("bedrock-runtime", region_name=region)
-        return cls(client, model_id)
+        return cls(
+            client,
+            model_id,
+            release_run_id=release_run_id,
+            telemetry_sink=telemetry_sink,
+        )
 
     def embed(self, text: str) -> list[float]:
         """Return the embedding of one redacted text as an ``EMBEDDING_DIMS``-long vector.
@@ -257,13 +283,38 @@ class BedrockEmbeddingClient:
         untrusted boundary data: a missing/short/non-numeric vector fails fast rather than
         persisting a malformed embedding."""
         body = json.dumps({"inputText": text, "dimensions": self._dims})
+        started = time.monotonic()
         response = self._client.invoke_model(  # type: ignore[attr-defined]
             modelId=self._model_id, body=body
         )
+        latency_ms = int((time.monotonic() - started) * 1000)
         payload = json.loads(response["body"].read())
         raw = payload.get("embedding")
         if not isinstance(raw, list) or len(raw) != self._dims:
             raise ValueError(
                 f"Bedrock embedding model {self._model_id} returned an unexpected vector"
             )
+        self._record_telemetry(payload, latency_ms)
         return [float(component) for component in raw]
+
+    def _record_telemetry(self, payload: dict[str, object], latency_ms: int) -> None:
+        """Record the embedding call's cost/latency (constitution §6) — observability only, never
+        the embedded text or the vector (§5). Embeddings have no routed tier, so the row is built
+        directly: ``node='embed'``, tier ``'embedding'``, input tokens from the Titan response,
+        no output tokens. Cost is left at 0 (embedding pricing is not in the generation cost model)."""
+        if self._telemetry_sink is None or self._release_run_id is None:
+            return
+        input_tokens_raw = payload.get("inputTextTokenCount", 0)
+        input_tokens = input_tokens_raw if isinstance(input_tokens_raw, int) else 0
+        self._telemetry_sink.record(
+            ModelCallTelemetry(
+                release_run_id=self._release_run_id,
+                node="embed",
+                model_id=self._model_id,
+                model_tier="embedding",
+                input_tokens=input_tokens,
+                output_tokens=0,
+                latency_ms=latency_ms,
+                cost_usd_estimate=Decimal("0"),
+            )
+        )

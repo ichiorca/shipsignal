@@ -29,9 +29,13 @@ export default async function SkillCandidateReviewPage({ params }: ReviewPagePro
 
   return (
     <main id="main">
-      <p>
-        <a href={`/releases/${run.id}`}>← Back to release run</a>
-      </p>
+      <nav aria-label="Breadcrumb">
+        <a href="/">All runs</a>
+        {' › '}
+        <a href={`/releases/${run.id}`}>Release run</a>
+        {' › '}
+        <span aria-current="page">Review skill revisions (Gate #3)</span>
+      </nav>
       <h1>Review skill revisions (Gate #3)</h1>
       <p>
         {run.repo} · {run.base_ref}…{run.head_ref}

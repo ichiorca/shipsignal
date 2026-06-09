@@ -29,9 +29,13 @@ export default async function RunCostPage({ params }: CostPageProps) {
 
   return (
     <main id="main">
-      <p>
-        <a href={`/releases/${run.id}`}>← Back to release run</a>
-      </p>
+      <nav aria-label="Breadcrumb">
+        <a href="/">All runs</a>
+        {' › '}
+        <a href={`/releases/${run.id}`}>Release run</a>
+        {' › '}
+        <span aria-current="page">Model cost &amp; latency</span>
+      </nav>
       <h1>Model cost &amp; latency</h1>
       <p>
         {run.repo} · {run.base_ref}…{run.head_ref}

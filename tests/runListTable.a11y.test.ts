@@ -74,10 +74,15 @@ test('table is semantically structured: caption + column headers', () => {
   assert.deepEqual(headers, ['Run', 'Repository', 'Compare range', 'Trigger', 'Status', 'Started']);
 });
 
-test('status is conveyed as text, not colour alone', () => {
+test('status is conveyed as humanized text, not colour alone', () => {
   const doc = render(SAMPLE_RUNS);
+  // Raw enum stays on data-status; the visible label is humanized.
+  const rawStatuses = [...doc.querySelectorAll('td[data-status]')].map((s) =>
+    s.getAttribute('data-status'),
+  );
+  assert.deepEqual(rawStatuses, ['completed', 'collecting_evidence']);
   const statuses = [...doc.querySelectorAll('td[data-status] span')].map((s) => s.textContent);
-  assert.deepEqual(statuses, ['completed', 'collecting_evidence']);
+  assert.deepEqual(statuses, ['Completed', 'Collecting evidence']);
 });
 
 test('each run links to its detail route (keyboard-focusable)', () => {

@@ -8,6 +8,7 @@
 // parameterised and a run's candidates are scoped through their supporting learning_signals.
 
 import { query } from '@/app/lib/aurora.ts';
+import { isUuid } from '@/app/lib/uuid.ts';
 import {
   parseSkillCandidateStatus,
   type SkillCandidateStatus,
@@ -215,6 +216,7 @@ export async function listSkillCandidates(
 export async function getSkillCandidate(
   candidateId: string,
 ): Promise<SkillCandidateView | null> {
+  if (!isUuid(candidateId)) return null;
   const result = await query<CandidateRow>(
     `SELECT ${CANDIDATE_COLUMNS}
        FROM skill_revision_candidates c
@@ -226,4 +228,28 @@ export async function getSkillCandidate(
   if (row === undefined) return null;
   const signals = await loadSignals(asIdList(row.supporting_signal_ids));
   return mapCandidate(row, signals);
+}
+
+/** Resolve a candidate's owning release run + current status for the per-candidate Gate #3
+ *  routes (§14.4). `skill_revision_candidates` has no release_run_id column — a candidate is
+ *  scoped to a run only THROUGH its supporting learning_signals — so we recover the run from
+ *  any supporting signal that carries one. Returns null when the candidate id is unknown;
+ *  `releaseRunId` is null when no supporting signal carries a run (cannot resume a thread). */
+export async function getCandidateResumeTarget(
+  candidateId: string,
+): Promise<{ readonly status: SkillCandidateStatus; readonly releaseRunId: string | null } | null> {
+  const result = await query<{ status: string; release_run_id: string | null }>(
+    `SELECT c.status AS status,
+            (SELECT ls.release_run_id::text
+               FROM learning_signals ls
+              WHERE ls.id = ANY(c.supporting_signal_ids)
+                AND ls.release_run_id IS NOT NULL
+              LIMIT 1) AS release_run_id
+       FROM skill_revision_candidates c
+      WHERE c.id = $1`,
+    [candidateId],
+  );
+  const row = result.rows[0];
+  if (row === undefined) return null;
+  return { status: parseSkillCandidateStatus(row.status), releaseRunId: row.release_run_id };
 }

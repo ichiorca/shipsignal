@@ -19,6 +19,8 @@ only on the runtime path, mirroring how the graph modules keep langgraph out of 
 
 from __future__ import annotations
 
+import atexit
+import logging
 import os
 from collections.abc import Mapping
 
@@ -26,6 +28,8 @@ from collections.abc import Mapping
 # so the durable checkpointer lands in the SAME cluster as the run's other state — one
 # source of truth, no second DSN to keep in sync.
 CHECKPOINT_DSN_ENV_VAR = "DATABASE_URL"
+
+logger = logging.getLogger("release_worker.checkpointer")
 
 
 def _require_tls(dsn: str) -> str:
@@ -86,4 +90,21 @@ def build_checkpointer(env: Mapping[str, str] | None = None) -> object:
     saver_cm = PostgresSaver.from_conn_string(dsn)
     saver = saver_cm.__enter__()
     saver.setup()
+    # from_conn_string yields a context manager we enter and keep open for the life of the
+    # (short-lived) Actions job. Register its exit so the Aurora connection is released
+    # deterministically on interpreter shutdown rather than relying on process death.
+    atexit.register(_safe_exit, saver_cm)
     return saver
+
+
+def _safe_exit(cm: object) -> None:
+    """Best-effort exit of the checkpointer context manager; never raise during shutdown.
+
+    A teardown failure must not crash the ``atexit`` handler, but it shouldn't be silent
+    either — log it (the root handler scrubs PII) so a leaked Aurora connection on shutdown
+    is diagnosable rather than invisible (observability).
+    """
+    try:
+        cm.__exit__(None, None, None)  # type: ignore[attr-defined]
+    except Exception:
+        logger.warning("checkpointer teardown failed", exc_info=True)

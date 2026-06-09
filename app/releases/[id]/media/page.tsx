@@ -28,9 +28,13 @@ export default async function MediaPreviewPage({ params }: MediaPageProps) {
 
   return (
     <main id="main">
-      <p>
-        <a href={`/releases/${run.id}`}>← Back to release run</a>
-      </p>
+      <nav aria-label="Breadcrumb">
+        <a href="/">All runs</a>
+        {' › '}
+        <a href={`/releases/${run.id}`}>Release run</a>
+        {' › '}
+        <span aria-current="page">Demo media</span>
+      </nav>
       <h1>Demo media</h1>
       <p>
         {run.repo} · {run.base_ref}…{run.head_ref}

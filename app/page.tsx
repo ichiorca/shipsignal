@@ -5,6 +5,7 @@
 
 import { listReleaseRuns } from '@/app/lib/db/releaseRuns.ts';
 import { RunListTable } from '@/app/components/RunListTable.ts';
+import { NewReleaseRunForm } from '@/app/components/NewReleaseRunForm.ts';
 
 // Always reflect the latest runs; this feed is not statically cacheable.
 export const dynamic = 'force-dynamic';
@@ -17,6 +18,7 @@ export default async function ReleaseFeedPage() {
       <p>
         <a href="/skills">Skill admin →</a>
       </p>
+      <NewReleaseRunForm />
       <p>{runs.length === 1 ? '1 run' : `${runs.length} runs`}</p>
       <RunListTable runs={runs} />
     </main>

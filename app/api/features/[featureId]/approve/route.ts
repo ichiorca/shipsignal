@@ -8,6 +8,7 @@ import { NextResponse } from 'next/server';
 import { decisionSchema, parseBody } from '@/app/lib/featureReview.ts';
 import { getFeature, setFeatureStatus } from '@/app/lib/db/features.ts';
 import { recordApproval } from '@/app/lib/db/approvals.ts';
+import { withTransaction } from '@/app/lib/aurora.ts';
 
 export const runtime = 'nodejs';
 
@@ -38,15 +39,22 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
     return NextResponse.json({ error: 'feature not found' }, { status: 404 });
   }
 
-  // Record the human decision first (immutable audit trail), then apply the status.
-  await recordApproval({
-    target_type: 'feature',
-    target_id: featureId,
-    decision: 'approved',
-    reviewer: parsed.value.reviewer,
-    notes: parsed.value.notes,
+  // Record the decision and apply the status ATOMICALLY, so the audit row and the status flip
+  // commit together (no approved feature without its audit record, and no audit record without
+  // the status). The per-feature status stays freely re-decidable before the manifest gate.
+  await withTransaction(async (client) => {
+    await recordApproval(
+      {
+        target_type: 'feature',
+        target_id: featureId,
+        decision: 'approved',
+        reviewer: parsed.value.reviewer,
+        notes: parsed.value.notes,
+      },
+      client,
+    );
+    await setFeatureStatus(featureId, 'approved', parsed.value.notes, client);
   });
-  await setFeatureStatus(featureId, 'approved', parsed.value.notes);
 
   return NextResponse.json({ feature_id: featureId, status: 'approved' }, { status: 200 });
 }

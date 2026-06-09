@@ -6,7 +6,8 @@
 // No status column flips to 'approved' on its own — only setFeatureStatus, driven by a
 // recorded human decision at the gate, advances it (no self-approval path).
 
-import { query } from '@/app/lib/aurora.ts';
+import { query, type Queryable } from '@/app/lib/aurora.ts';
+import { isUuid } from '@/app/lib/uuid.ts';
 
 /** A feature_clusters row plus its linked evidence, as the Gate #1 review screen renders
  *  it. `evidence` carries redacted excerpts only — the manifest never holds raw text. */
@@ -140,6 +141,7 @@ export async function listFeaturesForRun(
 /** Fetch one feature (without evidence), or null. Used by the per-feature API routes to
  *  resolve the owning release_run_id and confirm existence before a decision write. */
 export async function getFeature(featureId: string): Promise<FeatureCluster | null> {
+  if (!isUuid(featureId)) return null;
   const result = await query<FeatureRow>(
     `SELECT ${FEATURE_COLUMNS} FROM feature_clusters WHERE id = $1`,
     [featureId],
@@ -156,8 +158,9 @@ export async function setFeatureStatus(
   featureId: string,
   status: FeatureStatus,
   reviewerNotes?: string,
+  db: Queryable = { query },
 ): Promise<void> {
-  await query(
+  await db.query(
     `UPDATE feature_clusters
         SET status = $2,
             reviewer_notes = COALESCE($3, reviewer_notes),

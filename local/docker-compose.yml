@@ -1,0 +1,64 @@
+# Local-dev stack for ShipSignal — NOT for production.
+#
+#   * postgres  : pgvector + TLS, published on host port 5434 (5432/5433 are in use
+#                 on this host). Container still listens on 5432 internally.
+#   * localstack: LocalStack Pro (S3 + SNS + Bedrock). Bedrock + Guardrails require
+#                 the Pro image and a LOCALSTACK_AUTH_TOKEN.
+#
+# Run via the bootstrap script (recommended) or directly:
+#   docker compose --env-file local/dev-env -f local/docker-compose.yml up -d --build
+#
+# Interpolated ${VARS} below come from --env-file local/dev-env.
+name: shipsignal-local
+
+services:
+  postgres:
+    build:
+      context: ./postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shipsignal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shipsignal}
+      POSTGRES_DB: ${POSTGRES_DB:-shipsignal}
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/pg-ssl/server.crt
+      - -c
+      - ssl_key_file=/etc/pg-ssl/server.key
+    ports:
+      # host 5434 -> container 5432 (avoid 5432/5433 already in use on the host)
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shipsignal} -d ${POSTGRES_DB:-shipsignal}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  localstack:
+    image: localstack/localstack-pro:latest
+    ports:
+      - "4566:4566"
+    environment:
+      # Pro features (Bedrock, Guardrails) only activate with a valid auth token.
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:?set LOCALSTACK_AUTH_TOKEN in local/dev-env}
+      SERVICES: s3,sns,bedrock
+      DEBUG: ${LS_DEBUG:-0}
+      # Bedrock spins up a model backend (Ollama) in a sibling container — needs the
+      # Docker socket. Set LS_PERSISTENCE=1 to keep buckets/models across restarts.
+      PERSISTENCE: ${LS_PERSISTENCE:-0}
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  pgdata:
+  localstack-data:

@@ -19,6 +19,7 @@ gate. Override per-deployment via ``TokenBudget.from_env``.
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -82,12 +83,19 @@ class BudgetTracker:
     budget: TokenBudget
     total_tokens: int = 0
     per_node_tokens: dict[str, int] = field(default_factory=dict)
+    # One run's content node fans out N artifact generations across a ThreadPoolExecutor that
+    # share a single tracker, so the accumulate-and-check must be atomic — an unsynchronized
+    # `+=` would lose increments and could let the run silently overshoot its §6 cap.
+    _lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False, compare=False
+    )
 
     def record(self, node: str, input_tokens: int, output_tokens: int) -> int:
         """Charge ``input+output`` tokens to ``node`` and the run; return the call total.
 
         Raises ``TokenBudgetExceededError`` if this call exceeds the per-call cap or pushes
-        the run over the per-run cap — the caller treats that as a hard failure.
+        the run over the per-run cap — the caller treats that as a hard failure. Thread-safe:
+        the accumulate-and-read is serialized so concurrent calls cannot lose increments.
         """
         if input_tokens < 0 or output_tokens < 0:
             raise ValueError("token counts cannot be negative")
@@ -96,10 +104,10 @@ class BudgetTracker:
             raise TokenBudgetExceededError(
                 f"call:{node}", call_total, self.budget.per_call_max
             )
-        self.per_node_tokens[node] = self.per_node_tokens.get(node, 0) + call_total
-        self.total_tokens += call_total
-        if self.total_tokens > self.budget.per_run_max:
-            raise TokenBudgetExceededError(
-                "run", self.total_tokens, self.budget.per_run_max
-            )
+        with self._lock:
+            self.per_node_tokens[node] = self.per_node_tokens.get(node, 0) + call_total
+            self.total_tokens += call_total
+            run_total = self.total_tokens
+        if run_total > self.budget.per_run_max:
+            raise TokenBudgetExceededError("run", run_total, self.budget.per_run_max)
         return call_total

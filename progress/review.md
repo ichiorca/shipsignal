@@ -1,8 +1,8 @@
 # spec-kit review
 
-_Generated at 2026-06-08T21:32:23Z â€” projectRoot "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal" â€” 105 source file(s) scanned._
+_Generated at 2026-06-09T22:00:42Z â€” projectRoot "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal" â€” 138 source file(s) scanned._
 
-## Specs (18)
+## Specs (22)
 
 | ID | tasks | provenance |
 |---|---:|---|
@@ -24,13 +24,20 @@ _Generated at 2026-06-08T21:32:23Z â€” projectRoot "C:\\Users\\Ranee Bajaj\
 | 016-audit-trail-hashing-and-redaction-hardening | 5 | repo-versioned |
 | 017-durable-resume-checkpointer-and-pgvector-retrieval | 4 | repo-versioned |
 | 018-skills-inventory-reconciliation-and-pr-promotion | 4 | repo-versioned |
+| 019-approved-artifact-export-and-distribution-webhook | 5 | repo-unversioned |
+| 020-gate-ready-reviewer-notifications | 5 | repo-unversioned |
+| 021-engagement-outcome-loop-utm-and-roi-view | 5 | repo-unversioned |
+| 022-per-run-artifact-type-selection | 5 | repo-unversioned |
 
 ## Constitution citations (0 principle(s))
 
 | Principle | Citations |
 |---|---:|
 
-## Findings (0)
+## Findings (1)
 
-_None â€” everything resolves._
+### F001 â€” 4 spec(s) are not cleanly committed: 019-approved-artifact-export-and-distribution-webhook, 020-gate-ready-reviewer-notifications, 021-engagement-outcome-loop-utm-and-roi-view, 022-per-run-artifact-type-selection  `[med]`
+
+- **Axis**: spec-provenance
+- **Recommendation**: Commit the spec.md(s) so downstream provenance carriers land as repo-versioned (anti-pattern #3).
 

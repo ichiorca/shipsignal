@@ -82,8 +82,9 @@ test('reviewer field is labelled (keyboard/AT operable)', () => {
   const { doc } = render(FEATURES);
   const label = doc.querySelector('label[for="reviewer"]');
   const input = doc.querySelector('input#reviewer');
-  assert.equal(label?.textContent, 'Reviewer name');
+  assert.equal(label?.textContent, 'Reviewer name (required)');
   assert.ok(input, 'reviewer input is present');
+  assert.equal(input?.getAttribute('required'), '', 'reviewer field is marked required');
 });
 
 test('exposes the approve and reject flows per feature with accessible names', () => {

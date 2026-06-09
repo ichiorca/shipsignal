@@ -34,6 +34,13 @@ export interface PresignInput {
   readonly expiresInSeconds?: number;
   /** Injectable clock for deterministic tests; defaults to now. */
   readonly now?: Date;
+  /**
+   * Optional S3 endpoint override, e.g. `http://localhost:4566` for LocalStack/MinIO.
+   * When set, the URL is signed PATH-style (`<endpoint>/<bucket>/<key>`) against that
+   * host; when omitted, the default AWS virtual-hosted endpoint is used. The route
+   * handler reads this from `AWS_ENDPOINT_URL_S3`/`AWS_ENDPOINT_URL` (server-side).
+   */
+  readonly endpoint?: string;
 }
 
 interface S3Location {
@@ -93,6 +100,40 @@ function clampExpires(seconds: number | undefined): number {
   return Math.min(Math.floor(requested), MAX_EXPIRES_SECONDS);
 }
 
+interface SignTarget {
+  readonly scheme: string;
+  readonly host: string;
+  readonly canonicalUri: string;
+}
+
+/** Resolve the signing target: AWS virtual-hosted by default, or path-style against an
+ *  explicit endpoint (LocalStack/MinIO) when one is supplied. The `host` here is also the
+ *  only signed header, so it must equal the request host — including a non-default port. */
+function resolveTarget(
+  bucket: string,
+  key: string,
+  region: string,
+  endpoint: string | undefined,
+): SignTarget {
+  const canonicalKey = encodeKeyPath(key);
+  if (endpoint === undefined || endpoint === '') {
+    // Virtual-hosted–style: bucket in the host, key is the whole path.
+    return {
+      scheme: 'https',
+      host: `${bucket}.s3.${region}.amazonaws.com`,
+      canonicalUri: `/${canonicalKey}`,
+    };
+  }
+  // Path-style against a custom endpoint: bucket becomes the first path segment. URL()
+  // throws on a malformed endpoint, failing fast rather than minting a bad signed URL.
+  const parsed = new URL(endpoint);
+  return {
+    scheme: parsed.protocol.replace(/:$/, ''),
+    host: parsed.host,
+    canonicalUri: `/${bucket}/${canonicalKey}`,
+  };
+}
+
 /** Build a presigned GET URL for a single S3 object. */
 export function presignS3GetUrl(input: PresignInput): string {
   const { bucket, key } = parseS3Uri(input.s3Uri);
@@ -100,9 +141,8 @@ export function presignS3GetUrl(input: PresignInput): string {
   const { amzDate, dateStamp } = amzDates(input.now ?? new Date());
   const expires = clampExpires(input.expiresInSeconds);
 
-  // Virtual-hosted–style endpoint; host is the only signed header.
-  const host = `${bucket}.s3.${region}.amazonaws.com`;
-  const canonicalUri = `/${encodeKeyPath(key)}`;
+  // AWS virtual-hosted by default; path-style against an explicit endpoint (LocalStack).
+  const { scheme, host, canonicalUri } = resolveTarget(bucket, key, region, input.endpoint);
   const credentialScope = `${dateStamp}/${region}/${SERVICE}/aws4_request`;
 
   const queryParams: Record<string, string> = {
@@ -143,5 +183,5 @@ export function presignS3GetUrl(input: PresignInput): string {
   const kSigning = hmac(kService, 'aws4_request');
   const signature = hmac(kSigning, stringToSign).toString('hex');
 
-  return `https://${host}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+  return `${scheme}://${host}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
 }

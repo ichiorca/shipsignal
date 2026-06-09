@@ -4,7 +4,8 @@
 // whole pipeline references downstream. All queries are parameterised.
 
 import { randomUUID } from 'node:crypto';
-import { query } from '@/app/lib/aurora.ts';
+import { query, type Queryable } from '@/app/lib/aurora.ts';
+import { isUuid } from '@/app/lib/uuid.ts';
 import type { RunStatus } from '@/app/lib/runStatus.ts';
 import { isRunStatus } from '@/app/lib/runStatus.ts';
 
@@ -72,9 +73,12 @@ export interface CreateReleaseRunArgs {
 
 /** Insert a new run in `created` status (PRD §13.2 initial state); returns the created
  *  row (incl. generated id). The worker advances it through the lifecycle from here. */
-export async function insertReleaseRun(args: CreateReleaseRunArgs): Promise<ReleaseRun> {
+export async function insertReleaseRun(
+  args: CreateReleaseRunArgs,
+  db: Queryable = { query },
+): Promise<ReleaseRun> {
   const id = randomUUID();
-  const result = await query<ReleaseRunRow>(
+  const result = await db.query<ReleaseRunRow>(
     `INSERT INTO release_runs
        (id, repo, base_ref, head_ref, trigger_type, status, run_metadata_json)
      VALUES ($1, $2, $3, $4, $5, 'created', $6)
@@ -106,6 +110,8 @@ export async function listReleaseRuns(limit = 50): Promise<readonly ReleaseRun[]
 
 /** Fetch one run by id, or null if it does not exist. */
 export async function getReleaseRun(id: string): Promise<ReleaseRun | null> {
+  // A malformed id is "no such run" (404), not a 500 from the uuid column rejecting it.
+  if (!isUuid(id)) return null;
   const result = await query<ReleaseRunRow>(
     `SELECT ${SELECT_COLUMNS} FROM release_runs WHERE id = $1`,
     [id],

@@ -3,25 +3,29 @@
 // current vs proposed version, confidence + source as TEXT (not colour alone), the likely impact,
 // a two-panel current/proposed SKILL.md diff (each panel a labelled region), and the supporting
 // signals as a list (PRD §9.5 bottom panel). The action group uses real <button>s — "Approve and
-// replace repo skill" / "Reject" / "Request changes" (PRD §9.5) — with a live-region status
-// message. constitution §1/§5: the UI NEVER writes the repo file; each action submits the
-// run-level decision to the resume route, and the WORKER performs the single repo write on the
-// runner. Only repo-authored skill text + redacted/internal signal excerpts are shown.
+// replace repo skill" / "Reject" / "Request changes" (PRD §9.5) — with a live-region status.
 //
-// "use client": this is the interactive leaf (ux-react: mark stateful components, keep them small
-// and leaf-level). It posts JSON to the §14 resume route; the reviewer identity is required before
-// any decision so a skill replacement is never approved anonymously (no self-approval). Authored
-// with React.createElement (not JSX) so it renders under the dependency-free `node --test` a11y
-// harness, mirroring the other review components.
+// Approve and Reject are guarded by a confirmation dialog because they resume the run, and
+// Approve is the single highest-blast action in the product — it OVERWRITES a repo SKILL.md —
+// so it additionally requires the reviewer to type a confirmation phrase (UX review B1). The
+// reviewer name is required (focus + aria-invalid on omission, UX H5) and persisted across
+// gates (L3). constitution §1/§5: the UI NEVER writes the repo file; each action submits the
+// run-level decision to the resume route and the WORKER performs the single repo write.
+//
+// Authored with React.createElement (not JSX) so it renders under the dependency-free
+// `node --test` a11y harness, mirroring the other review components.
 
 'use client';
 
-import { createElement, useState } from 'react';
+import { createElement, useRef, useState } from 'react';
 import type { ReactElement } from 'react';
 import type {
   SkillCandidateView,
   SupportingSignalView,
 } from '@/app/lib/db/skillCandidates.ts';
+import { EMPTY } from '../lib/displayFormat.ts';
+import { ConfirmButton } from './ConfirmButton.ts';
+import { useReviewerName } from '../lib/useReviewerName.ts';
 
 export interface SkillCandidateReviewProps {
   readonly releaseRunId: string;
@@ -30,6 +34,13 @@ export interface SkillCandidateReviewProps {
 }
 
 type Decision = 'approved' | 'rejected' | 'edited';
+
+/** User-facing message for a failed request — never expose a bare HTTP status (UX review H5). */
+function failureMessage(status: number): string {
+  if (status === 409) return 'it conflicts with the current state (already decided).';
+  if (status >= 500) return 'the server hit an error — please try again.';
+  return `the request was rejected (code ${status}).`;
+}
 
 function bodyPanel(label: string, panel: string, body: string): ReactElement {
   const headingId = `panel-${panel}`;
@@ -43,7 +54,6 @@ function bodyPanel(label: string, panel: string, body: string): ReactElement {
 
 function signalItem(signal: SupportingSignalView): ReactElement {
   const headingId = `signal-${signal.id}`;
-  // The signal kind + (for a rejection) its category are exposed as TEXT, never colour alone.
   return createElement(
     'li',
     { key: signal.id, 'data-signal-id': signal.id, 'aria-labelledby': headingId },
@@ -58,9 +68,8 @@ function signalItem(signal: SupportingSignalView): ReactElement {
 
 function candidateSection(candidate: SkillCandidateView): ReactElement {
   const headingId = `candidate-${candidate.id}`;
-  const currentVersion = candidate.current_version ?? '—';
-  const confidence =
-    candidate.confidence === null ? 'n/a' : candidate.confidence.toFixed(2);
+  const currentVersion = candidate.current_version ?? EMPTY;
+  const confidence = candidate.confidence === null ? EMPTY : candidate.confidence.toFixed(2);
   return createElement(
     'section',
     {
@@ -70,7 +79,6 @@ function candidateSection(candidate: SkillCandidateView): ReactElement {
       'data-skill-name': candidate.skill_name,
     },
     createElement('h2', { id: headingId }, `Skill: ${candidate.skill_name}`),
-    // Versions + confidence + source as readable text (PRD §9.5 header block).
     createElement(
       'dl',
       null,
@@ -84,10 +92,8 @@ function candidateSection(candidate: SkillCandidateView): ReactElement {
       createElement('dd', { key: 'cod', 'data-confidence': confidence }, confidence),
     ),
     createElement('p', { 'data-proposal-reason': 'true' }, `Likely impact: ${candidate.proposal_reason}`),
-    // Two-panel diff: current SKILL.md (left) vs proposed SKILL.md (right) — PRD §9.5.
     bodyPanel('Current SKILL.md', 'current', candidate.current_body),
     bodyPanel('Proposed SKILL.md', 'proposed', candidate.proposed_body),
-    // Supporting signals (PRD §9.5 bottom panel).
     createElement('h3', null, 'Supporting signals'),
     candidate.supporting_signals.length === 0
       ? createElement('p', null, 'No supporting signals recorded.')
@@ -100,15 +106,28 @@ export function SkillCandidateReview({
   threadId,
   candidates,
 }: SkillCandidateReviewProps): ReactElement {
-  const [reviewer, setReviewer] = useState('');
+  const [reviewer, setReviewer] = useReviewerName();
+  const [reviewerError, setReviewerError] = useState(false);
   const [status, setStatus] = useState('');
   const [pending, setPending] = useState(false);
+  const reviewerRef = useRef<HTMLInputElement | null>(null);
+
+  const noReviewer = reviewer.trim() === '';
+  const cannotDecide = pending || noReviewer || threadId === null;
+
+  function requireReviewer(): boolean {
+    if (noReviewer) {
+      setReviewerError(true);
+      reviewerRef.current?.focus();
+      setStatus('Enter your reviewer name before deciding on the skill replacement.');
+      return false;
+    }
+    setReviewerError(false);
+    return true;
+  }
 
   async function submitReview(decision: Decision): Promise<void> {
-    if (reviewer.trim() === '') {
-      setStatus('Enter your reviewer name before deciding on the skill replacement.');
-      return;
-    }
+    if (!requireReviewer()) return;
     if (threadId === null) {
       setStatus('This run has no thread to resume yet.');
       return;
@@ -124,10 +143,10 @@ export function SkillCandidateReview({
       setStatus(
         response.ok
           ? `Recorded ${decision}; the skill-learning run is resuming.`
-          : `Failed to submit decision (status ${response.status}).`,
+          : `Could not submit the decision: ${failureMessage(response.status)}`,
       );
     } catch {
-      setStatus('Failed to submit the skill decision.');
+      setStatus('Could not submit the skill decision — the request did not complete.');
     } finally {
       setPending(false);
     }
@@ -147,34 +166,59 @@ export function SkillCandidateReview({
     createElement(
       'p',
       null,
-      createElement('label', { htmlFor: 'reviewer' }, 'Reviewer name'),
+      createElement('label', { htmlFor: 'reviewer' }, 'Reviewer name (required)'),
     ),
     createElement('input', {
       id: 'reviewer',
       name: 'reviewer',
       type: 'text',
       value: reviewer,
+      required: true,
       autoComplete: 'name',
-      onChange: (e: { target: { value: string } }) => setReviewer(e.target.value),
+      ref: reviewerRef,
+      'aria-invalid': reviewerError,
+      'aria-describedby': reviewerError ? 'reviewer-error' : undefined,
+      onChange: (e: { target: { value: string } }) => {
+        setReviewer(e.target.value);
+        if (e.target.value.trim() !== '') setReviewerError(false);
+      },
     }),
+    reviewerError
+      ? createElement('p', { id: 'reviewer-error', role: 'alert' }, 'Enter your reviewer name to decide on the skill replacement.')
+      : null,
     createElement('p', { role: 'status', 'aria-live': 'polite' }, status),
     ...candidates.map(candidateSection),
     createElement(
       'div',
       { role: 'group', 'aria-label': 'Decide on the skill replacement' },
+      noReviewer
+        ? createElement('p', null, 'Enter your reviewer name above to record a decision.')
+        : null,
+      createElement(ConfirmButton, {
+        label: 'Approve and replace repo skill',
+        title: 'Overwrite the repository SKILL.md?',
+        body:
+          'This OVERWRITES the repo SKILL.md with the proposed version and records the ' +
+          'resulting commit SHA. It is the single highest-impact action in the product and ' +
+          'cannot be undone from here.',
+        confirmLabel: 'Overwrite SKILL.md & resume',
+        confirmPhrase: 'REPLACE',
+        disabled: cannotDecide,
+        onConfirm: () => submitReview('approved'),
+      }),
+      createElement(ConfirmButton, {
+        label: 'Reject',
+        title: 'Reject the proposed skill revision?',
+        body:
+          'This rejects the candidate and resumes the run. No repo file is changed and a ' +
+          'cooldown suppression is recorded. It cannot be undone from here.',
+        confirmLabel: 'Reject & resume',
+        disabled: cannotDecide,
+        onConfirm: () => submitReview('rejected'),
+      }),
       createElement(
         'button',
-        { type: 'button', disabled: pending, onClick: () => submitReview('approved') },
-        'Approve and replace repo skill',
-      ),
-      createElement(
-        'button',
-        { type: 'button', disabled: pending, onClick: () => submitReview('rejected') },
-        'Reject',
-      ),
-      createElement(
-        'button',
-        { type: 'button', disabled: pending, onClick: () => submitReview('edited') },
+        { type: 'button', disabled: cannotDecide, onClick: () => submitReview('edited') },
         'Request changes',
       ),
     ),

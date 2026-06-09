@@ -20,6 +20,16 @@ export function notFound(message: string): ReadResult {
   return { status: 404, body: { error: message } };
 }
 
+/** Parse a clamped `?limit` query param (default `def`, hard-capped at `max`) so a list
+ *  endpoint never returns an unbounded result set. Invalid/absent → `def`. */
+export function parseLimit(url: string, def: number, max: number): number {
+  const raw = new URL(url).searchParams.get('limit');
+  if (raw === null) return def;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return def;
+  return Math.min(n, max);
+}
+
 /** Resolve a single resource: 404 when the loader yields `null`, else 200 with the
  *  shaped body. `shape` builds the response envelope from the loaded value. */
 export async function resolveOne<T>(

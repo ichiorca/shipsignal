@@ -10,6 +10,7 @@
 import { createElement } from 'react';
 import type { ReactElement } from 'react';
 import type { ReleaseRun } from '@/app/lib/db/releaseRuns.ts';
+import { humanizeStatus, formatTimestamp } from '../lib/displayFormat.ts';
 
 export interface RunListTableProps {
   readonly runs: readonly ReleaseRun[];
@@ -20,9 +21,13 @@ function shortId(id: string): string {
 }
 
 function statusCell(status: ReleaseRun['status']): ReactElement {
-  // Text label carries the meaning; a data-attribute lets CSS add colour as an
-  // enhancement without making colour the sole signal.
-  return createElement('td', { 'data-status': status }, createElement('span', null, status));
+  // Humanized text label carries the meaning; the raw enum stays on the data-attribute so
+  // CSS can add colour as an enhancement without making colour the sole signal.
+  return createElement(
+    'td',
+    { 'data-status': status },
+    createElement('span', null, humanizeStatus(status)),
+  );
 }
 
 function runRow(run: ReleaseRun): ReactElement {
@@ -30,19 +35,22 @@ function runRow(run: ReleaseRun): ReactElement {
   return createElement(
     'tr',
     { key: run.id },
+    // The run link is the row header so it names the row for screen readers (UX L4); the
+    // full UUID stays on the link title while the cell shows the short, scannable id.
     createElement(
-      'td',
-      null,
+      'th',
+      { scope: 'row' },
       createElement('a', { href: detailHref, title: run.id }, shortId(run.id)),
     ),
     createElement('td', null, run.repo),
     createElement('td', null, `${run.base_ref}…${run.head_ref}`),
     createElement('td', null, run.trigger_type),
     statusCell(run.status),
+    // Machine-readable ISO stays in dateTime; the visible label is human-formatted (UX H2).
     createElement(
       'td',
       null,
-      createElement('time', { dateTime: run.started_at }, run.started_at),
+      createElement('time', { dateTime: run.started_at }, formatTimestamp(run.started_at)),
     ),
   );
 }

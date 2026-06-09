@@ -16,13 +16,14 @@ import type {
   ArtifactClaimView,
   ClaimEvidenceRef,
 } from '@/app/lib/db/claims.ts';
+import { EMPTY } from '../lib/displayFormat.ts';
 
 export interface ClaimInspectorProps {
   readonly artifact: ArtifactWithClaims;
 }
 
 function evidenceItem(ref: ClaimEvidenceRef): ReactElement {
-  const score = ref.support_score === null ? 'n/a' : ref.support_score.toFixed(2);
+  const score = ref.support_score === null ? EMPTY : ref.support_score.toFixed(2);
   return createElement(
     'li',
     { key: ref.evidence_item_id, 'data-evidence-id': ref.evidence_item_id },

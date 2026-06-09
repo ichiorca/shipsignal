@@ -95,6 +95,28 @@ class AuroraS3ErasureStore(ErasureStore):
         # Deleting the release_runs row CASCADEs to evidence/features/claims/artifacts/media/
         # learning_signals (FK chain, migrations 0003-0008). rowcount is 1, or 0 if already gone.
         with self._conn.cursor() as cur:
+            # `approvals` is gate-agnostic (no FK to release_runs), so the CASCADE does NOT reach
+            # it — yet its rows carry `reviewer` (a person's name) + `edited_payload_json`
+            # (reviewer-authored content), both personal data (GDPR Art.17). Delete the run's
+            # gate decisions FIRST, while the feature/artifact/media child ids their target_id
+            # references still exist (run-level decisions key on the run id; per-feature,
+            # per-artifact and media-trigger decisions key on the child id).
+            cur.execute(
+                """
+                DELETE FROM approvals
+                 WHERE target_id = %(run)s
+                    OR target_id IN (
+                        SELECT id FROM feature_clusters WHERE release_run_id = %(run)s
+                    )
+                    OR target_id IN (
+                        SELECT id FROM artifacts WHERE release_run_id = %(run)s
+                    )
+                    OR target_id IN (
+                        SELECT id FROM media_assets WHERE release_run_id = %(run)s
+                    )
+                """,
+                {"run": release_run_id},
+            )
             cur.execute("DELETE FROM release_runs WHERE id = %s", (release_run_id,))
             return cur.rowcount
 

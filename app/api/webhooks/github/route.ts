@@ -11,6 +11,7 @@ import {
 } from '@/app/lib/githubWebhook.ts';
 import { AuroraDeliveryGuidStore } from '@/app/lib/db/webhookDeliveries.ts';
 import { insertReleaseRun } from '@/app/lib/db/releaseRuns.ts';
+import { withTransaction } from '@/app/lib/aurora.ts';
 
 // HMAC verification + Aurora require the Node.js runtime (not Edge).
 export const runtime = 'nodejs';
@@ -33,14 +34,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'missing delivery id' }, { status: 400 });
   }
 
-  // Replay protection: a redelivered GUID is acknowledged but does no work.
-  const isNew = await deliveryStore.markIfNew(deliveryGuid);
-  if (!isNew) {
-    return NextResponse.json({ status: 'ignored', reason: 'duplicate delivery' }, { status: 200 });
-  }
-
   // Only act on published-release events; ack-and-ignore anything else so GitHub
-  // does not redeliver.
+  // does not redeliver. (Ignored events need no dedupe — a 200 already stops redelivery.)
   if (event !== 'release') {
     return NextResponse.json({ status: 'ignored', reason: 'unhandled event' }, { status: 200 });
   }
@@ -57,16 +52,30 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ status: 'ignored', reason: 'not a usable release' }, { status: 200 });
   }
 
-  // Compare range: from the previous tag (unknown at the webhook boundary in the
-  // skeleton) to the released tag. base_ref defaults to the repo's empty-tree-relative
-  // baseline marker until evidence collection resolves the prior tag.
-  const run = await insertReleaseRun({
-    repo: delivery.repo,
-    base_ref: delivery.previousTag ?? `${delivery.tag}^`,
-    head_ref: delivery.tag,
-    trigger_type: 'release_tag',
-    run_metadata: { delivery_guid: deliveryGuid },
+  // Replay protection + run creation in ONE transaction: the delivery GUID is only durably
+  // recorded if the release_run is created, so a crash between the two lets GitHub's
+  // at-least-once redelivery recreate the run rather than hitting a committed GUID and silently
+  // dropping it. Compare range: from the previous tag (unknown at the webhook boundary in the
+  // skeleton) to the released tag; base_ref defaults to the empty-tree-relative baseline until
+  // evidence collection resolves the prior tag.
+  const result = await withTransaction(async (client) => {
+    const isNew = await deliveryStore.markIfNew(deliveryGuid, client);
+    if (!isNew) return { duplicate: true as const };
+    const run = await insertReleaseRun(
+      {
+        repo: delivery.repo,
+        base_ref: delivery.previousTag ?? `${delivery.tag}^`,
+        head_ref: delivery.tag,
+        trigger_type: 'release_tag',
+        run_metadata: { delivery_guid: deliveryGuid },
+      },
+      client,
+    );
+    return { duplicate: false as const, run };
   });
 
-  return NextResponse.json({ status: 'created', run_id: run.id }, { status: 201 });
+  if (result.duplicate) {
+    return NextResponse.json({ status: 'ignored', reason: 'duplicate delivery' }, { status: 200 });
+  }
+  return NextResponse.json({ status: 'created', run_id: result.run.id }, { status: 201 });
 }

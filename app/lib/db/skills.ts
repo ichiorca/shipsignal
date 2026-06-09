@@ -85,7 +85,7 @@ function mapSnapshot(row: SnapshotRow): SkillSnapshotView {
 
 /** List the active repo skills (one per active snapshot) with their Aurora snapshot
  *  counts, newest-synced first. Drives the Skill-admin list (PRD §13.1). */
-export async function listSkills(): Promise<readonly SkillSummary[]> {
+export async function listSkills(limit = 200): Promise<readonly SkillSummary[]> {
   const result = await query<SummaryRow>(
     `SELECT s.skill_name,
             s.skill_path,
@@ -97,7 +97,9 @@ export async function listSkills(): Promise<readonly SkillSummary[]> {
               WHERE s2.repo = s.repo AND s2.skill_path = s.skill_path) AS snapshot_count
        FROM skill_repo_snapshots s
       WHERE s.is_active
-      ORDER BY s.synced_at DESC`,
+      ORDER BY s.synced_at DESC
+      LIMIT $1`,
+    [limit],
   );
   return result.rows.map((row) => ({
     skill_name: row.skill_name,

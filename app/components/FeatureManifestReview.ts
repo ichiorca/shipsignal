@@ -4,17 +4,23 @@
 // accessible action group (Approve / Reject / Save edits) with real <button>s and a
 // live-region status message. constitution §4/§5: only redacted manifest data is shown.
 //
-// "use client": this is the interactive leaf (ux-react: mark stateful components and keep
-// them small/leaf-level). It posts JSON to the §14.2/§14.1 routes; the reviewer identity
-// is required before any decision so nothing is approved anonymously (no self-approval).
-// Authored with React.createElement (not JSX) so it renders under the dependency-free
-// `node --test` a11y harness, mirroring the other components.
+// The run-level gate decision is EXPLICIT (Approve OR Reject manifest & resume) and runs
+// behind a confirmation dialog, because resuming the worker past Gate #1 is consequential
+// and was previously a single hardcoded "approved" click (UX review B2/B1). The reviewer
+// name is required (focus + aria-invalid on omission, UX H5) and persisted across gates (L3).
+//
+// "use client": this is the interactive leaf (ux-react). It posts JSON to the §14.2/§14.1
+// routes; the reviewer identity is required before any decision so nothing is approved
+// anonymously (no self-approval). Authored with React.createElement (not JSX) so it renders
+// under the dependency-free `node --test` a11y harness, mirroring the other components.
 
 'use client';
 
-import { createElement, useState } from 'react';
+import { createElement, useRef, useState } from 'react';
 import type { ReactElement } from 'react';
 import type { FeatureCluster } from '@/app/lib/db/features.ts';
+import { ConfirmButton } from './ConfirmButton.ts';
+import { useReviewerName } from '../lib/useReviewerName.ts';
 
 export interface FeatureManifestReviewProps {
   readonly releaseRunId: string;
@@ -23,6 +29,13 @@ export interface FeatureManifestReviewProps {
 }
 
 type Decision = 'approved' | 'rejected' | 'edited';
+
+/** User-facing message for a failed request — never expose a bare HTTP status (UX review H5). */
+function failureMessage(status: number): string {
+  if (status === 409) return 'it conflicts with the current state (already decided or blocked).';
+  if (status >= 500) return 'the server hit an error — please try again.';
+  return `the request was rejected (code ${status}).`;
+}
 
 function score(label: string, value: number | null): ReactElement {
   const text = value === null ? '—' : value.toFixed(2);
@@ -57,16 +70,30 @@ export function FeatureManifestReview({
   threadId,
   features,
 }: FeatureManifestReviewProps): ReactElement {
-  const [reviewer, setReviewer] = useState('');
+  const [reviewer, setReviewer] = useReviewerName();
+  const [reviewerError, setReviewerError] = useState(false);
   const [edits, setEdits] = useState<Readonly<Record<string, string>>>({});
   const [status, setStatus] = useState('');
   const [pending, setPending] = useState(false);
+  const reviewerRef = useRef<HTMLInputElement | null>(null);
+
+  const noReviewer = reviewer.trim() === '';
+
+  /** Validate the reviewer name for a per-feature action; on omission, mark the field
+   *  invalid and move focus to it (UX review H5) rather than only writing to the status. */
+  function requireReviewer(): boolean {
+    if (noReviewer) {
+      setReviewerError(true);
+      reviewerRef.current?.focus();
+      setStatus('Enter your reviewer name before recording a decision.');
+      return false;
+    }
+    setReviewerError(false);
+    return true;
+  }
 
   async function decide(feature: FeatureCluster, decision: Decision): Promise<void> {
-    if (reviewer.trim() === '') {
-      setStatus('Enter your reviewer name before recording a decision.');
-      return;
-    }
+    if (!requireReviewer()) return;
     setPending(true);
     setStatus(`Recording ${decision} for "${feature.title}"…`);
     try {
@@ -85,25 +112,22 @@ export function FeatureManifestReview({
       setStatus(
         response.ok
           ? `Recorded ${decision} for "${feature.title}".`
-          : `Failed to record ${decision} (status ${response.status}).`,
+          : `Could not record ${decision}: ${failureMessage(response.status)}`,
       );
     } catch {
-      setStatus(`Failed to record ${decision} for "${feature.title}".`);
+      setStatus(`Could not record ${decision} for "${feature.title}" — the request did not complete.`);
     } finally {
       setPending(false);
     }
   }
 
   async function submitManifest(decision: Decision): Promise<void> {
-    if (reviewer.trim() === '') {
-      setStatus('Enter your reviewer name before submitting the manifest.');
-      return;
-    }
     if (threadId === null) {
       setStatus('This run has no thread to resume yet.');
       return;
     }
     setPending(true);
+    setStatus(`Submitting the manifest as ${decision}; the run is resuming…`);
     try {
       const response = await fetch(`/api/releases/${releaseRunId}/resume`, {
         method: 'POST',
@@ -112,11 +136,11 @@ export function FeatureManifestReview({
       });
       setStatus(
         response.ok
-          ? 'Manifest review submitted; the run is resuming.'
-          : `Failed to submit manifest (status ${response.status}).`,
+          ? `Manifest ${decision}; the run is resuming.`
+          : `Could not submit the manifest: ${failureMessage(response.status)}`,
       );
     } catch {
-      setStatus('Failed to submit the manifest review.');
+      setStatus('Could not submit the manifest review — the request did not complete.');
     } finally {
       setPending(false);
     }
@@ -187,26 +211,56 @@ export function FeatureManifestReview({
     createElement(
       'p',
       null,
-      createElement('label', { htmlFor: 'reviewer' }, 'Reviewer name'),
+      createElement('label', { htmlFor: 'reviewer' }, 'Reviewer name (required)'),
     ),
     createElement('input', {
       id: 'reviewer',
       name: 'reviewer',
       type: 'text',
       value: reviewer,
+      required: true,
       autoComplete: 'name',
-      onChange: (e: { target: { value: string } }) => setReviewer(e.target.value),
+      ref: reviewerRef,
+      'aria-invalid': reviewerError,
+      'aria-describedby': reviewerError ? 'reviewer-error' : undefined,
+      onChange: (e: { target: { value: string } }) => {
+        setReviewer(e.target.value);
+        if (e.target.value.trim() !== '') setReviewerError(false);
+      },
     }),
+    reviewerError
+      ? createElement('p', { id: 'reviewer-error', role: 'alert' }, 'Enter your reviewer name to record a decision.')
+      : null,
     createElement('p', { role: 'status', 'aria-live': 'polite' }, status),
     ...features.map(featureSection),
     createElement(
       'div',
-      { role: 'group', 'aria-label': 'Submit manifest review' },
-      createElement(
-        'button',
-        { type: 'button', disabled: pending, onClick: () => submitManifest('approved') },
-        'Submit & resume',
-      ),
+      { role: 'group', 'aria-label': 'Submit manifest review (Gate #1)' },
+      noReviewer
+        ? createElement('p', null, 'Enter your reviewer name above to record a gate decision.')
+        : null,
+      createElement(ConfirmButton, {
+        label: 'Approve manifest & resume',
+        title: 'Approve the feature manifest?',
+        body:
+          'This records your approval and resumes the worker past Gate #1 to generate ' +
+          'content from the approved features. It cannot be undone from here.',
+        confirmLabel: 'Approve & resume',
+        testId: 'manifest-approve',
+        disabled: pending || noReviewer || threadId === null,
+        onConfirm: () => submitManifest('approved'),
+      }),
+      createElement(ConfirmButton, {
+        label: 'Reject manifest & resume',
+        title: 'Reject the feature manifest?',
+        body:
+          'This records a rejection and resumes the worker past Gate #1. No content will ' +
+          'be generated for this manifest. It cannot be undone from here.',
+        confirmLabel: 'Reject & resume',
+        testId: 'manifest-reject',
+        disabled: pending || noReviewer || threadId === null,
+        onConfirm: () => submitManifest('rejected'),
+      }),
     ),
   );
 }

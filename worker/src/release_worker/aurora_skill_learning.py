@@ -47,7 +47,7 @@ class AuroraLearningSignalSource:
             # Reviewer edits: an 'edited' artifact decision with the edited body_markdown.
             cur.execute(
                 """
-                SELECT ap.target_id, a.body_markdown,
+                SELECT DISTINCT ap.target_id, a.body_markdown,
                        ap.edited_payload_json ->> 'body_markdown', ap.reviewer,
                        COALESCE(
                            ARRAY(
@@ -58,6 +58,8 @@ class AuroraLearningSignalSource:
                            ),
                            ARRAY[]::uuid[]
                        )
+                  -- DISTINCT collapses identical re-submitted approval rows (approvals has no
+                  -- UNIQUE), so a re-clicked decision is mined once, not N times.
                   FROM approvals ap
                   JOIN artifacts a ON a.id = ap.target_id
                  WHERE ap.target_type = 'artifact'
@@ -119,7 +121,7 @@ class AuroraLearningSignalSource:
             # Review notes: any reviewer note recorded at Gate #1/#2 for the run's artifacts.
             cur.execute(
                 """
-                SELECT ap.target_id, ap.notes, ap.reviewer
+                SELECT DISTINCT ap.target_id, ap.notes, ap.reviewer
                   FROM approvals ap
                   JOIN artifacts a ON a.id = ap.target_id
                  WHERE ap.target_type = 'artifact'
@@ -330,16 +332,24 @@ class AuroraSkillCandidateSink:
             )
 
     def mark_promoted(self, record: PromotionRecord) -> None:
-        # Records the promotion provenance and flips status to 'promoted'. The old/new content
-        # hashes are preserved on the row even though the repo file has been replaced (AC2).
-        # T3 (spec 018) — also record HOW the skill was promoted: promotion_mode ('direct'|'pr')
-        # and the opened PR url for the §15.3 PR mode (null for direct), part of the durable
-        # provenance (migration 0017).
+        # Records the promotion provenance. The old/new content hashes are preserved on the row
+        # even after the repo file is replaced (AC2). T3 (spec 018) — also record HOW the skill
+        # was promoted: promotion_mode ('direct'|'pr') and the opened PR url (§15.3).
+        #
+        # Status honesty (constitution §8 "repo SKILL.md replaced … recorded in Aurora"):
+        #   * DIRECT — the checked-out SKILL.md WAS replaced, so the candidate is terminal
+        #     'promoted' with the resulting commit sha.
+        #   * PR — only a branch + PR were opened; the canonical SKILL.md is NOT replaced until a
+        #     human merges. Recording 'promoted' here would falsely assert the file was replaced
+        #     against an unmerged branch commit, so the candidate stays 'approved' (approved,
+        #     promotion-in-progress) with the PR url + branch commit recorded. A merge-confirmation
+        #     step flips it to 'promoted' with the merge commit later (follow-up).
+        status = "promoted" if record.promotion_mode.value == "direct" else "approved"
         with self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE skill_revision_candidates
-                   SET status = 'promoted',
+                   SET status = %s,
                        promoted_commit_sha = %s,
                        old_content_hash = %s,
                        new_content_hash = %s,
@@ -350,6 +360,7 @@ class AuroraSkillCandidateSink:
                  WHERE id = %s
                 """,
                 (
+                    status,
                     record.promoted_commit_sha,
                     record.old_content_hash,
                     record.new_content_hash,

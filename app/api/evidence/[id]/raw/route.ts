@@ -33,6 +33,9 @@ export async function GET(
   }
 
   const sessionToken = optionalEnv('AWS_SESSION_TOKEN', '');
+  // Local dev: route the signed URL at LocalStack/MinIO (path-style) when an endpoint is
+  // configured; in prod neither var is set, so this stays the default AWS endpoint.
+  const endpoint = optionalEnv('AWS_ENDPOINT_URL_S3', optionalEnv('AWS_ENDPOINT_URL', ''));
   const url = presignS3GetUrl({
     s3Uri: location.s3_uri,
     region: requireEnv('AWS_REGION'),
@@ -42,6 +45,7 @@ export async function GET(
       ...(sessionToken !== '' ? { sessionToken } : {}),
     },
     expiresInSeconds: PRESIGN_EXPIRY_SECONDS,
+    ...(endpoint !== '' ? { endpoint } : {}),
   });
 
   // 302 to the short-lived signed URL. The URL is single-use-ish (expires in 60s) and

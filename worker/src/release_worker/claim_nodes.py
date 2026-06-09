@@ -31,6 +31,7 @@ blocks the artifact, exactly as for any other type (no per-type bypass).
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from collections.abc import Callable
 
@@ -454,6 +455,9 @@ def run_deterministic_policy_checks(
     return tuple(findings)
 
 
+logger = logging.getLogger("release_worker.claims")
+
+
 def run_bedrock_guardrails(
     artifacts: tuple[ArtifactDraft, ...],
     scanner: GuardrailScanner,
@@ -470,6 +474,14 @@ def run_bedrock_guardrails(
         verdict: GuardrailVerdict = scanner.scan(artifact.body_markdown)
         if verdict.blocked:
             detail = ", ".join(verdict.categories) or verdict.action
+            # Observability: a Guardrail intervention is a safety-rail signal an operator
+            # wants to watch. Categories are policy labels (not PII) and the artifact id is an
+            # opaque uuid, so this is safe to log (constitution §5 — no prompt/output logged).
+            logger.warning(
+                "Bedrock Guardrails blocked artifact %s: %s",
+                artifact.artifact_id,
+                detail,
+            )
             findings.append(
                 _finding(
                     artifact.artifact_id,

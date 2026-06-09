@@ -170,13 +170,23 @@ test('media is sourced from the presigned-URL playback route, never a raw S3 URL
 test('a text-alternative transcript link points at the source demo_script', () => {
   const { doc } = render(ASSETS);
   const videoSection = doc.querySelector('section[data-media-id="aaaaaaaa-1111-2222-3333-444444444444"]');
-  const link = videoSection?.querySelector('a[href*="/artifacts/review"]');
+  const link = videoSection?.querySelector('a[href*="/artifacts/"]');
   assert.ok(link, 'the video links to its source demo_script as a transcript');
+  assert.equal(
+    link?.getAttribute('href'),
+    '/artifacts/dddddddd-1111-2222-3333-444444444444',
+    'links to the stable per-artifact page, not a gate-review anchor',
+  );
 });
 
 test('provenance is exposed as text', () => {
   const { doc } = render(ASSETS);
   const dl = doc.querySelector('dl[data-provenance-for]');
   assert.ok(dl, 'provenance renders as a description list');
-  assert.ok(dl?.textContent?.includes('clickpath_hash'), 'a provenance key is shown as text');
+  // The label is humanized for the reader; the raw key stays on the data-attribute.
+  assert.ok(dl?.textContent?.includes('Clickpath hash'), 'a provenance label is shown as text');
+  assert.ok(
+    dl?.querySelector('dt[data-provenance-key="clickpath_hash"]'),
+    'the raw provenance key is preserved on the data-attribute',
+  );
 });

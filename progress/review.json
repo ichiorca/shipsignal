@@ -1,6 +1,6 @@
 {
   "projectRoot": "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal",
-  "generatedAt": "2026-06-08T21:32:23Z",
+  "generatedAt": "2026-06-09T22:00:42Z",
   "specs": [
     {
       "id": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
@@ -127,6 +127,34 @@
       "tasksMD": "specs/018-skills-inventory-reconciliation-and-pr-promotion/tasks.md",
       "provenanceClass": "repo-versioned",
       "taskCount": 4
+    },
+    {
+      "id": "019-approved-artifact-export-and-distribution-webhook",
+      "specMD": "specs/019-approved-artifact-export-and-distribution-webhook/spec.md",
+      "tasksMD": "specs/019-approved-artifact-export-and-distribution-webhook/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
+    },
+    {
+      "id": "020-gate-ready-reviewer-notifications",
+      "specMD": "specs/020-gate-ready-reviewer-notifications/spec.md",
+      "tasksMD": "specs/020-gate-ready-reviewer-notifications/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
+    },
+    {
+      "id": "021-engagement-outcome-loop-utm-and-roi-view",
+      "specMD": "specs/021-engagement-outcome-loop-utm-and-roi-view/spec.md",
+      "tasksMD": "specs/021-engagement-outcome-loop-utm-and-roi-view/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
+    },
+    {
+      "id": "022-per-run-artifact-type-selection",
+      "specMD": "specs/022-per-run-artifact-type-selection/spec.md",
+      "tasksMD": "specs/022-per-run-artifact-type-selection/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
     }
   ],
   "taskCoverage": [
@@ -145,6 +173,7 @@
         "pass16.log",
         "pass17.log",
         "pass18.log",
+        "pass19.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -154,7 +183,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 13
+      "sourceCites": 21
     },
     {
       "taskId": "T2",
@@ -171,6 +200,7 @@
         "pass16.log",
         "pass17.log",
         "pass18.log",
+        "pass19.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -180,7 +210,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 11
+      "sourceCites": 17
     },
     {
       "taskId": "T3",
@@ -197,6 +227,7 @@
         "pass16.log",
         "pass17.log",
         "pass18.log",
+        "pass19.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -206,7 +237,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 11
+      "sourceCites": 17
     },
     {
       "taskId": "T4",
@@ -223,6 +254,7 @@
         "pass16.log",
         "pass17.log",
         "pass18.log",
+        "pass19.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -232,7 +264,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 23
+      "sourceCites": 25
     },
     {
       "taskId": "T5",
@@ -247,6 +279,7 @@
         "pass14.log",
         "pass15.log",
         "pass16.log",
+        "pass19.log",
         "pass2.log",
         "pass3.log",
         "pass4.log",
@@ -255,7 +288,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 58
+      "sourceCites": 63
     },
     {
       "taskId": "T6",
@@ -277,6 +310,14 @@
   "untraced": null,
   "constitutionIndex": null,
   "uncitedPrinciples": null,
-  "sourceFilesScanned": 105,
-  "findings": null
+  "sourceFilesScanned": 138,
+  "findings": [
+    {
+      "id": "F001",
+      "severity": "med",
+      "axis": "spec-provenance",
+      "summary": "4 spec(s) are not cleanly committed: 019-approved-artifact-export-and-distribution-webhook, 020-gate-ready-reviewer-notifications, 021-engagement-outcome-loop-utm-and-roi-view, 022-per-run-artifact-type-selection",
+      "recommendation": "Commit the spec.md(s) so downstream provenance carriers land as repo-versioned (anti-pattern #3)."
+    }
+  ]
 }

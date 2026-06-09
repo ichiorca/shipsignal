@@ -11,12 +11,18 @@ import { artifactDecisionSchema, parseBody } from '@/app/lib/artifactReview.ts';
 import {
   getArtifactWithClaims,
   isApprovable,
-  setArtifactStatus,
+  tryApproveArtifact,
 } from '@/app/lib/db/claims.ts';
 import { recordApproval } from '@/app/lib/db/approvals.ts';
 import { snapshotApprovedArtifact } from '@/app/lib/db/approvedSnapshots.ts';
+import { dispatchArtifactApprovedWebhook } from '@/app/lib/outboundDispatch.ts';
+import { withTransaction } from '@/app/lib/aurora.ts';
 
 export const runtime = 'nodejs';
+
+/** Thrown inside the approval transaction when the conditional status flip matches no row
+ *  (artifact already decided or re-blocked), so the whole transaction rolls back → 409. */
+class GateConflictError extends Error {}
 
 interface RouteContext {
   readonly params: Promise<{ artifactId: string }>;
@@ -51,33 +57,63 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
     return NextResponse.json(
       {
         error:
-          'artifact cannot be approved: it is blocked or has unsupported claims; ' +
-          'reject or edit it instead',
+          'artifact cannot be approved: it is blocked, edited (needs re-validation), or has ' +
+          'unsupported claims; reject or re-validate it instead',
         status: artifact.status,
       },
       { status: 409 },
     );
   }
 
-  // Record the human decision first (immutable audit trail), then snapshot the approved content,
-  // then flip the status. T2 (spec 016) / §18.3: the approved content is captured into the
-  // immutable approved_artifact_snapshots record (distinct from the mutable artifact row) BEFORE
-  // the status flips — if the snapshot write fails the request fails (500) and the artifact is
-  // never marked approved, so an approval can never exist without its tamper-evident audit record
-  // (fail closed, constitution §5).
-  const approvalId = await recordApproval({
-    target_type: 'artifact',
-    target_id: artifactId,
-    decision: 'approved',
-    reviewer: parsed.value.reviewer,
-    notes: parsed.value.notes,
-  });
-  await snapshotApprovedArtifact(artifact, {
-    reviewer: parsed.value.reviewer,
-    decision: 'approved',
-    approval_id: approvalId,
-  });
-  await setArtifactStatus(artifactId, 'approved');
+  // Record the decision, snapshot the approved content, and flip the status ATOMICALLY in one
+  // transaction (T2 spec 016 / §18.3). The flip is a CONDITIONAL guard (only a not-blocked,
+  // not-already-approved row moves), so a concurrent double-submit, or an artifact re-blocked by
+  // the worker between the isApprovable read and this write, matches no row → GateConflictError →
+  // the whole transaction rolls back and we return 409. This means an approval/snapshot is never
+  // recorded for a flip that didn't win, and an 'approved' status never exists without its
+  // tamper-evident audit record (fail closed, constitution §5).
+  try {
+    await withTransaction(async (client) => {
+      const approvalId = await recordApproval(
+        {
+          target_type: 'artifact',
+          target_id: artifactId,
+          decision: 'approved',
+          reviewer: parsed.value.reviewer,
+          notes: parsed.value.notes,
+        },
+        client,
+      );
+      await snapshotApprovedArtifact(
+        artifact,
+        { reviewer: parsed.value.reviewer, decision: 'approved', approval_id: approvalId },
+        client,
+      );
+      if (!(await tryApproveArtifact(artifactId, client))) {
+        throw new GateConflictError();
+      }
+    });
+  } catch (err) {
+    if (err instanceof GateConflictError) {
+      return NextResponse.json(
+        {
+          error:
+            'artifact cannot be approved: it is blocked or already decided; ' +
+            'reject or edit it instead',
+        },
+        { status: 409 },
+      );
+    }
+    throw err;
+  }
 
-  return NextResponse.json({ artifact_id: artifactId, status: 'approved' }, { status: 200 });
+  // T3 (spec 019) — distribution AFTER the human gate: the approval (and its §18.3 snapshot)
+  // is already committed, so the outbound webhook fires on the publishable truth. Fail-soft:
+  // a webhook outage never fails the approval; the outcome is audited on the delivery ledger.
+  const webhookDelivery = await dispatchArtifactApprovedWebhook(artifactId);
+
+  return NextResponse.json(
+    { artifact_id: artifactId, status: 'approved', webhook_delivery: webhookDelivery },
+    { status: 200 },
+  );
 }

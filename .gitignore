@@ -9,6 +9,10 @@
 .env.*
 !.env.example
 
+# --- Local dev stack (Docker + LocalStack) ---
+local/dev-env
+.localmedia/
+
 # --- Node / TypeScript (Next.js app) ---
 node_modules/
 .next/

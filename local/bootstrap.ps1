@@ -1,0 +1,113 @@
+# ShipSignal local bootstrap (Windows / PowerShell).
+#
+# Brings up Postgres (TLS, host:5434) + LocalStack Pro (S3/SNS/Bedrock), creates the
+# S3 buckets, attempts a Bedrock Guardrail, and applies the Alembic migrations.
+#
+# Usage:   pwsh local/bootstrap.ps1
+# Re-run safe (idempotent). Run from the repo root.
+
+$ErrorActionPreference = 'Stop'
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $repoRoot
+
+$envFile = Join-Path $PSScriptRoot 'dev-env'
+$sample  = Join-Path $PSScriptRoot 'dev-env.sample'
+
+if (-not (Test-Path $envFile)) {
+  Copy-Item $sample $envFile
+  Write-Host "Created local/dev-env from the sample." -ForegroundColor Yellow
+  Write-Host "Fill in LOCALSTACK_AUTH_TOKEN, GITHUB_*, ELEVENLABS_* then re-run." -ForegroundColor Yellow
+  exit 1
+}
+
+# --- Load local/dev-env into this process environment -----------------------------
+Write-Host "Loading local/dev-env ..." -ForegroundColor Cyan
+Get-Content $envFile | ForEach-Object {
+  $line = $_.Trim()
+  if ($line -eq '' -or $line.StartsWith('#')) { return }
+  $idx = $line.IndexOf('=')
+  if ($idx -lt 1) { return }
+  $k = $line.Substring(0, $idx).Trim()
+  $v = $line.Substring($idx + 1).Trim()
+  Set-Item -Path "Env:$k" -Value $v
+}
+
+if (-not $env:LOCALSTACK_AUTH_TOKEN) {
+  throw "LOCALSTACK_AUTH_TOKEN is empty in local/dev-env (required for Bedrock Pro)."
+}
+
+# --- Bring up the containers ------------------------------------------------------
+Write-Host "Starting containers ..." -ForegroundColor Cyan
+docker compose --env-file $envFile -f (Join-Path $PSScriptRoot 'docker-compose.yml') up -d --build
+if ($LASTEXITCODE -ne 0) { throw "docker compose up failed" }
+
+# --- Wait for health --------------------------------------------------------------
+function Wait-Healthy([string]$service, [int]$retries = 40) {
+  Write-Host "Waiting for $service to be healthy ..." -ForegroundColor Cyan
+  for ($i = 0; $i -lt $retries; $i++) {
+    $id = (docker compose -f (Join-Path $PSScriptRoot 'docker-compose.yml') ps -q $service)
+    if ($id) {
+      $status = (docker inspect --format '{{.State.Health.Status}}' $id 2>$null)
+      if ($status -eq 'healthy') { Write-Host "  $service healthy." -ForegroundColor Green; return }
+    }
+    Start-Sleep -Seconds 3
+  }
+  throw "$service did not become healthy in time"
+}
+Wait-Healthy 'postgres'
+Wait-Healthy 'localstack'
+
+# --- Helper: run an awslocal command inside the LocalStack container ---------------
+function AwsLocal([string[]]$cmdArgs) {
+  docker compose -f (Join-Path $PSScriptRoot 'docker-compose.yml') exec -T localstack awslocal @cmdArgs
+}
+
+# --- Create S3 buckets (idempotent) -----------------------------------------------
+foreach ($bucket in @($env:EVIDENCE_BUCKET, $env:MEDIA_BUCKET)) {
+  Write-Host "Ensuring S3 bucket: $bucket" -ForegroundColor Cyan
+  try { AwsLocal @('s3', 'mb', "s3://$bucket") | Out-Null } catch { Write-Host "  (already exists)" }
+}
+
+# --- Best-effort Bedrock Guardrail ------------------------------------------------
+if (-not $env:BEDROCK_GUARDRAIL_ID) {
+  Write-Host "Attempting to create a Bedrock Guardrail in LocalStack ..." -ForegroundColor Cyan
+  try {
+    $out = AwsLocal @(
+      'bedrock', 'create-guardrail',
+      '--name', 'shipsignal-local',
+      '--blocked-input-messaging', 'blocked',
+      '--blocked-outputs-messaging', 'blocked',
+      '--output', 'json'
+    )
+    $gid = ($out | ConvertFrom-Json).guardrailId
+    if ($gid) {
+      Write-Host "  Guardrail created: $gid" -ForegroundColor Green
+      Write-Host "  -> set BEDROCK_GUARDRAIL_ID=$gid in local/dev-env" -ForegroundColor Yellow
+    }
+  } catch {
+    Write-Host "  Guardrail creation not supported by this LocalStack build." -ForegroundColor Yellow
+    Write-Host "  See docs/local-dev.md 'Bedrock caveats'." -ForegroundColor Yellow
+  }
+}
+
+# --- Apply Alembic migrations (needs the postgresql+psycopg:// dialect form) -------
+Write-Host "Applying Alembic migrations ..." -ForegroundColor Cyan
+$alembicUrl = $env:DATABASE_URL -replace '^postgresql://', 'postgresql+psycopg://'
+$prevUrl = $env:DATABASE_URL
+$env:DATABASE_URL = $alembicUrl
+try {
+  python -m alembic upgrade head
+  if ($LASTEXITCODE -ne 0) { throw "alembic upgrade failed (did you 'pip install -r db/requirements.txt'?)" }
+} finally {
+  $env:DATABASE_URL = $prevUrl
+}
+
+Write-Host ""
+Write-Host "Local stack is up." -ForegroundColor Green
+Write-Host "  Postgres : localhost:5434 (TLS, sslmode=require)"
+Write-Host "  LocalStack: http://localhost:4566"
+Write-Host ""
+Write-Host "Next:" -ForegroundColor Cyan
+Write-Host "  1. Load env into your shell:  Get-Content local/dev-env | ... (the bootstrap already did, for this session)"
+Write-Host "  2. Start the dashboard:       npm install; npm run dev"
+Write-Host "  3. Run a worker graph:        see docs/local-dev.md"

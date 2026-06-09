@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { parseCreateReleaseRun } from '@/app/lib/releaseInput.ts';
 import { insertReleaseRun, listReleaseRuns } from '@/app/lib/db/releaseRuns.ts';
 import { dispatchReleaseRunWorkflow } from '@/app/lib/githubDispatch.ts';
+import { parseLimit } from '@/app/lib/readApi.ts';
 
 // Aurora + GitHub calls require the Node.js runtime (not Edge).
 export const runtime = 'nodejs';
@@ -55,7 +56,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   return NextResponse.json({ run }, { status: 201 });
 }
 
-export async function GET(): Promise<NextResponse> {
-  const runs = await listReleaseRuns();
+export async function GET(request: Request): Promise<NextResponse> {
+  const runs = await listReleaseRuns(parseLimit(request.url, 50, 200));
   return NextResponse.json({ runs });
 }

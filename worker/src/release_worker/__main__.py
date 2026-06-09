@@ -77,7 +77,7 @@ from release_worker.aurora_skill_learning import (
     AuroraSuppressionStore,
 )
 from release_worker.bedrock_client import BedrockEmbeddingClient, BedrockModelClient
-from release_worker.checkpointer import build_checkpointer
+from release_worker.checkpointer import build_checkpointer, wants_durable_checkpointer
 from release_worker.content_graph import build_content_generation_graph
 from release_worker.content_policy import load_named_entity_policy
 from release_worker.content_state import ContentRunState
@@ -110,6 +110,9 @@ from release_worker.transient_retry import with_retries
 logger = logging.getLogger("release_worker")
 
 _DEFAULT_MODEL_ID = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+# Placeholder used only when DASHBOARD_BASE_URL is unset — links built from it won't reach the
+# real dashboard, so its use is logged as a misconfiguration warning rather than failing silently.
+_PLACEHOLDER_DASHBOARD_URL = "https://app.example.com"
 
 
 def _require_env(name: str) -> str:
@@ -335,10 +338,22 @@ def _run_media_generation(
     # T2 (spec 012) — the media graph runs straight through (no gate) but touches Bedrock /
     # ElevenLabs / S3; retry the whole invocation on a transient blip. The node-level
     # idempotency (content-hash TTS dedupe, sanitized S3 key) makes re-entry safe.
-    with_retries(
+    result = with_retries(
         lambda: graph.invoke(initial, config), label=f"media run {release_run_id}"
     )
-    # T1 (spec 015): media assembled + stored → the run reaches its terminal completed.
+    # spec 014 T3 / §16.3 — demo media is OPTIONAL: a broken step records a 'broken' media asset
+    # (surfaced in the dashboard) rather than failing the whole run, so the run still reaches its
+    # terminal 'completed' (the mandatory artifact phases already succeeded upstream). But a break
+    # must be observable at the run level, not silent — log a warning naming the failed step.
+    broken_step = result.get("failed_step") if isinstance(result, dict) else None
+    if broken_step:
+        logger.warning(
+            "media run %s broke at step %s; recorded a broken asset (run completes — demo "
+            "media is optional)",
+            release_run_id,
+            broken_step,
+        )
+    # T1 (spec 015): media phase done → the run reaches its terminal completed.
     repository.advance(release_run_id, RunStatus.COMPLETED)
     logger.info("media run %s completed (thread %s)", release_run_id, thread_id)
     return 0
@@ -492,7 +507,14 @@ def main(argv: list[str] | None = None) -> int:
     thread_id = args.thread_id
     if thread_id is None and args.graph != "eval":
         thread_id = thread_id_for(release_run_id, phase_from_graph(args.graph))
-    dashboard_base_url = os.environ.get("DASHBOARD_BASE_URL", "https://app.example.com")
+    dashboard_base_url = os.environ.get("DASHBOARD_BASE_URL")
+    if not dashboard_base_url:
+        logger.warning(
+            "DASHBOARD_BASE_URL is not set; gate review links will use the placeholder %s and "
+            "will not reach the real dashboard",
+            _PLACEHOLDER_DASHBOARD_URL,
+        )
+        dashboard_base_url = _PLACEHOLDER_DASHBOARD_URL
 
     # One shared connection for the whole short-lived job (aurora-postgresql-rules).
     conn = connect_from_env()
@@ -511,7 +533,17 @@ def main(argv: list[str] | None = None) -> int:
         # (release graph) and claim grounding (content graph). Built after the eval early-return
         # so the non-graph eval step pays for neither.
         checkpointer = build_checkpointer()
-        embedder = BedrockEmbeddingClient.from_env()
+        # Cross-process resume needs the durable (Postgres) checkpointer: the thread written by
+        # the initial invocation must survive into this separate resume invocation. Fail fast
+        # rather than silently resuming against an empty in-process MemorySaver.
+        if args.resume_decision is not None and not wants_durable_checkpointer():
+            raise RuntimeError(
+                "cross-process resume requires a durable checkpointer (set DATABASE_URL)"
+            )
+        embedder = BedrockEmbeddingClient.from_env(
+            release_run_id=release_run_id,
+            telemetry_sink=AuroraCostTelemetrySink(conn),
+        )
 
         if args.graph == "content_generation":
             # Spec 005/006 slice: generate drafts → claims → checks → Gate #2 interrupt.
@@ -608,7 +640,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 0
     except Exception:
-        logger.exception("release run %s failed", release_run_id)
+        logger.exception(
+            "release run %s failed (graph=%s, thread=%s)",
+            release_run_id,
+            args.graph,
+            thread_id,
+        )
         try:
             repository.mark_failed(release_run_id)
         except Exception:

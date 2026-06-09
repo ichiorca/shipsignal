@@ -11,6 +11,7 @@
 import { createElement } from 'react';
 import type { ReactElement } from 'react';
 import type { EvidenceItem } from '@/app/lib/db/evidenceItems.ts';
+import { EMPTY } from '../lib/displayFormat.ts';
 
 export interface EvidenceTableProps {
   readonly items: readonly EvidenceItem[];
@@ -21,6 +22,15 @@ const HEADERS = ['File', 'Type', 'Source', 'Redacted excerpt', 'Risk flags', 'Fu
 function truncate(text: string, max = 160): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();
   return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
+}
+
+/** Redacted-excerpt cell: shows a one-line truncation, and when shortened exposes the full
+ *  (still redacted) text via the native title tooltip so a reviewer isn't forced to the raw
+ *  S3 blob just to read it (UX review M2). */
+function excerptCell(text: string): ReactElement {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  const shown = truncate(text);
+  return createElement('td', shown !== oneLine ? { title: oneLine } : null, shown);
 }
 
 function riskCell(flags: readonly string[]): ReactElement {
@@ -48,16 +58,21 @@ function sourceCell(item: EvidenceItem): ReactElement {
 
 function fullExcerptCell(item: EvidenceItem): ReactElement {
   if (!item.has_raw_blob) {
-    return createElement('td', null, '—');
+    return createElement('td', null, EMPTY);
   }
   // Links to the presigned-access route, which 302s to a short-lived signed S3 URL.
-  // The raw S3 URI is never placed in the markup.
+  // The raw S3 URI is never placed in the markup. A per-row aria-label disambiguates the
+  // otherwise-identical "View full excerpt" links for screen-reader link navigation, and
+  // signals that this opens the raw (unredacted) evidence (UX review M1).
   return createElement(
     'td',
     null,
     createElement(
       'a',
-      { href: `/api/evidence/${item.id}/raw` },
+      {
+        href: `/api/evidence/${item.id}/raw`,
+        'aria-label': `View raw full excerpt for ${item.file_path ?? 'this evidence item'}`,
+      },
       'View full excerpt',
     ),
   );
@@ -67,10 +82,12 @@ function evidenceRow(item: EvidenceItem): ReactElement {
   return createElement(
     'tr',
     { key: item.id },
-    createElement('td', null, item.file_path ?? '—'),
+    // The file path is the row's header cell so screen readers announce it as context for
+    // every other cell in the row (UX review L4).
+    createElement('th', { scope: 'row' }, item.file_path ?? EMPTY),
     createElement('td', null, item.evidence_type),
     sourceCell(item),
-    createElement('td', null, truncate(item.redacted_excerpt)),
+    excerptCell(item.redacted_excerpt),
     riskCell(item.risk_flags),
     fullExcerptCell(item),
   );

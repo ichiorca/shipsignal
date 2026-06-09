@@ -6,7 +6,8 @@
 // cross-run bleed, constitution §2). An artifact with a blocking check (status='blocked') or
 // any unsupported claim is NOT approvable — the approve route enforces that here in code.
 
-import { query } from '@/app/lib/aurora.ts';
+import { query, type Queryable } from '@/app/lib/aurora.ts';
+import { isUuid } from '@/app/lib/uuid.ts';
 
 /** One evidence item grounding a claim (for the claim inspector's "supporting evidence"). */
 export interface ClaimEvidenceRef {
@@ -70,14 +71,9 @@ function asNum(value: string | number | null): number | null {
 
 const ARTIFACT_COLUMNS = 'id, release_run_id, artifact_type, title, body_markdown, status';
 
-/** True when the artifact can be cleanly approved: not blocked and every claim is supported
- *  with >=1 evidence link (constitution §5 — an unlinkable claim is never approved). */
-export function isApprovable(artifact: ArtifactWithClaims): boolean {
-  if (artifact.status === 'blocked') return false;
-  return artifact.claims.every(
-    (c) => c.support_status === 'supported' && c.evidence.length > 0,
-  );
-}
+// isApprovable is the pure Gate #2 predicate; it lives in app/lib/artifactApproval.ts so it is
+// unit-testable without this server-only module, and is re-exported here for existing callers.
+export { isApprovable } from '@/app/lib/artifactApproval.ts';
 
 function attachEvidence(
   claims: readonly ClaimRow[],
@@ -163,6 +159,7 @@ export async function listArtifactsWithClaimsForRun(
 export async function getArtifactWithClaims(
   artifactId: string,
 ): Promise<ArtifactWithClaims | null> {
+  if (!isUuid(artifactId)) return null;
   const artifactResult = await query<ArtifactRow>(
     `SELECT ${ARTIFACT_COLUMNS} FROM artifacts WHERE id = $1`,
     [artifactId],
@@ -215,6 +212,25 @@ export async function setArtifactStatus(
     `UPDATE artifacts SET status = $2, updated_at = now() WHERE id = $1`,
     [artifactId, status],
   );
+}
+
+/** Atomically flip an artifact to 'approved' ONLY while it is still approvable at the DB
+ *  level (not blocked, not already approved). Returns true iff this call won the flip — the
+ *  Gate #2 concurrency/TOCTOU guard: a double-submit, or an artifact re-blocked by the worker
+ *  between the read-time `isApprovable` check and the write, matches no row and returns false.
+ *  Pass the transaction client so the flip commits atomically with the approval + snapshot. */
+export async function tryApproveArtifact(
+  artifactId: string,
+  db: Queryable = { query },
+): Promise<boolean> {
+  const result = await db.query(
+    // 'edited' is excluded too: an edited body must be re-validated by the worker checks
+    // (which return it to 'draft' or 'blocked') before it can be approved (constitution §5).
+    `UPDATE artifacts SET status = 'approved', updated_at = now()
+      WHERE id = $1 AND status NOT IN ('blocked', 'approved', 'edited')`,
+    [artifactId],
+  );
+  return (result.rowCount ?? 0) > 0;
 }
 
 /** Apply a reviewer edit to an artifact's title/body (the narrative, never the claims).

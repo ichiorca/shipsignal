@@ -1,0 +1,86 @@
+# ShipSignal — local dev environment (LocalStack + local Postgres).
+#
+# Copy this file to `local/dev-env` and fill in the secrets, then run the bootstrap:
+#   PowerShell:  pwsh local/bootstrap.ps1
+#   bash/WSL:    bash local/bootstrap.sh
+#
+# `local/dev-env` is git-ignored. NEVER commit real secrets.
+# This is NOT a `.env` file on purpose: `.env*` is a harness-protected path, so the
+# bootstrap loads THIS file into the process env instead.
+
+# ----------------------------------------------------------------------------------
+# AWS / LocalStack
+# ----------------------------------------------------------------------------------
+# boto3 (>=1.28) and the AWS SDKs honor AWS_ENDPOINT_URL globally, so every AWS call
+# (S3, SNS, Bedrock) from the Python worker is routed to LocalStack with NO code change.
+AWS_ENDPOINT_URL=http://localhost:4566
+AWS_REGION=us-east-1
+# LocalStack ignores credential values but boto3 requires them to be present.
+AWS_ACCESS_KEY_ID=test
+AWS_SECRET_ACCESS_KEY=test
+
+# Required by docker-compose to enable LocalStack Pro (Bedrock + Guardrails).
+# Get this from https://app.localstack.cloud  ->  Auth Token.
+LOCALSTACK_AUTH_TOKEN=
+
+# Optional LocalStack toggles (used by docker-compose):
+LS_DEBUG=0
+LS_PERSISTENCE=0
+
+# ----------------------------------------------------------------------------------
+# Database (Postgres on host port 5434, TLS on)
+# ----------------------------------------------------------------------------------
+POSTGRES_USER=shipsignal
+POSTGRES_PASSWORD=shipsignal
+POSTGRES_DB=shipsignal
+# Plain libpq form — used by the Next.js app (pg) AND the Python worker (psycopg).
+# The worker auto-appends sslmode=require; the app reads PGSSLMODE below.
+# (Alembic needs the postgresql+psycopg:// form — the bootstrap derives it for you.)
+DATABASE_URL=postgresql://shipsignal:shipsignal@localhost:5434/shipsignal
+PGSSLMODE=require
+
+# ----------------------------------------------------------------------------------
+# S3 buckets (created in LocalStack by the bootstrap)
+# ----------------------------------------------------------------------------------
+EVIDENCE_BUCKET=shipsignal-evidence
+MEDIA_BUCKET=shipsignal-media
+
+# ----------------------------------------------------------------------------------
+# Bedrock (LocalStack Pro)
+# ----------------------------------------------------------------------------------
+BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
+BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0
+# A published Guardrail is MANDATORY in code (BedrockModelClient refuses to run
+# without it). The bootstrap attempts to create one in LocalStack and prints the id;
+# paste the result here. If LocalStack's Bedrock rejects guardrailConfig, see
+# docs/local-dev.md "Bedrock caveats".
+BEDROCK_GUARDRAIL_ID=
+BEDROCK_GUARDRAIL_VERSION=DRAFT
+
+# ----------------------------------------------------------------------------------
+# GitHub (real API — LocalStack cannot emulate this)
+# ----------------------------------------------------------------------------------
+GITHUB_TOKEN=
+GITHUB_REPO=owner/repo
+GITHUB_WORKFLOW_FILE=release-run.yml
+GITHUB_WORKFLOW_REF=main
+# HMAC secret for the inbound GitHub webhook route (any random string locally).
+GITHUB_WEBHOOK_SECRET=local-dev-webhook-secret
+
+# ----------------------------------------------------------------------------------
+# ElevenLabs (real API — LocalStack cannot emulate this). Media graph only.
+# ----------------------------------------------------------------------------------
+ELEVENLABS_API_KEY=
+ELEVENLABS_VOICE_ID=
+ELEVENLABS_MODEL_ID=eleven_multilingual_v2
+ELEVENLABS_OUTPUT_FORMAT=mp3_44100_128
+# Scratch dir for narration/video the worker writes before S3 upload (default /tmp
+# does not exist on Windows — keep this repo-local).
+MEDIA_WORK_DIR=./.localmedia
+
+# ----------------------------------------------------------------------------------
+# Misc
+# ----------------------------------------------------------------------------------
+DASHBOARD_BASE_URL=http://localhost:3000
+# Gate #3 repo write mode: 'direct' (write checked-out tree) or 'pr' (branch + PR).
+SKILL_PROMOTION_MODE=direct

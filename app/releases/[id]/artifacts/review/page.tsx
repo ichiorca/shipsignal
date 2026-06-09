@@ -27,12 +27,17 @@ export default async function ArtifactReviewPage({ params }: ReviewPageProps) {
 
   const artifacts = await listArtifactsWithClaimsForRun(run.id);
   const blocked = artifacts.filter((a) => a.status === 'blocked').length;
+  const approved = artifacts.filter((a) => a.status === 'approved').length;
 
   return (
     <main id="main">
-      <p>
-        <a href={`/releases/${run.id}`}>← Back to release run</a>
-      </p>
+      <nav aria-label="Breadcrumb">
+        <a href="/">All runs</a>
+        {' › '}
+        <a href={`/releases/${run.id}`}>Release run</a>
+        {' › '}
+        <span aria-current="page">Review artifacts (Gate #2)</span>
+      </nav>
       <h1>Review artifacts (Gate #2)</h1>
       <p>
         {run.repo} · {run.base_ref}…{run.head_ref}
@@ -42,6 +47,14 @@ export default async function ArtifactReviewPage({ params }: ReviewPageProps) {
           ? 'No artifacts have been generated for this run yet.'
           : `${artifacts.length} artifact${artifacts.length === 1 ? '' : 's'}, ${blocked} blocked by a check.`}
       </p>
+      {/* T2 (spec 019) — run-level export of every approved artifact (the §18.1 snapshots). */}
+      {approved > 0 ? (
+        <p>
+          <a href={`/api/releases/${run.id}/artifacts/export`}>
+            Download all approved artifacts (JSON bundle)
+          </a>
+        </p>
+      ) : null}
       <ArtifactReview
         releaseRunId={run.id}
         threadId={run.langgraph_thread_id}

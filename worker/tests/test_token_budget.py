@@ -8,6 +8,8 @@ the env-config and input-validation guards.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from release_worker.token_budget import (
@@ -19,6 +21,30 @@ from release_worker.token_budget import (
 
 def _tracker(per_call: int, per_run: int) -> BudgetTracker:
     return BudgetTracker(TokenBudget(per_call_max=per_call, per_run_max=per_run))
+
+
+def test_record_is_thread_safe_under_concurrent_calls() -> None:
+    # The content node fans out artifact generation across a ThreadPoolExecutor that shares one
+    # tracker; an unsynchronized accumulate would lose increments and let the run silently
+    # overshoot its §6 cap. Drive many concurrent record() calls (caps high enough not to trip)
+    # and assert NOTHING is lost.
+    thread_count = 8
+    per_thread = 500
+    tracker = _tracker(per_call=1000, per_run=100_000_000)
+
+    def hammer() -> None:
+        for _ in range(per_thread):
+            tracker.record("generate_", 1, 1)  # 2 tokens per call
+
+    threads = [threading.Thread(target=hammer) for _ in range(thread_count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    expected = thread_count * per_thread * 2
+    assert tracker.total_tokens == expected
+    assert tracker.per_node_tokens["generate_"] == expected
 
 
 def test_records_tokens_per_node_and_run() -> None:

@@ -8,6 +8,7 @@
 
 import { notFound } from 'next/navigation';
 import { getArtifactWithClaims } from '@/app/lib/db/claims.ts';
+import { ArtifactExportActions } from '@/app/components/ArtifactExportActions.ts';
 import { ClaimInspector } from '@/app/components/ClaimInspector.ts';
 
 // Always reflect the latest claim + support state for the artifact.
@@ -34,6 +35,13 @@ export default async function ClaimInspectorPage({ params }: ClaimInspectorPageP
         {artifact.title ?? artifact.artifact_type} ·{' '}
         {artifact.claims.length === 1 ? '1 claim' : `${artifact.claims.length} claims`}
       </p>
+      {/* T2 (spec 019) — an approved artifact exposes its §18.1 snapshot for copy/download. */}
+      {artifact.status === 'approved' ? (
+        <ArtifactExportActions
+          artifactId={artifact.id}
+          artifactLabel={artifact.title ?? artifact.artifact_type}
+        />
+      ) : null}
       <ClaimInspector artifact={artifact} />
     </main>
   );

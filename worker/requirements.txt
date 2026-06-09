@@ -4,6 +4,13 @@
 # the heavy libs behind graph.py / aurora_repository.py used at deploy time.
 langgraph==0.2.60
 psycopg[binary]==3.2.3
+# T1 (spec 017) — durable LangGraph checkpointer over Aurora (PRD §3.1/§5.6). PostgresSaver
+# ships in a SEPARATE package from langgraph core; without it build_checkpointer() raises
+# ModuleNotFoundError on the production (DATABASE_URL) path and the run is marked failed.
+# psycopg-pool backs PostgresSaver's connection pool (psycopg itself is pinned above). Versions
+# target the langgraph 0.2.x line; re-confirm when bumping langgraph.
+langgraph-checkpoint-postgres==2.0.9
+psycopg-pool==3.2.4
 pydantic==2.10.4
 # boto3 backs the Bedrock Converse model client (spec 004) and the S3 evidence sink
 # (spec 002). Only the runtime adapters import it; the unit gate does not install it.

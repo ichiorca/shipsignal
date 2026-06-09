@@ -1,0 +1,56 @@
+# Scheduled GDPR retention sweep (round-2 #9). Storage limitation (Art.5(1)(e)) was
+# implemented in code (`retention.py` + the `retention-sweep` CLI) but only ever runnable by
+# hand, so PII-bearing evidence could outlive its retention window. This runs the sweep daily:
+# it deletes every evidence row whose retention_expires_at has passed, AND its S3 blob.
+#
+# Hardened like release-run.yml: OIDC-assumed AWS role (no long-lived keys), least-privilege
+# token, secrets/vars from the store. No PII is logged (the worker scrubs logs).
+
+name: retention-sweep
+
+on:
+  schedule:
+    # 03:17 UTC daily (off the hour to avoid the cron thundering herd).
+    - cron: '17 3 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write
+  contents: read
+
+# Never run two sweeps at once.
+concurrency:
+  group: retention-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Delete expired evidence (Aurora + S3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install worker runtime
+        run: pip install -r worker/requirements.txt
+
+      - name: Assume AWS role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_RELEASE_RUN_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Run retention sweep
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PGSSLMODE: ${{ vars.PGSSLMODE }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          EVIDENCE_BUCKET: ${{ vars.EVIDENCE_BUCKET }}
+          MEDIA_BUCKET: ${{ vars.MEDIA_BUCKET }}
+          PYTHONPATH: worker/src
+        run: python -m release_worker privacy retention-sweep

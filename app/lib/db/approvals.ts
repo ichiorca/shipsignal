@@ -5,7 +5,7 @@
 // Gate-agnostic (target_type/target_id) so Gate #2/#3 reuse it later. All queries
 // parameterised.
 
-import { query } from '@/app/lib/aurora.ts';
+import { query, type Queryable } from '@/app/lib/aurora.ts';
 
 export type ApprovalDecision = 'approved' | 'rejected' | 'edited';
 
@@ -38,8 +38,11 @@ export interface RecordApprovalArgs {
 }
 
 /** Insert one approvals row. Returns the generated id for the caller's audit/log. */
-export async function recordApproval(args: RecordApprovalArgs): Promise<string> {
-  const result = await query<{ id: string }>(
+export async function recordApproval(
+  args: RecordApprovalArgs,
+  db: Queryable = { query },
+): Promise<string> {
+  const result = await db.query<{ id: string }>(
     `INSERT INTO approvals
        (target_type, target_id, decision, reviewer, notes, edited_payload_json)
      VALUES ($1, $2, $3, $4, $5, $6)

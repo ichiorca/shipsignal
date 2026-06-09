@@ -19,7 +19,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </a>
         <header>
           <nav aria-label="Primary">
-            <strong>ShipSignal</strong>
+            <a href="/">ShipSignal</a>
           </nav>
         </header>
         {children}

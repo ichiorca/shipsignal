@@ -12,6 +12,7 @@ import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
 import { recordApproval } from '@/app/lib/db/approvals.ts';
 import { dispatchResume } from '@/app/lib/resumeDispatch.ts';
 import { dispatchEval } from '@/app/lib/evalDispatch.ts';
+import { sweepApprovedArtifactWebhooks } from '@/app/lib/outboundDispatch.ts';
 
 export const runtime = 'nodejs';
 
@@ -87,6 +88,14 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
         message: String(err),
       });
     }
+  }
+
+  // T3 (spec 019) — run-level distribution sweep on the approved gate decision: deliver the
+  // outbound webhook for any approved artifact still undelivered (covers per-artifact dispatch
+  // failures). Fail-soft and ledger-audited; never blocks the gate decision (it already
+  // succeeded above). No-op when OUTBOUND_WEBHOOK_URL is unset.
+  if (parsed.value.decision === 'approved') {
+    await sweepApprovedArtifactWebhooks(releaseRunId);
   }
 
   return NextResponse.json(

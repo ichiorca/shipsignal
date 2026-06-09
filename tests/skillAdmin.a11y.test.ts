@@ -96,6 +96,7 @@ test('the active skill row shows version and snapshot count', () => {
 test('candidate lifecycle status is exposed as text not colour alone', () => {
   const doc = render(SKILLS, CANDIDATES);
   const statusCell = doc.querySelector('td[data-status]');
+  // Raw enum stays on the data-attribute (CSS/e2e hook); the visible text is humanized.
   assert.equal(statusCell?.getAttribute('data-status'), 'pending_review');
-  assert.equal(statusCell?.textContent, 'pending_review');
+  assert.equal(statusCell?.textContent, 'Pending review');
 });
