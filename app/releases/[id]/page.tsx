@@ -8,8 +8,13 @@ import { notFound } from 'next/navigation';
 import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
 import type { ReleaseRun } from '@/app/lib/db/releaseRuns.ts';
 import { listEvidenceForRun } from '@/app/lib/db/evidenceItems.ts';
+import { getRunCostBreakdown } from '@/app/lib/db/modelCallTelemetry.ts';
+import { listArtifactRefsForRun } from '@/app/lib/db/artifacts.ts';
+import { getRunEngagementByType } from '@/app/lib/db/engagementMetrics.ts';
+import { buildRoiSummary } from '@/app/lib/engagement.ts';
 import { EvidenceTable } from '@/app/components/EvidenceTable.ts';
 import { CategorizedSignals } from '@/app/components/CategorizedSignals.ts';
+import { RoiBreakdown } from '@/app/components/RoiBreakdown.ts';
 import { humanizeStatus, formatTimestamp } from '@/app/lib/displayFormat.ts';
 
 // Always reflect the latest evidence for the run; not statically cacheable.
@@ -39,7 +44,19 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
     notFound();
   }
 
-  const evidence = await listEvidenceForRun(run.id);
+  // T5 (spec 021): the cost-vs-outcome summary renders on the run detail too, so a
+  // reviewer sees "what it cost and what it got" without leaving the run.
+  const [evidence, breakdown, artifacts, engagement] = await Promise.all([
+    listEvidenceForRun(run.id),
+    getRunCostBreakdown(run.id),
+    listArtifactRefsForRun(run.id),
+    getRunEngagementByType(run.id),
+  ]);
+  const roi = buildRoiSummary(
+    [...new Set(artifacts.map((a) => a.artifact_type))],
+    engagement,
+    breakdown,
+  );
   const next = nextStep(run);
 
   // Every screen that exists for a run, in pipeline order. Previously Media, Gate #3
@@ -96,6 +113,16 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
           <time dateTime={run.started_at}>{formatTimestamp(run.started_at)}</time>
         </dd>
       </dl>
+
+      <section aria-labelledby="run-roi-heading">
+        <h2 id="run-roi-heading">Cost vs outcome</h2>
+        <RoiBreakdown summary={roi} />
+        <p>
+          <a href={`/releases/${run.id}/cost`}>
+            Full cost &amp; latency breakdown, and engagement CSV upload
+          </a>
+        </p>
+      </section>
 
       <h2>Signals by type</h2>
       <CategorizedSignals items={evidence} />

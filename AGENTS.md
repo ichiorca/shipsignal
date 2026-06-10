@@ -13,6 +13,11 @@ managed conventions live in `memory/constitution.md`; project setup in
 `harness.cue`. This file just surfaces them to the active agent on every
 session start.
 
+## Active spec
+
+`﻿021-engagement-outcome-loop-utm-and-roi-view` — a previous session set this marker and the post-pass gates have
+not yet cleared it. Run `/spec-kit-implement ﻿021-engagement-outcome-loop-utm-and-roi-view` to resume.
+
 ## Available spec-kit slash commands
 
 - `/spec-kit-implement <spec-id>` — Implement one spec end-to-end. Post-pass gates run automatically on session end.
@@ -142,6 +147,38 @@ v1.0 is shipped only when:
 - Dashboard supports release review, feature approval, artifact review, and skill-proposal approval, all keyboard-operable and WCAG 2.2 AA.
 - No secrets in code/logs/DB/client; redaction verified on a real release run; GDPR erasure verified across Aurora + S3.
 - Runs reproducibly on the GitHub Actions runner with documented env/secrets; no deferred non-goal silently introduced.
+
+## Learned instincts
+
+Mined from this project's session history by `harness learn` (confidence ≥ 0.7). Treat as strong defaults, not hard rules.
+
+- **when guardrail:fact-force advises** (0.90, safety): Internalize the guardrail:fact-force guidance — it has fired repeatedly; following it pre-empts the advisory.
+- **when a "read" capability is denied** (0.90, auth): Investigate the authorization grant/policy for "read" before retrying — repeated denials mean the policy, not the call, needs attention.
+- **after a Bash call** (0.90, tool-workflow): Expect to follow Bash with Edit — this pairing recurs in this project.
+- **after a Bash call** (0.90, tool-workflow): Expect to follow Bash with Read — this pairing recurs in this project.
+- **after a Bash call** (0.90, tool-workflow): Expect to follow Bash with TaskUpdate — this pairing recurs in this project.
+- **after a Bash call** (0.90, tool-workflow): Expect to follow Bash with ToolSearch — this pairing recurs in this project.
+- **after a Bash call** (0.90, tool-workflow): Expect to follow Bash with Write — this pairing recurs in this project.
+- **after a Edit call** (0.90, tool-workflow): Expect to follow Edit with Bash — this pairing recurs in this project.
+- **after a Edit call** (0.90, tool-workflow): Expect to follow Edit with Read — this pairing recurs in this project.
+- **after a Edit call** (0.90, tool-workflow): Expect to follow Edit with Write — this pairing recurs in this project.
+- **after a Glob call** (0.90, tool-workflow): Expect to follow Glob with Read — this pairing recurs in this project.
+- **after a Grep call** (0.90, tool-workflow): Expect to follow Grep with Read — this pairing recurs in this project.
+- **after a Read call** (0.90, tool-workflow): Expect to follow Read with Bash — this pairing recurs in this project.
+- **after a Read call** (0.90, tool-workflow): Expect to follow Read with Edit — this pairing recurs in this project.
+- **after a Read call** (0.90, tool-workflow): Expect to follow Read with Glob — this pairing recurs in this project.
+- **after a Read call** (0.90, tool-workflow): Expect to follow Read with Grep — this pairing recurs in this project.
+- **after a Read call** (0.90, tool-workflow): Expect to follow Read with Write — this pairing recurs in this project.
+- **after a TaskUpdate call** (0.90, tool-workflow): Expect to follow TaskUpdate with Write — this pairing recurs in this project.
+- **after a ToolSearch call** (0.90, tool-workflow): Expect to follow ToolSearch with WebFetch — this pairing recurs in this project.
+- **after a ToolSearch call** (0.90, tool-workflow): Expect to follow ToolSearch with WebSearch — this pairing recurs in this project.
+- **after a WebFetch call** (0.90, tool-workflow): Expect to follow WebFetch with WebSearch — this pairing recurs in this project.
+- **after a WebSearch call** (0.90, tool-workflow): Expect to follow WebSearch with WebFetch — this pairing recurs in this project.
+- **after a Write call** (0.90, tool-workflow): Expect to follow Write with Bash — this pairing recurs in this project.
+- **after a Write call** (0.90, tool-workflow): Expect to follow Write with Edit — this pairing recurs in this project.
+- **after a Write call** (0.90, tool-workflow): Expect to follow Write with Read — this pairing recurs in this project.
+- **when a "tool" capability is denied** (0.70, auth): Investigate the authorization grant/policy for "tool" before retrying — repeated denials mean the policy, not the call, needs attention.
+
 
 ## Project rules (harness-bootstrap)
 

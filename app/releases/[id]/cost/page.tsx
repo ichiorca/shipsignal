@@ -4,11 +4,20 @@
 // one <main> landmark + heading; the breakdown is a semantic table, keyboard-operable links lead
 // in and out. constitution §2/§5: only run-scoped metrics + provenance are read here — node,
 // model, tier, tokens, latency, USD estimate — never a prompt, evidence, or model output.
+//
+// T4/T5 (spec 021) — the outcome side: the engagement CSV upload panel and the cost-vs-
+// outcome (ROI) table, turning this page from "what we spent" into "what we got". Only
+// aggregate engagement counts are read; missing engagement renders "not yet reported".
 
 import { notFound } from 'next/navigation';
 import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
 import { getRunCostBreakdown } from '@/app/lib/db/modelCallTelemetry.ts';
+import { listArtifactRefsForRun } from '@/app/lib/db/artifacts.ts';
+import { getRunEngagementByType } from '@/app/lib/db/engagementMetrics.ts';
+import { buildRoiSummary } from '@/app/lib/engagement.ts';
 import { CostBreakdown } from '@/app/components/CostBreakdown.ts';
+import { EngagementCsvUpload } from '@/app/components/EngagementCsvUpload.ts';
+import { RoiBreakdown } from '@/app/components/RoiBreakdown.ts';
 
 // Always reflect the latest telemetry for the run.
 export const dynamic = 'force-dynamic';
@@ -24,8 +33,17 @@ export default async function RunCostPage({ params }: CostPageProps) {
     notFound();
   }
 
-  const breakdown = await getRunCostBreakdown(run.id);
+  const [breakdown, artifacts, engagement] = await Promise.all([
+    getRunCostBreakdown(run.id),
+    listArtifactRefsForRun(run.id),
+    getRunEngagementByType(run.id),
+  ]);
   const { totals } = breakdown;
+  const roi = buildRoiSummary(
+    [...new Set(artifacts.map((a) => a.artifact_type))],
+    engagement,
+    breakdown,
+  );
 
   return (
     <main id="main">
@@ -48,6 +66,13 @@ export default async function RunCostPage({ params }: CostPageProps) {
             `${(totals.input_tokens + totals.output_tokens).toLocaleString('en-US')} tokens`}
       </p>
       <CostBreakdown breakdown={breakdown} />
+
+      <section aria-labelledby="roi-heading">
+        <h2 id="roi-heading">Cost vs outcome</h2>
+        <RoiBreakdown summary={roi} />
+      </section>
+
+      <EngagementCsvUpload releaseRunId={run.id} artifacts={artifacts} />
     </main>
   );
 }

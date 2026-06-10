@@ -7,7 +7,7 @@ import (
 harness: schema.#Harness & {
 	schemaVersion: "1.0.0"
 	metadata: {
-		linkedSpec: "specs/019-approved-artifact-export-and-distribution-webhook/spec.md"
+		linkedSpec: "specs/022-per-run-artifact-type-selection/spec.md"
 		name:        "shipsignal"
 		owner:       "me"
 		testCommand: "npm test && python -m pytest -q"
@@ -76,7 +76,11 @@ harness: schema.#Harness & {
 		// environments.
 		network: {
 			policy: "permit"
-			allowlist: []
+			// spec 020 (operator-approved touchpoint): the Slack incoming-webhook
+			// host for gate-ready reviewer notifications. Listed so the egress
+			// destination stays declared even though the current policy is
+			// "permit" — tightening to "allowlist" must not break notifications.
+			allowlist: [{host: "hooks.slack.com"}]
 		}
 		blastRadius: {
 			maxFileSizeMib: 16

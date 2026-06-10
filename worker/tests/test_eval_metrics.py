@@ -1,7 +1,8 @@
-"""T2 (spec 013) — the deterministic product metrics (PRD §17.1).
+"""T2 (spec 013) / T5 (spec 020) — the deterministic product metrics (PRD §17.1).
 
-Exercises ``compute_product_metrics`` through the public surface: the seven metrics, in PRD
-order, with the right scores; the zero-denominator → ``None`` convention; and the pure
+Exercises ``compute_product_metrics`` through the public surface: the seven §17.1 metrics
+plus the spec-020 notify→decision latency split, in ``MetricName`` order, with the right
+scores; the zero-denominator → ``None`` convention; and the pure
 ``normalized_edit_distance`` the Aurora reader uses to reduce reviewer text to a ratio before it
 reaches a row (§5).
 """
@@ -23,7 +24,7 @@ def _by_name(release_run_id: str, inputs: MetricInputs) -> dict[str, float | Non
     }
 
 
-def test_all_seven_metrics_emitted_in_prd_order_and_run_scoped() -> None:
+def test_all_metrics_emitted_in_metricname_order_and_run_scoped() -> None:
     runs = compute_product_metrics("run-1", MetricInputs())
     assert tuple(r.eval_type for r in runs) == tuple(m.value for m in MetricName)
     assert all(r.release_run_id == "run-1" for r in runs)
@@ -75,10 +76,25 @@ def test_edit_distance_and_latency_are_sample_means_with_counts() -> None:
     assert latency.findings["sample_count"] == 2
 
 
+def test_notify_to_decision_latency_renders_next_to_approval_latency() -> None:
+    # T5 (spec 020) AC: the notify→decision split is surfaced ALONGSIDE approval latency,
+    # so it is emitted immediately after it (the dashboard renders in this order).
+    inputs = MetricInputs(notify_to_decision_latencies_seconds=(60.0, 180.0))
+    runs = compute_product_metrics("run-1", inputs)
+    order = [r.eval_type for r in runs]
+    approval_index = order.index(MetricName.APPROVAL_LATENCY_SECONDS.value)
+    notify_index = order.index(MetricName.NOTIFY_TO_DECISION_LATENCY_SECONDS.value)
+    assert notify_index == approval_index + 1
+    split = runs[notify_index]
+    assert split.score == 120.0
+    assert split.findings == {"sample_count": 2}
+
+
 def test_empty_samples_score_none() -> None:
     runs = {r.eval_type: r for r in compute_product_metrics("run-1", MetricInputs())}
     assert runs[MetricName.EDIT_DISTANCE.value].score is None
     assert runs[MetricName.APPROVAL_LATENCY_SECONDS.value].score is None
+    assert runs[MetricName.NOTIFY_TO_DECISION_LATENCY_SECONDS.value].score is None
 
 
 def test_findings_carry_numerator_and_denominator_only() -> None:
@@ -89,6 +105,39 @@ def test_findings_carry_numerator_and_denominator_only() -> None:
     # The skill-candidate metric flags its repo-global scope.
     skill = runs[MetricName.SKILL_CANDIDATE_ACCEPTANCE_RATE.value]
     assert skill.findings["scope"] == "repo_global"
+
+
+def test_engagement_totals_score_counts_and_flag_reported() -> None:
+    # T1 (spec 021): reported totals land as count scores with a reported=true flag.
+    inputs = MetricInputs(engagement_views=1200, engagement_clicks=37)
+    runs = {r.eval_type: r for r in compute_product_metrics("run-1", inputs)}
+    views = runs[MetricName.ENGAGEMENT_VIEWS_TOTAL.value]
+    assert views.score == 1200.0
+    assert views.findings == {"reported": "true", "scope": "run_total"}
+    assert runs[MetricName.ENGAGEMENT_CLICKS_TOTAL.value].score == 37.0
+
+
+def test_unreported_engagement_scores_none_never_zero() -> None:
+    # Spec AC: missing engagement is "not yet reported", NEVER zero. A reported zero is
+    # a real measurement and must stay 0.0.
+    runs = {r.eval_type: r for r in compute_product_metrics("run-1", MetricInputs())}
+    for name in (
+        MetricName.ENGAGEMENT_VIEWS_TOTAL,
+        MetricName.ENGAGEMENT_CLICKS_TOTAL,
+        MetricName.ENGAGEMENT_CONVERSIONS_TOTAL,
+    ):
+        assert runs[name.value].score is None
+        assert runs[name.value].findings["reported"] == "false"
+
+    reported_zero = MetricInputs(engagement_clicks=0)
+    zero_runs = {
+        r.eval_type: r for r in compute_product_metrics("run-1", reported_zero)
+    }
+    assert zero_runs[MetricName.ENGAGEMENT_CLICKS_TOTAL.value].score == 0.0
+    assert (
+        zero_runs[MetricName.ENGAGEMENT_CLICKS_TOTAL.value].findings["reported"]
+        == "true"
+    )
 
 
 def test_normalized_edit_distance_bounds() -> None:

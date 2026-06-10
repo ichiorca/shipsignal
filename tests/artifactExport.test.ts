@@ -65,9 +65,35 @@ test('markdown export does not double an existing leading H1', () => {
   assert.equal(renderMarkdownExport(led), led.final_body_markdown);
 });
 
-test('markdown export with a null title is the body verbatim', () => {
-  const untitled = { ...SNAPSHOT, final_title: null };
-  assert.equal(renderMarkdownExport(untitled), untitled.final_body_markdown);
+test('markdown export with a null title and no links is the body verbatim', () => {
+  const untitled = { ...SNAPSHOT, final_title: null, final_body_markdown: 'Plain body.' };
+  assert.equal(renderMarkdownExport(untitled), 'Plain body.');
+});
+
+// T2 (spec 021) — export-time UTM stamping on the spec-019 paths.
+
+const UTM_STAMP =
+  `utm_source=shipsignal&utm_medium=${SNAPSHOT.artifact_type}` +
+  `&utm_campaign=${SNAPSHOT.release_run_id}`;
+
+test('markdown export stamps absolute link targets with the deterministic UTM params', () => {
+  const markdown = renderMarkdownExport(SNAPSHOT);
+  assert.ok(markdown.includes(`[checklists](https://example.com/docs?${UTM_STAMP})`));
+  // Deterministic: rendering twice yields the identical document.
+  assert.equal(markdown, renderMarkdownExport(SNAPSHOT));
+});
+
+test('stamping happens at export time only — the snapshot is not mutated', () => {
+  renderMarkdownExport(SNAPSHOT);
+  assert.equal(
+    SNAPSHOT.final_body_markdown,
+    'Admins can now create [checklists](https://example.com/docs).',
+  );
+  // The JSON export is the provenance record: the approved body stays verbatim,
+  // hash-stable (the content_hash refers to the UNstamped approved content).
+  const record = buildExportRecord(SNAPSHOT);
+  assert.equal(record.final_body_markdown, SNAPSHOT.final_body_markdown);
+  assert.ok(!renderExport(SNAPSHOT, 'json').includes('utm_source'));
 });
 
 test('html export is a standalone document carrying the content hash and run id', () => {
@@ -75,7 +101,13 @@ test('html export is a standalone document carrying the content hash and run id'
   assert.ok(html.startsWith('<!doctype html>'));
   assert.ok(html.includes('shipsignal-content-hash" content="abc123"'));
   assert.ok(html.includes(`shipsignal-release-run" content="${SNAPSHOT.release_run_id}"`));
-  assert.ok(html.includes('<a href="https://example.com/docs">checklists</a>'));
+  // T2 (spec 021): the anchor's href is UTM-stamped (& escapes to &amp; in HTML), the
+  // link text is untouched.
+  assert.ok(
+    html.includes(
+      `<a href="https://example.com/docs?${UTM_STAMP.replaceAll('&', '&amp;')}">checklists</a>`,
+    ),
+  );
 });
 
 test('html export escapes a hostile title', () => {

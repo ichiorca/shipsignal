@@ -45,6 +45,16 @@ class MetricInputs:
     ready_media: int = 0
     edit_distances: Sequence[float] = field(default_factory=tuple)
     approval_latencies_seconds: Sequence[float] = field(default_factory=tuple)
+    # T5 (spec 020): per-gate seconds from notified_at to the recorded gate decision —
+    # already reduced to numbers by the reader, like the approval latencies above.
+    notify_to_decision_latencies_seconds: Sequence[float] = field(default_factory=tuple)
+    # T1 (spec 021): run-level aggregate engagement totals (PRD §17.1 outcome extension),
+    # merged in from the EngagementTotalsReader by the orchestration. None = the metric
+    # was never reported for this run — kept distinct from a reported 0 (spec AC: missing
+    # engagement is never rendered as zero).
+    engagement_views: int | None = None
+    engagement_clicks: int | None = None
+    engagement_conversions: int | None = None
 
 
 def normalized_edit_distance(a: str, b: str) -> float:
@@ -102,8 +112,10 @@ def _metric(
 def compute_product_metrics(
     release_run_id: str, inputs: MetricInputs
 ) -> tuple[EvalRun, ...]:
-    """Compute all seven §17.1 metrics for a run, in PRD order (deterministic for the
-    dashboard/tests). Each is a run-level ``EvalRun`` (no ``artifact_id``); ``findings`` carry
+    """Compute the §17.1 metrics (plus the spec-020 notify→decision latency split and
+    the spec-021 engagement outcome totals) for a run, in ``MetricName`` order
+    (deterministic for the dashboard/tests). Each is a
+    run-level ``EvalRun`` (no ``artifact_id``); ``findings`` carry
     the numerator/denominator or sample count so a reviewer can see *why* a score is what it
     is — counts only, never text (§5)."""
     return (
@@ -137,6 +149,14 @@ def compute_product_metrics(
             _mean(inputs.approval_latencies_seconds),
             {"sample_count": len(inputs.approval_latencies_seconds)},
         ),
+        # T5 (spec 020): the notify→decision split, emitted right after approval latency
+        # so the dashboard shows "time to notice" next to "time to decide".
+        _metric(
+            release_run_id,
+            MetricName.NOTIFY_TO_DECISION_LATENCY_SECONDS,
+            _mean(inputs.notify_to_decision_latencies_seconds),
+            {"sample_count": len(inputs.notify_to_decision_latencies_seconds)},
+        ),
         _metric(
             release_run_id,
             MetricName.FEATURE_REJECTION_RATE,
@@ -163,5 +183,28 @@ def compute_product_metrics(
             MetricName.MEDIA_SUCCESS_RATE,
             _rate(inputs.ready_media, inputs.total_media),
             {"numerator": inputs.ready_media, "denominator": inputs.total_media},
+        ),
+        # T1 (spec 021): the §17.1 outcome extension — the run's aggregate engagement
+        # totals as eval rows, so "what we got" lands next to "what we spent". Score is
+        # the total count; None = not yet reported (never zero, spec AC). Findings carry
+        # only a reported flag + scope label — counts/labels, never text (§5).
+        *(
+            _metric(
+                release_run_id,
+                name,
+                None if total is None else float(total),
+                {
+                    "reported": "true" if total is not None else "false",
+                    "scope": "run_total",
+                },
+            )
+            for name, total in (
+                (MetricName.ENGAGEMENT_VIEWS_TOTAL, inputs.engagement_views),
+                (MetricName.ENGAGEMENT_CLICKS_TOTAL, inputs.engagement_clicks),
+                (
+                    MetricName.ENGAGEMENT_CONVERSIONS_TOTAL,
+                    inputs.engagement_conversions,
+                ),
+            )
         ),
     )

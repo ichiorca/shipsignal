@@ -8,6 +8,7 @@
 // app/lib/db/approvedSnapshots.ts; the routes wire the two together.
 
 import { markdownToHtml, escapeHtml } from './markdownToHtml.ts';
+import { stampMarkdownLinks } from './utmStamping.ts';
 import type { ClaimSupportEntry } from './approvedSnapshot.ts';
 
 /** The approved-snapshot fields the export/distribution surfaces read (reviewer name excluded —
@@ -80,9 +81,16 @@ export function buildExportRecord(snapshot: ApprovedSnapshotView): ArtifactExpor
 }
 
 /** The markdown export: the approved title as an H1 (when the body doesn't already lead with
- *  one) + the approved body, exactly as frozen at Gate #2. */
+ *  one) + the approved body as frozen at Gate #2, with absolute http(s) hyperlink TARGETS
+ *  UTM-stamped at export time (T2, spec 021): utm_source=shipsignal, utm_medium=artifact
+ *  type, utm_campaign=release run id — deterministic, link-targets-only, and applied to the
+ *  rendered document NEVER the snapshot (the immutable §18.3 record + its content_hash are
+ *  untouched; the JSON export still carries the approved body verbatim). */
 export function renderMarkdownExport(snapshot: ApprovedSnapshotView): string {
-  const body = snapshot.final_body_markdown;
+  const body = stampMarkdownLinks(snapshot.final_body_markdown, {
+    artifact_type: snapshot.artifact_type,
+    release_run_id: snapshot.release_run_id,
+  });
   const title = snapshot.final_title;
   if (title === null || body.trimStart().startsWith('# ')) return body;
   return `# ${title}\n\n${body}`;

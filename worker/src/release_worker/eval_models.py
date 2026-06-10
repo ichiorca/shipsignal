@@ -35,16 +35,29 @@ class EvalType(StrEnum):
 
 
 class MetricName(StrEnum):
-    """The seven product-quality metrics (PRD §17.1). The value doubles as the row's
-    ``eval_type`` so the dashboard/read-API can filter metrics by name."""
+    """The seven product-quality metrics (PRD §17.1), plus the spec-020 notify→decision
+    split of approval latency and the spec-021 engagement outcome totals. The value
+    doubles as the row's ``eval_type`` so the dashboard/read-API can filter metrics by
+    name."""
 
     EVIDENCE_COVERAGE = "evidence_coverage"
     UNSUPPORTED_CLAIM_RATE = "unsupported_claim_rate"
     EDIT_DISTANCE = "edit_distance"
     APPROVAL_LATENCY_SECONDS = "approval_latency_seconds"
+    # T5 (spec 020): seconds from the gate-open notification (gate_notifications.
+    # notified_at) to the recorded gate decision — splits approval latency into "time to
+    # notice" vs "time to decide" (PRD §17.1 approval latency is the metric spec 020
+    # exists to reduce). Ordered here so it renders next to approval latency.
+    NOTIFY_TO_DECISION_LATENCY_SECONDS = "notify_to_decision_latency_seconds"
     FEATURE_REJECTION_RATE = "feature_rejection_rate"
     SKILL_CANDIDATE_ACCEPTANCE_RATE = "skill_candidate_acceptance_rate"
     MEDIA_SUCCESS_RATE = "media_success_rate"
+    # T1 (spec 021): the §17.1 outcome extension — run-level aggregate engagement totals
+    # ingested per artifact (UTM-stamped exports → manual CSV / API). Score is the total
+    # count, or None when the metric was never reported (never zero — spec AC).
+    ENGAGEMENT_VIEWS_TOTAL = "engagement_views_total"
+    ENGAGEMENT_CLICKS_TOTAL = "engagement_clicks_total"
+    ENGAGEMENT_CONVERSIONS_TOTAL = "engagement_conversions_total"
 
 
 class EvalRun(BaseModel):

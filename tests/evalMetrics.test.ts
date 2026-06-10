@@ -1,5 +1,6 @@
-// T5/T6 (spec 013) — pure eval-shaping logic (PRD §17.1). Covers summarizeEvals (latest row per
-// metric, rubric averaging, all seven metrics always present) and the formatters (rate %, latency
+// T5/T6 (spec 013) / T5 (spec 020) — pure eval-shaping logic (PRD §17.1). Covers summarizeEvals
+// (latest row per metric, rubric averaging, every metric always present — the seven §17.1 ones
+// plus the spec-020 notify→decision latency split) and the formatters (rate %, latency
 // humanization, n/a for null, PII-free detail). No DB/React — the dashboard, page, read API, and
 // a11y test all rely on this one implementation.
 
@@ -14,16 +15,45 @@ import {
 } from '../app/lib/evalMetrics.ts';
 import type { EvalRunRow } from '../app/lib/evalMetrics.ts';
 
-test('summarizeEvals always returns the seven metrics in PRD order', () => {
+test('summarizeEvals always returns every metric in PRD order', () => {
   const summary = summarizeEvals([]);
   assert.deepEqual(
     summary.metrics.map((m) => m.name),
     [...METRIC_ORDER],
   );
-  // With no rows every metric is n/a and there is no rubric.
-  assert.ok(summary.metrics.every((m) => m.score === null && m.display === 'n/a'));
+  // With no rows every metric is unscored and there is no rubric. T1 (spec 021): the
+  // engagement count metrics announce "not yet reported" (never 0); rates/durations
+  // stay "n/a".
+  assert.ok(summary.metrics.every((m) => m.score === null));
+  assert.ok(
+    summary.metrics.every((m) =>
+      m.name.startsWith('engagement_')
+        ? m.display === 'not yet reported'
+        : m.display === 'n/a',
+    ),
+  );
   assert.equal(summary.rubricAverage, null);
   assert.equal(summary.rubricCount, 0);
+});
+
+test('engagement totals render as grouped counts; missing as "not yet reported"', () => {
+  // T1 (spec 021): the §17.1 outcome extension — counts, never rates/percentages.
+  assert.equal(formatScore('engagement_views_total', 1200), '1,200');
+  assert.equal(formatScore('engagement_clicks_total', 0), '0'); // a reported zero IS zero
+  assert.equal(formatScore('engagement_conversions_total', null), 'not yet reported');
+});
+
+test('the notify→decision latency split renders next to approval latency', () => {
+  // T5 (spec 020) AC: the split is surfaced ALONGSIDE approval latency on the evals page.
+  const approvalIndex = METRIC_ORDER.indexOf('approval_latency_seconds');
+  assert.equal(METRIC_ORDER[approvalIndex + 1], 'notify_to_decision_latency_seconds');
+  // Duration formatting matches approval latency (a time span, not a rate).
+  assert.equal(formatScore('notify_to_decision_latency_seconds', 200), '3m 20s');
+  assert.equal(formatScore('notify_to_decision_latency_seconds', null), 'n/a');
+  assert.equal(
+    formatDetail('notify_to_decision_latency_seconds', { sample_count: 2 }),
+    '2 samples',
+  );
 });
 
 test('summarizeEvals keeps the latest row per metric (rows are newest-first)', () => {

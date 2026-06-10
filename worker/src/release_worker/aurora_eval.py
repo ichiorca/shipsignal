@@ -125,6 +125,7 @@ class AuroraMetricInputsReader:
             ),
             edit_distances=self._edit_distances(),
             approval_latencies_seconds=self._approval_latencies(),
+            notify_to_decision_latencies_seconds=self._notify_to_decision_latencies(),
         )
 
     def _scalar(self, sql: str, params: tuple[object, ...] | None = None) -> int:
@@ -179,6 +180,40 @@ class AuroraMetricInputsReader:
             )
             rows = cur.fetchall()
         # Guard against a clock-skewed negative interval; latency is non-negative by definition.
+        return tuple(max(0.0, float(row[0])) for row in rows if row[0] is not None)
+
+    def _notify_to_decision_latencies(self) -> tuple[float, ...]:
+        """T5 (spec 020) — seconds from each gate's ``notified_at`` (gate_notifications,
+        migration 0020) to the FIRST run-level gate decision recorded after it, so
+        approval latency splits into "time to notice" vs "time to decide". One sample per
+        delivered gate notification; gates never notified (or never decided) contribute
+        none. The run_failed event maps to no decision target and is naturally excluded
+        (the CASE yields NULL)."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT EXTRACT(EPOCH FROM (decision.first_at - gn.notified_at))
+                  FROM gate_notifications gn
+                  JOIN LATERAL (
+                        SELECT min(ap.created_at) AS first_at
+                          FROM approvals ap
+                         WHERE ap.target_id = gn.release_run_id
+                           AND ap.target_type = CASE gn.gate
+                                 WHEN 'feature_manifest_approval'
+                                   THEN 'feature_manifest'
+                                 WHEN 'artifact_review'
+                                   THEN 'artifact_manifest'
+                                 WHEN 'skill_candidate_approval'
+                                   THEN 'skill_candidate_manifest'
+                               END
+                           AND ap.created_at >= gn.notified_at
+                       ) decision ON decision.first_at IS NOT NULL
+                 WHERE gn.release_run_id = %s
+                   AND gn.notified_at IS NOT NULL
+                """,
+                (self._release_run_id,),
+            )
+            rows = cur.fetchall()
         return tuple(max(0.0, float(row[0])) for row in rows if row[0] is not None)
 
 

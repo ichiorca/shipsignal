@@ -4,14 +4,25 @@ Loads the real checked-in gold set (proving it parses + is non-empty + complete)
 the regression harness through its public surface: a clean pipeline passes; a dropped feature, a
 leaked non-marketable change, and a missed risky claim each fail the case; a missing output
 fails closed; and ``regression_eval_run`` reports the pass fraction.
+
+The CLI runner (``python -m release_worker regression``) is exercised through ``main`` — the
+same surface the Actions runner invokes: a clean outputs file exits 0, any drift exits 1, and
+a malformed outputs file fails validation rather than scoring garbage.
 """
 
 from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
 
 from release_worker.gold_set import load_gold_set
 from release_worker.regression import (
     PipelineOutput,
     evaluate_case,
+    main,
     regression_eval_run,
     run_regression,
 )
@@ -96,3 +107,45 @@ def test_regression_eval_run_reports_pass_fraction() -> None:
     assert eval_run.release_run_id == "run-1"
     assert eval_run.score == 1.0
     assert eval_run.findings == {"passed": report.total, "total": report.total}
+
+
+def _write_outputs_file(path: Path, outputs: dict[str, PipelineOutput]) -> Path:
+    document = {
+        "outputs": {
+            case_id: {
+                "surfaced_features": list(output.surfaced_features),
+                "flagged_risky_claims": list(output.flagged_risky_claims),
+            }
+            for case_id, output in outputs.items()
+        }
+    }
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return path
+
+
+def test_cli_clean_outputs_exit_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gold = load_gold_set()
+    outputs = {c.case_id: _clean_output_for(c) for c in gold.cases}
+    outputs_file = _write_outputs_file(tmp_path / "outputs.json", outputs)
+    assert main(["--outputs", str(outputs_file)]) == 0
+    summary = capsys.readouterr().out
+    assert f"{len(gold.cases)}/{len(gold.cases)} gold case(s) passed" in summary
+
+
+def test_cli_drifted_outputs_exit_nonzero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An empty outputs document: every case scores against an empty output → all drift.
+    outputs_file = _write_outputs_file(tmp_path / "outputs.json", {})
+    assert main(["--outputs", str(outputs_file)]) == 1
+    assert "FAIL" in capsys.readouterr().out
+
+
+def test_cli_malformed_outputs_fails_validation(tmp_path: Path) -> None:
+    # A misshapen document (unknown key) must raise, never score garbage (fail-closed).
+    bad = tmp_path / "outputs.json"
+    bad.write_text(json.dumps({"outputs": {}, "extra": True}), encoding="utf-8")
+    with pytest.raises(ValidationError):
+        main(["--outputs", str(bad)])

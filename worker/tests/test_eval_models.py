@@ -41,11 +41,18 @@ def test_eval_run_schema_carries_no_prompt_or_pii_field() -> None:
 
 
 def test_metric_name_doubles_as_eval_type() -> None:
-    # The seven §17.1 metrics use their name as the eval_type discriminator.
+    # The seven §17.1 metrics (plus the spec-020 notify→decision latency split) use
+    # their name as the eval_type discriminator.
     assert MetricName.EVIDENCE_COVERAGE.value == "evidence_coverage"
+    assert (
+        MetricName.NOTIFY_TO_DECISION_LATENCY_SECONDS.value
+        == "notify_to_decision_latency_seconds"
+    )
     assert EvalType.RUBRIC.value == "rubric"
     assert EvalType.REGRESSION.value == "regression"
-    assert len(set(MetricName)) == 7
+    # T1 (spec 021): + the three engagement outcome totals (§17.1 outcome extension).
+    assert MetricName.ENGAGEMENT_CLICKS_TOTAL.value == "engagement_clicks_total"
+    assert len(set(MetricName)) == 11
 
 
 def test_recording_sink_collects_rows_in_order() -> None:

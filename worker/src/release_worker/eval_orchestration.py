@@ -14,8 +14,10 @@ scores + counts are persisted; the artifact body the rubric reads never reaches 
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
+from release_worker.engagement_models import EngagementTotalsReader
 from release_worker.eval_metrics import MetricInputs, compute_product_metrics
 from release_worker.eval_models import EvalRun, EvalRunSink
 from release_worker.eval_rubric import ArtifactBody, score_rubric
@@ -44,16 +46,32 @@ def run_product_evaluation(
     approved_artifact_reader: ApprovedArtifactReader,
     model_client: ModelClient,
     sink: EvalRunSink,
+    engagement_reader: EngagementTotalsReader | None = None,
 ) -> tuple[EvalRun, ...]:
     """Evaluate one run after artifact approval and persist every result (PRD §17, §8 DoD).
 
-    Order: the seven deterministic metrics first (cheap, no model), then the LLM-as-judge
+    Order: the deterministic metrics first (cheap, no model), then the LLM-as-judge
     rubric per approved artifact. Each ``EvalRun`` is recorded as it is produced and also
     returned (newest last) so the caller can log a summary. A malformed rubric payload raises
     ``MalformedRubricOutputError`` from ``score_rubric`` (fail-closed, §5) — the metrics already
-    persisted stay, and the run is surfaced as failed rather than silently scoring garbage."""
+    persisted stay, and the run is surfaced as failed rather than silently scoring garbage.
+
+    T1 (spec 021): when an ``engagement_reader`` is wired, the run's aggregate engagement
+    totals are merged into the inputs so the §17.1 outcome metrics land in ``eval_runs``
+    next to the quality metrics. ``None`` keeps the outcome rows at "not yet reported"
+    (score None), so an unwired eval (or a run with no ingested engagement) never reads
+    as zero engagement."""
+    inputs = metric_inputs_reader.read()
+    if engagement_reader is not None:
+        totals = engagement_reader.totals()
+        inputs = replace(
+            inputs,
+            engagement_views=totals.views,
+            engagement_clicks=totals.clicks,
+            engagement_conversions=totals.conversions,
+        )
     produced: list[EvalRun] = []
-    for metric in compute_product_metrics(release_run_id, metric_inputs_reader.read()):
+    for metric in compute_product_metrics(release_run_id, inputs):
         sink.record(metric)
         produced.append(metric)
     for artifact in approved_artifact_reader.approved_artifacts():

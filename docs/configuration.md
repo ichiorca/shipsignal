@@ -28,6 +28,7 @@ harness-protected path so the autonomous session cannot author one.
 | `DATABASE_URL` | T5 | Aurora connection the worker writes run status + `langgraph_thread_id` back to. |
 | `PGSSLMODE` | T5 | TLS mode (`require`+). |
 | `RELEASE_RUN_ID` | T5 | The `release_runs.id` this job advances (passed as a workflow input). |
+| `SLACK_WEBHOOK_URL` | spec 020 | Optional Slack incoming-webhook for gate-ready reviewer notifications. Unset = feature fully off (local/dev/CI default). The URL embeds a credential — worker env only, never logged. See `docs/notifications.md`. |
 
 Local-dev / CI note: the unit-test gate (`npm test && pytest -q`) needs **none** of
 these — the pure modules under test read no secrets, and the Aurora/GitHub/LangGraph

@@ -36,6 +36,13 @@ const ROWS: readonly EvalRunRow[] = [
     created_at: '2026-06-08T00:00:00Z',
   },
   {
+    // T5 (spec 020): the notify→decision split of approval latency.
+    eval_type: 'notify_to_decision_latency_seconds',
+    score: 200,
+    findings: { sample_count: 2 },
+    created_at: '2026-06-08T00:00:00Z',
+  },
+  {
     eval_type: 'evidence_coverage',
     score: 0.9,
     findings: { numerator: 9, denominator: 10 },
@@ -115,6 +122,20 @@ test('the three AC headline metrics render with scores as text', () => {
   assert.equal(rate?.textContent, '10.0%');
   const latency = doc.querySelector('tbody tr[data-metric="approval_latency_seconds"] td[data-score]');
   assert.equal(latency?.textContent, '1h 2m');
+});
+
+test('the notify→decision latency split renders directly after approval latency', () => {
+  // T5 (spec 020) AC: notified_at-based latency is surfaced ALONGSIDE approval latency.
+  const { doc } = render(SUMMARY);
+  const rows = [...doc.querySelectorAll('tbody tr')].map((r) => r.getAttribute('data-metric'));
+  assert.equal(
+    rows.indexOf('notify_to_decision_latency_seconds'),
+    rows.indexOf('approval_latency_seconds') + 1,
+  );
+  const split = doc.querySelector(
+    'tbody tr[data-metric="notify_to_decision_latency_seconds"] td[data-score]',
+  );
+  assert.equal(split?.textContent, '3m 20s');
 });
 
 test('the rubric headline averages the rubric rows', () => {

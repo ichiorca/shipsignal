@@ -15,15 +15,26 @@ reports drift:
 Pure + deterministic (no model / no DB): the runner takes canned ``PipelineOutput`` so the unit
 gate exercises the exact scoring the eval step uses. ``regression_eval_run`` turns a report into
 a persisted ``EvalRun`` (constitution §2: scoped by ``release_run_id``; §5: counts only).
+
+The production entry is ``main`` — invoked as ``python -m release_worker regression
+--outputs <file>`` on the runner after a graph/prompt/model change, it scores the change's
+pipeline outputs against the checked-in gold set and exits non-zero on ANY drift, so CI can
+gate on it (fail-closed, §5).
 """
 
 from __future__ import annotations
 
+import argparse
+import json
+import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict
 
 from release_worker.eval_models import EvalRun, EvalType
-from release_worker.gold_set import GoldCase, GoldSet
+from release_worker.gold_set import GoldCase, GoldSet, load_gold_set
 
 
 @dataclass(frozen=True)
@@ -134,3 +145,74 @@ def regression_eval_run(release_run_id: str, report: RegressionReport) -> EvalRu
         score=score,
         findings={"passed": report.passed_count, "total": report.total},
     )
+
+
+class PipelineOutputRecord(BaseModel):
+    """One case's pipeline output in the ``--outputs`` JSON. The file is untrusted-shaped
+    boundary input (P5: validate at every boundary), so it is parsed through this strict
+    model — never consumed as a raw dict — before it reaches the pure scorer."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    surfaced_features: tuple[str, ...] = ()
+    flagged_risky_claims: tuple[str, ...] = ()
+
+
+class PipelineOutputsFile(BaseModel):
+    """The whole ``--outputs`` document: pipeline outputs keyed by gold ``case_id``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    outputs: dict[str, PipelineOutputRecord]
+
+
+def load_pipeline_outputs(path: Path) -> dict[str, PipelineOutput]:
+    """Load + validate the pipeline-outputs JSON (fail-closed on a malformed shape).
+
+    Raises ``ValidationError`` rather than skipping bad entries — a half-readable outputs
+    file must fail the harness, not let unmatched cases fail closed and read as drift."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    document = PipelineOutputsFile.model_validate(raw)
+    return {
+        case_id: PipelineOutput(
+            surfaced_features=record.surfaced_features,
+            flagged_risky_claims=record.flagged_risky_claims,
+        )
+        for case_id, record in document.outputs.items()
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """T4 (spec 013) — the gold-set regression runner CLI (PRD §17.3).
+
+    Invoked as ``python -m release_worker regression --outputs <file> [--gold-set <file>]``
+    on the Actions runner (constitution §1) after a graph/prompt/model change. Scores the
+    supplied pipeline outputs against the checked-in gold set and exits 1 on ANY drift so a
+    CI job can gate on it. The report prints case ids + drift counts only — never the gold
+    text (§5)."""
+    parser = argparse.ArgumentParser(prog="release_worker regression")
+    parser.add_argument(
+        "--outputs",
+        required=True,
+        help="JSON file of pipeline outputs keyed by gold case_id.",
+    )
+    parser.add_argument(
+        "--gold-set",
+        default=None,
+        help="Override the checked-in gold-set path (tests/local dry runs).",
+    )
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+
+    gold_set = load_gold_set(Path(args.gold_set) if args.gold_set else None)
+    outputs = load_pipeline_outputs(Path(args.outputs))
+    report = run_regression(gold_set, outputs)
+    for result in report.results:
+        status = "pass" if result.passed else "FAIL"
+        print(
+            f"{result.case_id}: {status} "
+            f"(missing={len(result.missing_features)}, "
+            f"leaked={len(result.leaked_non_marketable)}, "
+            f"missed_risky={len(result.missed_risky_claims)})"
+        )
+    print(f"{report.passed_count}/{report.total} gold case(s) passed")
+    return 0 if report.all_passed else 1

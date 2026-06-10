@@ -8,6 +8,7 @@ the Aurora readers + Bedrock client into.
 
 from __future__ import annotations
 
+from release_worker.engagement_models import EngagementTotals, StaticEngagementReader
 from release_worker.eval_metrics import MetricInputs
 from release_worker.eval_models import EvalType, MetricName, RecordingEvalSink
 from release_worker.eval_orchestration import run_product_evaluation
@@ -49,7 +50,7 @@ def test_eval_writes_metrics_and_one_rubric_per_approved_artifact() -> None:
     )
     metric_rows = [r for r in sink.records if r.eval_type in set(MetricName)]
     rubric_rows = [r for r in sink.records if r.eval_type == EvalType.RUBRIC.value]
-    assert len(metric_rows) == 7
+    assert len(metric_rows) == 11
     assert len(rubric_rows) == 2
     assert {r.artifact_id for r in rubric_rows} == {"art-1", "art-2"}
     assert produced == tuple(sink.records)
@@ -80,4 +81,52 @@ def test_eval_runs_metrics_even_with_no_approved_artifacts() -> None:
         RecordingModelClient(_GOOD_SCORES),
         sink,
     )
-    assert len(sink.records) == 7  # metrics only; no rubric without artifacts
+    assert len(sink.records) == 11  # metrics only; no rubric without artifacts
+
+
+def _engagement_rows(sink: RecordingEvalSink) -> dict[str, float | None]:
+    """The three spec-021 outcome rows, keyed by eval_type."""
+    wanted = {
+        MetricName.ENGAGEMENT_VIEWS_TOTAL.value,
+        MetricName.ENGAGEMENT_CLICKS_TOTAL.value,
+        MetricName.ENGAGEMENT_CONVERSIONS_TOTAL.value,
+    }
+    return {r.eval_type: r.score for r in sink.records if r.eval_type in wanted}
+
+
+def test_eval_merges_engagement_totals_into_outcome_rows() -> None:
+    # T1 (spec 021): a wired engagement reader lands the run's aggregate totals in
+    # eval_runs; an unreported metric (conversions) stays None — never zero (spec AC).
+    sink = RecordingEvalSink()
+    reader = StaticEngagementReader(
+        EngagementTotals(release_run_id="run-1", views=1200, clicks=37)
+    )
+    run_product_evaluation(
+        "run-1",
+        _FakeMetricReader(MetricInputs()),
+        _FakeArtifactReader(()),
+        RecordingModelClient(_GOOD_SCORES),
+        sink,
+        engagement_reader=reader,
+    )
+    rows = _engagement_rows(sink)
+    assert rows[MetricName.ENGAGEMENT_VIEWS_TOTAL.value] == 1200.0
+    assert rows[MetricName.ENGAGEMENT_CLICKS_TOTAL.value] == 37.0
+    assert rows[MetricName.ENGAGEMENT_CONVERSIONS_TOTAL.value] is None
+
+
+def test_eval_without_engagement_reader_reports_outcomes_as_unreported() -> None:
+    # No reader wired (or nothing ingested) → every outcome row is score=None with a
+    # findings flag — "not yet reported" must be distinguishable from 0 downstream.
+    sink = RecordingEvalSink()
+    run_product_evaluation(
+        "run-1",
+        _FakeMetricReader(MetricInputs()),
+        _FakeArtifactReader(()),
+        RecordingModelClient(_GOOD_SCORES),
+        sink,
+    )
+    rows = _engagement_rows(sink)
+    assert set(rows.values()) == {None}
+    flags = {r.findings["reported"] for r in sink.records if r.eval_type in rows}
+    assert flags == {"false"}

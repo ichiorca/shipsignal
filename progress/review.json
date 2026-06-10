@@ -1,6 +1,6 @@
 {
   "projectRoot": "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal",
-  "generatedAt": "2026-06-09T22:00:42Z",
+  "generatedAt": "2026-06-10T00:29:05Z",
   "specs": [
     {
       "id": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
@@ -132,28 +132,28 @@
       "id": "019-approved-artifact-export-and-distribution-webhook",
       "specMD": "specs/019-approved-artifact-export-and-distribution-webhook/spec.md",
       "tasksMD": "specs/019-approved-artifact-export-and-distribution-webhook/tasks.md",
-      "provenanceClass": "repo-unversioned",
+      "provenanceClass": "repo-versioned",
       "taskCount": 5
     },
     {
       "id": "020-gate-ready-reviewer-notifications",
       "specMD": "specs/020-gate-ready-reviewer-notifications/spec.md",
       "tasksMD": "specs/020-gate-ready-reviewer-notifications/tasks.md",
-      "provenanceClass": "repo-unversioned",
+      "provenanceClass": "repo-versioned",
       "taskCount": 5
     },
     {
       "id": "021-engagement-outcome-loop-utm-and-roi-view",
       "specMD": "specs/021-engagement-outcome-loop-utm-and-roi-view/spec.md",
       "tasksMD": "specs/021-engagement-outcome-loop-utm-and-roi-view/tasks.md",
-      "provenanceClass": "repo-unversioned",
+      "provenanceClass": "repo-versioned",
       "taskCount": 5
     },
     {
       "id": "022-per-run-artifact-type-selection",
       "specMD": "specs/022-per-run-artifact-type-selection/spec.md",
       "tasksMD": "specs/022-per-run-artifact-type-selection/tasks.md",
-      "provenanceClass": "repo-unversioned",
+      "provenanceClass": "repo-versioned",
       "taskCount": 5
     }
   ],
@@ -175,6 +175,9 @@
         "pass18.log",
         "pass19.log",
         "pass2.log",
+        "pass20.log",
+        "pass21.log",
+        "pass22.log",
         "pass3.log",
         "pass4.log",
         "pass5.log",
@@ -183,7 +186,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 21
+      "sourceCites": 29
     },
     {
       "taskId": "T2",
@@ -202,6 +205,8 @@
         "pass18.log",
         "pass19.log",
         "pass2.log",
+        "pass20.log",
+        "pass21.log",
         "pass3.log",
         "pass4.log",
         "pass5.log",
@@ -210,7 +215,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 17
+      "sourceCites": 24
     },
     {
       "taskId": "T3",
@@ -229,6 +234,8 @@
         "pass18.log",
         "pass19.log",
         "pass2.log",
+        "pass20.log",
+        "pass21.log",
         "pass3.log",
         "pass4.log",
         "pass5.log",
@@ -237,7 +244,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 17
+      "sourceCites": 24
     },
     {
       "taskId": "T4",
@@ -256,6 +263,9 @@
         "pass18.log",
         "pass19.log",
         "pass2.log",
+        "pass20.log",
+        "pass21.log",
+        "pass22.log",
         "pass3.log",
         "pass4.log",
         "pass5.log",
@@ -264,7 +274,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 25
+      "sourceCites": 38
     },
     {
       "taskId": "T5",
@@ -281,6 +291,9 @@
         "pass16.log",
         "pass19.log",
         "pass2.log",
+        "pass20.log",
+        "pass21.log",
+        "pass22.log",
         "pass3.log",
         "pass4.log",
         "pass5.log",
@@ -288,7 +301,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 63
+      "sourceCites": 76
     },
     {
       "taskId": "T6",
@@ -310,14 +323,6 @@
   "untraced": null,
   "constitutionIndex": null,
   "uncitedPrinciples": null,
-  "sourceFilesScanned": 138,
-  "findings": [
-    {
-      "id": "F001",
-      "severity": "med",
-      "axis": "spec-provenance",
-      "summary": "4 spec(s) are not cleanly committed: 019-approved-artifact-export-and-distribution-webhook, 020-gate-ready-reviewer-notifications, 021-engagement-outcome-loop-utm-and-roi-view, 022-per-run-artifact-type-selection",
-      "recommendation": "Commit the spec.md(s) so downstream provenance carriers land as repo-versioned (anti-pattern #3)."
-    }
-  ]
+  "sourceFilesScanned": 151,
+  "findings": null
 }

@@ -65,6 +65,29 @@ function mapArtifact(row: ArtifactRow): ArtifactDraft {
   };
 }
 
+/** A lean (id, type) reference to one of the run's artifacts. T1/T3 (spec 021): the
+ *  engagement ingestion boundary checks submitted artifact ids against this set (no
+ *  cross-run bleed, constitution §2), the CSV template prefills from it, and the ROI
+ *  view derives the run's artifact types from it. */
+export interface ArtifactRef {
+  readonly id: string;
+  readonly artifact_type: string;
+}
+
+/** List (id, artifact_type) for every artifact of one run — the run-scoping source of
+ *  truth for engagement ingestion (spec 021 AC: foreign artifact ids are rejected). */
+export async function listArtifactRefsForRun(
+  releaseRunId: string,
+): Promise<readonly ArtifactRef[]> {
+  const result = await query<{ id: string; artifact_type: string }>(
+    `SELECT id, artifact_type FROM artifacts
+      WHERE release_run_id = $1
+      ORDER BY artifact_type ASC, created_at ASC`,
+    [releaseRunId],
+  );
+  return result.rows.map((row) => ({ id: row.id, artifact_type: row.artifact_type }));
+}
+
 /** List a run's generated artifacts (newest-first) for the draft-preview screen. */
 export async function listArtifactsForRun(
   releaseRunId: string,

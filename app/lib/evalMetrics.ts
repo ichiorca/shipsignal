@@ -4,26 +4,39 @@
 // formatting. constitution §5: these shapes carry only metric scores + aggregate counts — never
 // a prompt, evidence, artifact body, or PII.
 
-/** The seven product-quality metric names (PRD §17.1). Matches the Python `MetricName` enum so
- *  the worker writes and the dashboard reads the same `eval_type` strings. */
+/** The seven product-quality metric names (PRD §17.1), plus the spec-020 notify→decision
+ *  latency split and the spec-021 engagement outcome totals. Matches the Python
+ *  `MetricName` enum so the worker writes and the dashboard reads the same `eval_type`
+ *  strings. */
 export type MetricName =
   | 'evidence_coverage'
   | 'unsupported_claim_rate'
   | 'edit_distance'
   | 'approval_latency_seconds'
+  | 'notify_to_decision_latency_seconds'
   | 'feature_rejection_rate'
   | 'skill_candidate_acceptance_rate'
-  | 'media_success_rate';
+  | 'media_success_rate'
+  | 'engagement_views_total'
+  | 'engagement_clicks_total'
+  | 'engagement_conversions_total';
 
-/** PRD §17.1 order — deterministic for the dashboard + tests. */
+/** PRD §17.1 order — deterministic for the dashboard + tests. T5 (spec 020): the
+ *  notify→decision split renders directly after approval latency (the AC: surfaced
+ *  alongside it, splitting "time to notice" from "time to decide"). */
 export const METRIC_ORDER: readonly MetricName[] = [
   'evidence_coverage',
   'unsupported_claim_rate',
   'edit_distance',
   'approval_latency_seconds',
+  'notify_to_decision_latency_seconds',
   'feature_rejection_rate',
   'skill_candidate_acceptance_rate',
   'media_success_rate',
+  // T1 (spec 021): the §17.1 outcome extension — last, after the quality metrics.
+  'engagement_views_total',
+  'engagement_clicks_total',
+  'engagement_conversions_total',
 ] as const;
 
 export const METRIC_LABELS: Record<MetricName, string> = {
@@ -31,9 +44,13 @@ export const METRIC_LABELS: Record<MetricName, string> = {
   unsupported_claim_rate: 'Unsupported-claim rate',
   edit_distance: 'Edit distance (reviewer rewrite)',
   approval_latency_seconds: 'Approval latency',
+  notify_to_decision_latency_seconds: 'Notify-to-decision latency',
   feature_rejection_rate: 'Feature rejection rate',
   skill_candidate_acceptance_rate: 'Skill-candidate acceptance rate',
   media_success_rate: 'Media success rate',
+  engagement_views_total: 'Engagement: views (run total)',
+  engagement_clicks_total: 'Engagement: clicks (run total)',
+  engagement_conversions_total: 'Engagement: conversions (run total)',
 };
 
 /** Metrics whose score is a 0..1 rate rendered as a percentage. */
@@ -70,16 +87,33 @@ export interface RunEvalSummary {
   readonly rubricCount: number;
 }
 
+/** Metrics whose score is a duration in seconds rendered as a human time span. */
+const DURATION_METRICS: ReadonlySet<MetricName> = new Set([
+  'approval_latency_seconds',
+  'notify_to_decision_latency_seconds',
+]);
+
+/** T1 (spec 021): metrics whose score is an aggregate count. A null score means the
+ *  engagement was never reported — rendered "not yet reported", NEVER 0 (spec AC). */
+const COUNT_METRICS: ReadonlySet<MetricName> = new Set([
+  'engagement_views_total',
+  'engagement_clicks_total',
+  'engagement_conversions_total',
+]);
+
 /** Format a metric's headline score as text (constitution P6: never colour/number alone). */
 export function formatScore(name: MetricName, score: number | null): string {
   if (score === null) {
-    return 'n/a';
+    return COUNT_METRICS.has(name) ? 'not yet reported' : 'n/a';
   }
-  if (name === 'approval_latency_seconds') {
+  if (DURATION_METRICS.has(name)) {
     return humanizeSeconds(score);
   }
   if (RATE_METRICS.has(name)) {
     return `${(score * 100).toFixed(1)}%`;
+  }
+  if (COUNT_METRICS.has(name)) {
+    return Math.trunc(score).toLocaleString('en-US');
   }
   return score.toFixed(2);
 }

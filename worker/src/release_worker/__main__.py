@@ -50,6 +50,7 @@ from release_worker.aurora_content import (
     AuroraSkillSnapshotSink,
 )
 from release_worker.aurora_cost import AuroraCostTelemetrySink
+from release_worker.aurora_engagement import AuroraEngagementReader
 from release_worker.aurora_eval import (
     AuroraApprovedArtifactReader,
     AuroraEvalSink,
@@ -65,6 +66,7 @@ from release_worker.aurora_features import (
     AuroraRedactedEvidenceReader,
 )
 from release_worker.aurora_media import AuroraDemoScriptReader, AuroraMediaAssetSink
+from release_worker.aurora_notifications import AuroraGateNotificationLedger
 from release_worker.aurora_repository import (
     AuroraReleaseRunRepository,
     connect_from_env,
@@ -93,12 +95,24 @@ from release_worker.log_scrubbing import install_pii_scrubbing
 from release_worker.loop_orchestration import phase_from_graph, thread_id_for
 from release_worker.media_graph import build_media_generation_graph
 from release_worker.media_state import MediaRunState
+from release_worker.notification_models import (
+    MalformedInterruptPayloadError,
+    build_failure_notification,
+    interrupt_payload,
+    notification_from_interrupt,
+)
+from release_worker.notifier import (
+    SlackWebhookTransport,
+    dispatch_gate_notification,
+    resolve_webhook_url,
+)
 from release_worker.playwright_capture import PlaywrightDemoCapturer
 from release_worker.privacy import main as privacy_main
 from release_worker.promotion_config import (
     build_repo_skill_writer,
     parse_promotion_mode,
 )
+from release_worker.regression import main as regression_main
 from release_worker.repo_skill_source import FilesystemSkillSource
 from release_worker.s3_media_store import S3MediaStore
 from release_worker.skill_learning_graph import build_skill_learning_graph
@@ -169,6 +183,90 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _repo_for(conn: psycopg.Connection, release_run_id: str) -> str:
+    """The run's repo (for gate notifications + run-scoped skill snapshots)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT repo FROM release_runs WHERE id = %s", (release_run_id,))
+        row = cur.fetchone()
+    if row is None:
+        raise RuntimeError(f"release run {release_run_id} not found")
+    return row[0]
+
+
+def _notify_gate_interrupt(
+    conn: psycopg.Connection,
+    webhook_url: str | None,
+    release_run_id: str,
+    result: object,
+    repo: str | None = None,
+) -> None:
+    """T2 (spec 020) — tell a reviewer the gate opened, from the §5.6 interrupt payload.
+
+    Best-effort by contract (AC4: notification failure never fails the run): the
+    dispatcher already owns transport errors + idempotency (the gate_notifications
+    ledger, AC3); this glue additionally catches ledger I/O (psycopg) and a malformed
+    payload narrowly, so the halt-and-await-review path proceeds no matter what.
+    Skips all I/O when the webhook is unconfigured (AC5).
+    """
+    if webhook_url is None:
+        return
+    payload = interrupt_payload(result)
+    if payload is None:
+        return
+    try:
+        notification = notification_from_interrupt(
+            payload, repo if repo is not None else _repo_for(conn, release_run_id)
+        )
+        dispatch_gate_notification(
+            notification,
+            webhook_url,
+            AuroraGateNotificationLedger(conn),
+            SlackWebhookTransport(),
+        )
+    except (psycopg.Error, MalformedInterruptPayloadError, RuntimeError) as err:
+        # Secret-free: class name only — never the payload, URL, or driver message (§5).
+        logger.warning(
+            "gate notification for run %s was not dispatched (%s)",
+            release_run_id,
+            type(err).__name__,
+        )
+
+
+def _notify_run_failed(
+    conn: psycopg.Connection,
+    webhook_url: str | None,
+    release_run_id: str,
+    failure_stage: str,
+    dashboard_base_url: str,
+) -> None:
+    """T2 (spec 020) — tell a reviewer the run transitioned to ``failed`` (AC1).
+
+    Same best-effort contract as the gate path; runs on the entry point's error path,
+    where the connection is autocommit, so a prior statement failure does not wedge it.
+    """
+    if webhook_url is None:
+        return
+    try:
+        notification = build_failure_notification(
+            release_run_id,
+            _repo_for(conn, release_run_id),
+            failure_stage,
+            dashboard_base_url,
+        )
+        dispatch_gate_notification(
+            notification,
+            webhook_url,
+            AuroraGateNotificationLedger(conn),
+            SlackWebhookTransport(),
+        )
+    except (psycopg.Error, RuntimeError) as err:
+        logger.warning(
+            "run-failed notification for run %s was not dispatched (%s)",
+            release_run_id,
+            type(err).__name__,
+        )
+
+
 def _finalize_gate2_status(
     repository: AuroraReleaseRunRepository,
     release_run_id: str,
@@ -196,6 +294,7 @@ def _run_content_generation(
     resume_decision: str | None,
     embedder: BedrockEmbeddingClient,
     checkpointer: object,
+    webhook_url: str | None,
 ) -> int:
     """Run content_generation_graph for one run through Gate #2 (spec 005/006, PRD §5.3).
 
@@ -209,12 +308,7 @@ def _run_content_generation(
     continues the SAME ``thread_id`` past the interrupt (PRD §5.6). Cross-process resume needs
     a durable checkpointer (the bundled ``MemorySaver`` is process-local).
     """
-    with conn.cursor() as cur:
-        cur.execute("SELECT repo FROM release_runs WHERE id = %s", (release_run_id,))
-        row = cur.fetchone()
-    if row is None:
-        raise RuntimeError(f"release run {release_run_id} not found")
-    repo = row[0]
+    repo = _repo_for(conn, release_run_id)
 
     graph = build_content_generation_graph(
         AuroraApprovedFeatureReader(conn),
@@ -269,6 +363,8 @@ def _run_content_generation(
     if "__interrupt__" in result:
         # Drafts + claims are persisted; the run now awaits Gate #2.
         repository.advance(release_run_id, RunStatus.ARTIFACTS_PENDING_REVIEW)
+        # T2 (spec 020): the gate is open — tell a reviewer (metadata-only, idempotent).
+        _notify_gate_interrupt(conn, webhook_url, release_run_id, result, repo)
         logger.info(
             "content run %s halted at Gate #2 (thread %s); awaiting review",
             release_run_id,
@@ -367,6 +463,7 @@ def _run_skill_learning(
     resume_decision: str | None,
     reviewer: str | None,
     checkpointer: object,
+    webhook_url: str | None,
 ) -> int:
     """Run skill_learning_graph for one run through Gate #3 (spec 009, PRD §5.5).
 
@@ -385,12 +482,7 @@ def _run_skill_learning(
     decided (§10.5 reviewed_by). Cross-process resume needs a durable checkpointer (the bundled
     ``MemorySaver`` is process-local).
     """
-    with conn.cursor() as cur:
-        cur.execute("SELECT repo FROM release_runs WHERE id = %s", (release_run_id,))
-        row = cur.fetchone()
-    if row is None:
-        raise RuntimeError(f"release run {release_run_id} not found")
-    repo = row[0]
+    repo = _repo_for(conn, release_run_id)
 
     graph = build_skill_learning_graph(
         AuroraLearningSignalSource(conn),
@@ -443,6 +535,8 @@ def _run_skill_learning(
         lambda: graph.invoke(initial, config), label=f"skill run {release_run_id}"
     )
     if "__interrupt__" in result:
+        # T2 (spec 020): the gate is open — tell a reviewer (metadata-only, idempotent).
+        _notify_gate_interrupt(conn, webhook_url, release_run_id, result, repo)
         logger.info(
             "skill run %s halted at Gate #3 (thread %s); awaiting review",
             release_run_id,
@@ -476,6 +570,10 @@ def _run_eval(conn: psycopg.Connection, release_run_id: str) -> int:
             telemetry_sink=AuroraCostTelemetrySink(conn),
         ),
         AuroraEvalSink(conn),
+        # T1 (spec 021): merge the run's ingested aggregate engagement totals so the
+        # §17.1 outcome metrics (views/clicks/conversions) land next to the quality
+        # metrics; unreported metrics stay score=None ("not yet reported", never 0).
+        engagement_reader=AuroraEngagementReader(conn, release_run_id),
     )
     logger.info("eval run %s recorded %d eval rows", release_run_id, len(produced))
     return 0
@@ -488,6 +586,11 @@ def main(argv: list[str] | None = None) -> int:
     # arg so the existing flat release-worker parser (--release-run-id ...) is untouched.
     if raw and raw[0] == "privacy":
         return privacy_main(raw[1:])
+    # T4 (spec 013) — `python -m release_worker regression --outputs <file>` runs the gold-set
+    # regression harness (PRD §17.3) against the checked-in gold set; same literal-first-arg
+    # delegation as `privacy` so the flat release-worker parser is untouched.
+    if raw and raw[0] == "regression":
+        return regression_main(raw[1:])
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     # T4 (spec 010) / P5 — scrub PII/secrets from every log record before a handler emits it,
@@ -515,6 +618,10 @@ def main(argv: list[str] | None = None) -> int:
             _PLACEHOLDER_DASHBOARD_URL,
         )
         dashboard_base_url = _PLACEHOLDER_DASHBOARD_URL
+    # T4 (spec 020): reviewer notifications are fully off when SLACK_WEBHOOK_URL is unset
+    # (local/dev/CI default). The URL embeds a credential — read from env only, never
+    # logged (resolve_webhook_url warns secret-free on a non-https misconfiguration).
+    webhook_url = resolve_webhook_url(os.environ.get("SLACK_WEBHOOK_URL"))
 
     # One shared connection for the whole short-lived job (aurora-postgresql-rules).
     conn = connect_from_env()
@@ -557,6 +664,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.resume_decision,
                 embedder,
                 checkpointer,
+                webhook_url,
             )
 
         if args.graph == "media_generation":
@@ -586,6 +694,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.resume_decision,
                 args.reviewer,
                 checkpointer,
+                webhook_url,
             )
 
         graph = build_release_intelligence_graph(
@@ -629,6 +738,8 @@ def main(argv: list[str] | None = None) -> int:
             lambda: graph.invoke(initial, config), label=f"release run {release_run_id}"
         )
         if "__interrupt__" in result:
+            # T2 (spec 020): the gate is open — tell a reviewer (metadata-only, idempotent).
+            _notify_gate_interrupt(conn, webhook_url, release_run_id, result)
             logger.info(
                 "release run %s halted at Gate #1 (thread %s); awaiting review",
                 release_run_id,
@@ -650,6 +761,11 @@ def main(argv: list[str] | None = None) -> int:
             repository.mark_failed(release_run_id)
         except Exception:
             logger.exception("could not mark release run %s failed", release_run_id)
+        # T2 (spec 020) / AC1: a failed run needs a human too — same best-effort dispatch
+        # (it can never mask the failure exit code below).
+        _notify_run_failed(
+            conn, webhook_url, release_run_id, args.graph, dashboard_base_url
+        )
         return 1
     finally:
         conn.close()
