@@ -8,6 +8,7 @@ import { query, type Queryable } from '@/app/lib/aurora.ts';
 import { isUuid } from '@/app/lib/uuid.ts';
 import type { RunStatus } from '@/app/lib/runStatus.ts';
 import { isRunStatus } from '@/app/lib/runStatus.ts';
+import { isArtifactType, type ArtifactType } from '@/app/lib/artifactTypes.ts';
 
 export type TriggerType = 'manual' | 'release_tag' | 'workflow_dispatch';
 
@@ -19,6 +20,8 @@ export interface ReleaseRun {
   readonly head_ref: string;
   readonly trigger_type: TriggerType;
   readonly status: RunStatus;
+  /** T1 (spec 022) — the §8.1 types this run generates; immutable after creation. */
+  readonly artifact_types: readonly ArtifactType[];
   readonly langgraph_thread_id: string | null;
   readonly started_at: string;
   readonly completed_at: string | null;
@@ -31,6 +34,7 @@ interface ReleaseRunRow {
   head_ref: string;
   trigger_type: string;
   status: string;
+  artifact_types: string[];
   langgraph_thread_id: string | null;
   started_at: Date | string;
   completed_at: Date | string | null;
@@ -39,6 +43,16 @@ interface ReleaseRunRow {
 function toIso(value: Date | string | null): string | null {
   if (value === null) return null;
   return value instanceof Date ? value.toISOString() : value;
+}
+
+function mapArtifactTypes(values: string[]): readonly ArtifactType[] {
+  // The DB CHECK already pins the value space; re-narrow here so the row type is honest
+  // and schema drift (e.g. a future type added in only one layer) surfaces loudly.
+  const types = values.filter(isArtifactType);
+  if (types.length !== values.length || types.length === 0) {
+    throw new Error(`unexpected artifact_types in DB: ${values.join(', ')}`);
+  }
+  return types;
 }
 
 function mapRow(row: ReleaseRunRow): ReleaseRun {
@@ -54,6 +68,7 @@ function mapRow(row: ReleaseRunRow): ReleaseRun {
     head_ref: row.head_ref,
     trigger_type: row.trigger_type as TriggerType,
     status: row.status,
+    artifact_types: mapArtifactTypes(row.artifact_types),
     langgraph_thread_id: row.langgraph_thread_id,
     started_at: toIso(row.started_at) ?? '',
     completed_at: toIso(row.completed_at),
@@ -61,13 +76,15 @@ function mapRow(row: ReleaseRunRow): ReleaseRun {
 }
 
 const SELECT_COLUMNS =
-  'id, repo, base_ref, head_ref, trigger_type, status, langgraph_thread_id, started_at, completed_at';
+  'id, repo, base_ref, head_ref, trigger_type, status, artifact_types, langgraph_thread_id, started_at, completed_at';
 
 export interface CreateReleaseRunArgs {
   readonly repo: string;
   readonly base_ref: string;
   readonly head_ref: string;
   readonly trigger_type: TriggerType;
+  /** T1 (spec 022) — the run's selection; omitted → the DB DEFAULT (all six §8.1 types). */
+  readonly artifact_types?: readonly ArtifactType[];
   readonly run_metadata?: Readonly<Record<string, unknown>>;
 }
 
@@ -78,10 +95,15 @@ export async function insertReleaseRun(
   db: Queryable = { query },
 ): Promise<ReleaseRun> {
   const id = randomUUID();
+  // artifact_types: COALESCE onto the column DEFAULT keeps a selection-less insert
+  // identical to pre-022 behaviour (all six) while letting callers pass a subset.
   const result = await db.query<ReleaseRunRow>(
     `INSERT INTO release_runs
-       (id, repo, base_ref, head_ref, trigger_type, status, run_metadata_json)
-     VALUES ($1, $2, $3, $4, $5, 'created', $6)
+       (id, repo, base_ref, head_ref, trigger_type, status, artifact_types, run_metadata_json)
+     VALUES ($1, $2, $3, $4, $5, 'created',
+             COALESCE($6::text[],
+                      '{release_blog,changelog_entry,sales_onepager,linkedin_post,demo_script,release_audio_digest}'::text[]),
+             $7)
      RETURNING ${SELECT_COLUMNS}`,
     [
       id,
@@ -89,6 +111,7 @@ export async function insertReleaseRun(
       args.base_ref,
       args.head_ref,
       args.trigger_type,
+      args.artifact_types ? [...args.artifact_types] : null,
       JSON.stringify(args.run_metadata ?? {}),
     ],
   );

@@ -106,9 +106,10 @@ def build_content_generation_graph(
         return state.model_copy(update={"skill_snapshots": snapshots})
 
     def _generate_artifacts_parallel(state: ContentRunState) -> ContentRunState:
-        # T1 (spec 007): fans out the full initial artifact set (PRD §8.1) concurrently,
+        # T1 (spec 007): fans out the initial artifact set (PRD §8.1) concurrently,
         # each on its per-type skill selection (T2). uuid4 is thread-safe, so the parallel
-        # id minting inside the node is race-free in production.
+        # id minting inside the node is race-free in production. T3 (spec 022): only the
+        # run's selected types are fanned out — a deselected type incurs zero model calls.
         artifacts, events = generate_artifacts_parallel(
             state.release_run_id,
             state.approved_features,
@@ -116,6 +117,7 @@ def build_content_generation_graph(
             model_client,
             lambda: uuid4().hex,
             model_id,
+            selected_types=state.artifact_types,
         )
         return state.model_copy(update={"artifacts": artifacts, "usage_events": events})
 

@@ -25,6 +25,10 @@ export default async function MediaPreviewPage({ params }: MediaPageProps) {
   }
 
   const assets = await listMediaAssetsForRun(run.id);
+  // T4 (spec 022): demo media depends on the demo_script artifact type — if it was
+  // deselected at run creation the page says WHY generation is unavailable, rather than
+  // showing a generic "nothing yet" that implies media may still arrive.
+  const demoScriptSelected = run.artifact_types.includes('demo_script');
 
   return (
     <main id="main">
@@ -39,11 +43,19 @@ export default async function MediaPreviewPage({ params }: MediaPageProps) {
       <p>
         {run.repo} · {run.base_ref}…{run.head_ref}
       </p>
-      <p>
-        {assets.length === 0
-          ? 'No demo media has been generated for this run yet.'
-          : `${assets.length} media asset${assets.length === 1 ? '' : 's'}.`}
-      </p>
+      {!demoScriptSelected ? (
+        <p>
+          Demo generation is unavailable for this run: the demo script artifact type was
+          not selected when the run was created, and demo media requires an approved demo
+          script.
+        </p>
+      ) : (
+        <p>
+          {assets.length === 0
+            ? 'No demo media has been generated for this run yet.'
+            : `${assets.length} media asset${assets.length === 1 ? '' : 's'}.`}
+        </p>
+      )}
       <MediaPreview assets={assets} />
     </main>
   );

@@ -147,3 +147,23 @@ def test_normalized_edit_distance_bounds() -> None:
     assert abs(normalized_edit_distance("abc", "abd") - (1 / 3)) < 1e-9
     # Fully different, equal length → 1.0.
     assert normalized_edit_distance("aaaa", "bbbb") == 1.0
+
+
+def test_media_success_rate_not_applicable_when_demo_script_deselected() -> None:
+    # T4 (spec 022) AC: a run that deselected demo_script reports media_success_rate as
+    # not-applicable (score None + an explanatory findings label), even if media counts
+    # are nonzero (they cannot legitimately be — defence against drift).
+    inputs = MetricInputs(total_media=2, ready_media=2, demo_script_selected=False)
+    runs = {r.eval_type: r for r in compute_product_metrics("run-1", inputs)}
+    media = runs[MetricName.MEDIA_SUCCESS_RATE.value]
+    assert media.score is None
+    assert media.findings == {"not_applicable": "demo_script_not_selected"}
+
+
+def test_media_success_rate_unchanged_when_demo_script_selected() -> None:
+    # With demo_script selected (the default) the rate and findings are the pre-022 shape.
+    inputs = MetricInputs(total_media=4, ready_media=3)
+    runs = {r.eval_type: r for r in compute_product_metrics("run-1", inputs)}
+    media = runs[MetricName.MEDIA_SUCCESS_RATE.value]
+    assert media.score == 0.75
+    assert media.findings == {"numerator": 3, "denominator": 4}

@@ -12,6 +12,7 @@ import {
 import { AuroraDeliveryGuidStore } from '@/app/lib/db/webhookDeliveries.ts';
 import { insertReleaseRun } from '@/app/lib/db/releaseRuns.ts';
 import { withTransaction } from '@/app/lib/aurora.ts';
+import { DEFAULT_ARTIFACT_TYPES } from '@/app/lib/artifactTypesDefault.ts';
 
 // HMAC verification + Aurora require the Node.js runtime (not Edge).
 export const runtime = 'nodejs';
@@ -67,6 +68,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         base_ref: delivery.previousTag ?? `${delivery.tag}^`,
         head_ref: delivery.tag,
         trigger_type: 'release_tag',
+        // T2 (spec 022): webhook-created runs carry the configured default selection
+        // (ARTIFACT_TYPES_DEFAULT, validated at startup; unset → all six §8.1 types).
+        artifact_types: DEFAULT_ARTIFACT_TYPES,
         run_metadata: { delivery_guid: deliveryGuid },
       },
       client,

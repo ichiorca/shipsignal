@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server';
 import { generateDemoSchema } from '@/app/lib/mediaTrigger.ts';
 import { parseBody } from '@/app/lib/featureReview.ts';
 import { getFeature } from '@/app/lib/db/features.ts';
+import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
 import { recordApproval } from '@/app/lib/db/approvals.ts';
 import { dispatchMediaGeneration } from '@/app/lib/mediaDispatch.ts';
 
@@ -47,6 +48,24 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
   if (feature.status !== 'approved') {
     return NextResponse.json(
       { error: 'feature is not approved; cannot generate demo media', status: feature.status },
+      { status: 409 },
+    );
+  }
+
+  // T4 (spec 022): demo media derives from an approved demo_script — a run that
+  // deselected demo_script at creation can never have one, so refuse with a user-safe
+  // explanation rather than dispatching a worker that would fail closed downstream.
+  const run = await getReleaseRun(feature.release_run_id);
+  if (run === null) {
+    return NextResponse.json({ error: 'release run not found' }, { status: 404 });
+  }
+  if (!run.artifact_types.includes('demo_script')) {
+    return NextResponse.json(
+      {
+        error:
+          'demo media is unavailable for this run: the demo_script artifact type was not ' +
+          'selected when the run was created',
+      },
       { status: 409 },
     );
   }

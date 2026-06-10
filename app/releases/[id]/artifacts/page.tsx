@@ -9,6 +9,7 @@ import { notFound } from 'next/navigation';
 import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
 import { listArtifactsForRun } from '@/app/lib/db/artifacts.ts';
 import { ArtifactDraftList } from '@/app/components/ArtifactDraftList.ts';
+import { typeLabel } from '@/app/lib/artifactTypes.ts';
 
 // Always reflect the latest drafts for the run; not statically cacheable.
 export const dynamic = 'force-dynamic';
@@ -38,6 +39,12 @@ export default async function ArtifactsPage({ params }: ArtifactsPageProps) {
       <h1>Draft artifacts</h1>
       <p>
         {run.repo} · {run.base_ref}…{run.head_ref}
+      </p>
+      {/* T4 (spec 022): the run's per-run selection — only these types are generated,
+          so a reviewer never wonders where an unselected type's drafts went. */}
+      <p>
+        Artifact types selected for this run:{' '}
+        {run.artifact_types.map((t) => typeLabel(t)).join(', ')}.
       </p>
       <p>
         {artifacts.length === 0

@@ -113,3 +113,15 @@ test('formatDetail surfaces counts only, flagging repo-global scope', () => {
   assert.equal(formatDetail('edit_distance', { sample_count: 1 }), '1 sample');
   assert.equal(formatDetail('approval_latency_seconds', { sample_count: 3 }), '3 samples');
 });
+
+test('media_success_rate is reported not-applicable when demo_script was deselected', () => {
+  // T4/T5 (spec 022) AC: the worker emits score=null + a not_applicable findings label;
+  // the dashboard renders n/a with the explanation, never a fabricated rate.
+  assert.equal(formatScore('media_success_rate', null), 'n/a');
+  assert.equal(
+    formatDetail('media_success_rate', { not_applicable: 'demo_script_not_selected' }),
+    'not applicable — demo script was not selected for this run',
+  );
+  // A selected-but-unmeasured run keeps the plain counts path.
+  assert.equal(formatDetail('media_success_rate', { numerator: 1, denominator: 2 }), '1 / 2');
+});

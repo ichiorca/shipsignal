@@ -67,3 +67,42 @@ test('the section is labelled by its heading', () => {
   assert.ok(section, 'the form section exists');
   assert.equal(doc.getElementById('new-run-heading')?.tagName, 'H2');
 });
+
+// --- T2/T5 (spec 022) — the artifact-type checkbox group ----------------------------
+
+const ALL_SIX = [
+  'release_blog',
+  'changelog_entry',
+  'sales_onepager',
+  'linkedin_post',
+  'demo_script',
+  'release_audio_digest',
+];
+
+test('the artifact-type group is a fieldset with a legend', () => {
+  const doc = render();
+  const fieldset = doc.querySelector('form fieldset');
+  assert.ok(fieldset, 'the checkbox group is a real <fieldset>');
+  assert.equal(fieldset?.querySelector('legend')?.textContent, 'Artifact types');
+});
+
+test('all six §8.1 types render as labelled checkboxes, checked by default', () => {
+  const doc = render();
+  for (const type of ALL_SIX) {
+    const id = `artifact-type-${type}`;
+    const box = doc.getElementById(id);
+    assert.ok(box, `checkbox #${id} exists`);
+    assert.equal(box?.getAttribute('type'), 'checkbox');
+    assert.equal(box?.hasAttribute('checked'), true, `${type} is checked by default`);
+    assert.ok(doc.querySelector(`label[for="${id}"]`), `label for #${id} exists`);
+  }
+});
+
+test('the demo_script checkbox surfaces the demo-media dependency as its hint', () => {
+  const doc = render();
+  const box = doc.getElementById('artifact-type-demo_script');
+  const hintId = box?.getAttribute('aria-describedby');
+  assert.ok(hintId, 'demo_script points at a describing hint');
+  const hint = hintId ? doc.getElementById(hintId) : null;
+  assert.match(hint?.textContent ?? '', /disables demo generation/i);
+});

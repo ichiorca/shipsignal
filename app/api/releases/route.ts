@@ -8,6 +8,7 @@ import { parseCreateReleaseRun } from '@/app/lib/releaseInput.ts';
 import { insertReleaseRun, listReleaseRuns } from '@/app/lib/db/releaseRuns.ts';
 import { dispatchReleaseRunWorkflow } from '@/app/lib/githubDispatch.ts';
 import { parseLimit } from '@/app/lib/readApi.ts';
+import { DEFAULT_ARTIFACT_TYPES } from '@/app/lib/artifactTypesDefault.ts';
 
 // Aurora + GitHub calls require the Node.js runtime (not Edge).
 export const runtime = 'nodejs';
@@ -29,11 +30,14 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // Persist first (status=created) so the run exists even if dispatch is retried.
+  // T1 (spec 022): the validated selection is persisted on the run row (immutable after
+  // creation); an omitted selection falls back to the configured default set.
   const run = await insertReleaseRun({
     repo: parsed.value.repo,
     base_ref: parsed.value.base_ref,
     head_ref: parsed.value.head_ref,
     trigger_type: 'manual',
+    artifact_types: parsed.value.artifact_types ?? DEFAULT_ARTIFACT_TYPES,
   });
 
   try {

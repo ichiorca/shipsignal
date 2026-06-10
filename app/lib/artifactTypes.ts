@@ -1,11 +1,22 @@
-// T4 (spec 007) — canonical artifact-type metadata shared by the draft-list and Gate #2
-// review surfaces (PRD §8.1 initial types). One source of truth for the human label and the
-// display order, so the multi-artifact review groups types consistently and a deferred type
-// (§8.2) never gets a label here — if one ever surfaces it falls back to its raw id, making the
-// anomaly visible rather than hidden. Pure data + helpers; no client/secret concerns.
+// T4 (spec 007) / T1-T2 (spec 022) — canonical artifact-type metadata shared by the
+// draft-list and Gate #2 review surfaces, the run-creation boundary, and the per-run
+// selection UI (PRD §8.1 initial types). One source of truth for the closed type set, the
+// human label, and the display order, so the multi-artifact review groups types
+// consistently and a deferred type (§8.2) never gets a label here — if one ever surfaces
+// it falls back to its raw id, making the anomaly visible rather than hidden. Pure data +
+// helpers; no client/secret concerns (the form imports this client-side).
 
-/** The full initial artifact set (PRD §8.1), in the order the dashboard groups them. */
-export const ARTIFACT_TYPE_ORDER: readonly string[] = [
+/** The closed §8.1 artifact-type vocabulary, as a literal union. */
+export type ArtifactType =
+  | 'release_blog'
+  | 'changelog_entry'
+  | 'sales_onepager'
+  | 'linkedin_post'
+  | 'demo_script'
+  | 'release_audio_digest';
+
+/** The full initial artifact set (PRD §8.1), in canonical order. */
+export const ALL_ARTIFACT_TYPES: readonly ArtifactType[] = [
   'release_blog',
   'changelog_entry',
   'sales_onepager',
@@ -13,6 +24,39 @@ export const ARTIFACT_TYPE_ORDER: readonly string[] = [
   'demo_script',
   'release_audio_digest',
 ];
+
+export function isArtifactType(value: string): value is ArtifactType {
+  return (ALL_ARTIFACT_TYPES as readonly string[]).includes(value);
+}
+
+/** The full initial artifact set (PRD §8.1), in the order the dashboard groups them. */
+export const ARTIFACT_TYPE_ORDER: readonly string[] = ALL_ARTIFACT_TYPES;
+
+/** T2 (spec 022) — parse the ARTIFACT_TYPES_DEFAULT env value (comma-separated §8.1 type
+ *  ids) into the default selection for webhook-created runs. Unset/blank → all six.
+ *  Unknown ids, duplicates, or an explicit-but-empty list THROW so a misconfigured
+ *  deployment fails at startup rather than silently generating the wrong artifact set.
+ *  Pure (the caller passes the env value) so the boundary is unit-testable. */
+export function parseArtifactTypesDefault(raw: string | undefined): readonly ArtifactType[] {
+  if (raw === undefined || raw.trim() === '') {
+    return ALL_ARTIFACT_TYPES;
+  }
+  const entries = raw.split(',').map((entry) => entry.trim());
+  const selected: ArtifactType[] = [];
+  for (const entry of entries) {
+    if (entry === '' || !isArtifactType(entry)) {
+      throw new Error(
+        `ARTIFACT_TYPES_DEFAULT contains an unknown artifact type: "${entry}" ` +
+          `(expected a comma-separated subset of: ${ALL_ARTIFACT_TYPES.join(', ')})`,
+      );
+    }
+    if (selected.includes(entry)) {
+      throw new Error(`ARTIFACT_TYPES_DEFAULT lists "${entry}" more than once`);
+    }
+    selected.push(entry);
+  }
+  return selected;
+}
 
 /** Human label per initial artifact type; unknown/deferred types fall back to the raw id. */
 const TYPE_LABELS: Readonly<Record<string, string>> = {

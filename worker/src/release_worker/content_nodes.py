@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 
 from release_worker.content_models import (
+    ARTIFACT_TYPES,
     ApprovedFeature,
     ArtifactDraft,
     GeneratedArtifact,
@@ -347,14 +348,21 @@ def generate_artifacts_parallel(
     new_artifact_id: Callable[[], str],
     model_id: str,
     prompt_version: str = PROMPT_VERSION,
+    selected_types: tuple[str, ...] = ARTIFACT_TYPES,
 ) -> tuple[tuple[ArtifactDraft, ...], tuple[SkillUsageEvent, ...]]:
-    """Generate the full initial artifact set in parallel via Bedrock Converse (T1, PRD §5.3/§8.1).
+    """Generate the run's SELECTED artifact types in parallel via Bedrock Converse
+    (T1, PRD §5.3/§8.1; T3 spec 022).
 
-    The six initial types (blog, changelog, sales one-pager, social post, demo script, audio
+    The initial types (blog, changelog, sales one-pager, social post, demo script, audio
     digest) fan out concurrently — each on its own per-type skill selection (T2) — because the
     Bedrock calls are independent I/O; running them together keeps the node within the
     latency budget (constitution §6) instead of summing six sequential round-trips. The
     deferred types (PRD §8.2) are never in ``_ARTIFACT_SPECS`` so they are never produced (AC).
+
+    T3 (spec 022) — ``selected_types`` (the run's validated per-run selection, PRD §14.1 /
+    §17.1) filters the fan-out BEFORE any planning: a deselected type is never planned, so
+    it incurs zero Bedrock calls, zero ``artifacts`` rows, and zero telemetry/usage events
+    (AC: deselected types cost nothing). Default = all six, the pre-selection behaviour.
 
     Determinism is preserved despite the concurrency: artifact ids are minted up front on the
     calling thread in canonical order (so ``new_artifact_id`` — a generator in tests — is never
@@ -365,10 +373,15 @@ def generate_artifacts_parallel(
     skill versions/hashes were loaded). Returns ``(artifacts, usage_events)`` for the persist node.
     """
     # Mint ids + resolve each type's skills on the calling thread (deterministic, race-free).
+    # Deselected types are excluded HERE, before id minting or any model I/O (spec 022 AC:
+    # zero spend); canonical _ARTIFACT_SPECS order is kept regardless of selection order.
     planned: list[tuple[_ArtifactSpec, tuple[SkillSnapshot, ...], str]] = [
         (spec, _skills_for_spec(spec, snapshots), new_artifact_id())
         for spec in _ARTIFACT_SPECS
+        if spec.artifact_type in selected_types
     ]
+    if not planned:
+        return (), ()
 
     workers = min(len(planned), _MAX_GENERATION_WORKERS)
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:

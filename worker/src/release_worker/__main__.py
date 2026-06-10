@@ -81,6 +81,7 @@ from release_worker.aurora_skill_learning import (
 from release_worker.bedrock_client import BedrockEmbeddingClient, BedrockModelClient
 from release_worker.checkpointer import build_checkpointer, wants_durable_checkpointer
 from release_worker.content_graph import build_content_generation_graph
+from release_worker.content_models import ArtifactTypeSelection
 from release_worker.content_policy import load_named_entity_policy
 from release_worker.content_state import ContentRunState
 from release_worker.elevenlabs_client import ElevenLabsSynthesizer
@@ -191,6 +192,24 @@ def _repo_for(conn: psycopg.Connection, release_run_id: str) -> str:
     if row is None:
         raise RuntimeError(f"release run {release_run_id} not found")
     return row[0]
+
+
+def _artifact_types_for(
+    conn: psycopg.Connection, release_run_id: str
+) -> tuple[str, ...]:
+    """T3 (spec 022) — the run's artifact-type selection from ``release_runs``.
+
+    P5 (Safety rails): the row value is boundary data — it is re-validated through
+    ``ArtifactTypeSelection`` (non-empty, duplicate-free §8.1 subset) before steering the
+    generation fan-out, so drift between DB and code fails closed, never silently."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT artifact_types FROM release_runs WHERE id = %s", (release_run_id,)
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise RuntimeError(f"release run {release_run_id} not found")
+    return ArtifactTypeSelection(selected=tuple(row[0])).selected
 
 
 def _notify_gate_interrupt(
@@ -354,8 +373,13 @@ def _run_content_generation(
 
     # T1 (spec 015): features_approved → generating_artifacts as the content graph starts.
     repository.advance(release_run_id, RunStatus.GENERATING_ARTIFACTS)
+    # T3 (spec 022): the run's validated selection steers the fan-out — deselected types
+    # never reach the generation node, so they incur zero Bedrock calls or telemetry.
     initial = ContentRunState(
-        release_run_id=release_run_id, thread_id=thread_id, repo=repo
+        release_run_id=release_run_id,
+        thread_id=thread_id,
+        repo=repo,
+        artifact_types=_artifact_types_for(conn, release_run_id),
     )
     result = with_retries(
         lambda: graph.invoke(initial, config), label=f"content run {release_run_id}"

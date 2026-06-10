@@ -10,6 +10,7 @@ import { notFound } from 'next/navigation';
 import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
 import { listArtifactsWithClaimsForRun } from '@/app/lib/db/claims.ts';
 import { ArtifactReview } from '@/app/components/ArtifactReview.ts';
+import { typeLabel } from '@/app/lib/artifactTypes.ts';
 
 // Always reflect the latest artifacts + decision state for the run.
 export const dynamic = 'force-dynamic';
@@ -41,6 +42,12 @@ export default async function ArtifactReviewPage({ params }: ReviewPageProps) {
       <h1>Review artifacts (Gate #2)</h1>
       <p>
         {run.repo} · {run.base_ref}…{run.head_ref}
+      </p>
+      {/* T4 (spec 022): only the run's selected types are generated and reviewed here —
+          run-level approve/reject (in ArtifactReview) operates over exactly this subset. */}
+      <p>
+        Artifact types selected for this run:{' '}
+        {run.artifact_types.map((t) => typeLabel(t)).join(', ')}.
       </p>
       <p>
         {artifacts.length === 0

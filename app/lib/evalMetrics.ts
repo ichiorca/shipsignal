@@ -139,6 +139,11 @@ function asCount(value: unknown): number | null {
 
 /** A short, PII-free detail string from a metric's findings (numerator/denominator or samples). */
 export function formatDetail(name: MetricName, findings: Readonly<Record<string, unknown>>): string {
+  // T4 (spec 022): the worker marks media_success_rate not-applicable when the run
+  // deselected demo_script — say why, instead of a bare dash.
+  if (findings.not_applicable === 'demo_script_not_selected') {
+    return 'not applicable — demo script was not selected for this run';
+  }
   const numerator = asCount(findings.numerator);
   const denominator = asCount(findings.denominator);
   const sampleCount = asCount(findings.sample_count);

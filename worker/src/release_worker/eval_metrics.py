@@ -55,6 +55,10 @@ class MetricInputs:
     engagement_views: int | None = None
     engagement_clicks: int | None = None
     engagement_conversions: int | None = None
+    # T4 (spec 022): whether demo_script was in the run's artifact-type selection. When
+    # False, media_success_rate is NOT APPLICABLE (no demo was ever possible) — distinct
+    # from "selected but zero media attempted", which stays a plain n/a.
+    demo_script_selected: bool = True
 
 
 def normalized_edit_distance(a: str, b: str) -> float:
@@ -178,11 +182,18 @@ def compute_product_metrics(
                 "scope": "repo_global",
             },
         ),
+        # T4 (spec 022): a run that deselected demo_script can never produce demo media,
+        # so its media_success_rate is explicitly NOT APPLICABLE (score None + a findings
+        # label the dashboard renders) rather than a misleading rate or a bare n/a.
         _metric(
             release_run_id,
             MetricName.MEDIA_SUCCESS_RATE,
-            _rate(inputs.ready_media, inputs.total_media),
-            {"numerator": inputs.ready_media, "denominator": inputs.total_media},
+            None
+            if not inputs.demo_script_selected
+            else _rate(inputs.ready_media, inputs.total_media),
+            {"not_applicable": "demo_script_not_selected"}
+            if not inputs.demo_script_selected
+            else {"numerator": inputs.ready_media, "denominator": inputs.total_media},
         ),
         # T1 (spec 021): the §17.1 outcome extension — the run's aggregate engagement
         # totals as eval rows, so "what we got" lands next to "what we spent". Score is

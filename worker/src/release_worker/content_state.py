@@ -18,6 +18,7 @@ from release_worker.claim_models import (
     PolicyFinding,
 )
 from release_worker.content_models import (
+    ARTIFACT_TYPES,
     ApprovedFeature,
     ArtifactDraft,
     SkillSnapshot,
@@ -40,6 +41,10 @@ class ContentRunState(BaseModel):
     release_run_id: str = Field(min_length=1)
     thread_id: str = Field(min_length=1)
     repo: str = Field(min_length=1)
+    # T3 (spec 022) — the run's artifact-type selection (validated against §8.1 by the
+    # entry point via ArtifactTypeSelection before it enters state). Only these types are
+    # fanned out by generate_artifacts_parallel; default = all six (pre-022 behaviour).
+    artifact_types: tuple[str, ...] = ARTIFACT_TYPES
     approved_features: tuple[ApprovedFeature, ...] = ()
     skill_snapshots: tuple[SkillSnapshot, ...] = ()
     artifacts: tuple[ArtifactDraft, ...] = ()

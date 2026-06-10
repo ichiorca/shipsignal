@@ -19,9 +19,12 @@ from __future__ import annotations
 import itertools
 
 import pytest
+from pydantic import ValidationError
 
 from release_worker.content_models import (
+    ARTIFACT_TYPES,
     ApprovedFeature,
+    ArtifactTypeSelection,
     MalformedArtifactOutputError,
     NoApprovedFeaturesError,
     RawSkill,
@@ -338,6 +341,80 @@ def test_generate_rejects_malformed_model_output() -> None:
             model_id="m",
         )
     assert "malformed" in str(exc.value)
+
+
+# --- T3/T5 (spec 022) per-run artifact-type selection ------------------------------
+
+
+def _generate_selected(selected: tuple[str, ...]):
+    client = RecordingModelClient(_artifact_response())
+    art_ids = (f"art-{n}" for n in itertools.count())
+    artifacts, events = generate_artifacts_parallel(
+        _RUN_ID,
+        _approved_features(),
+        _snapshots(),
+        client,
+        lambda: next(art_ids),
+        model_id="m",
+        selected_types=selected,
+    )
+    return artifacts, events, client
+
+
+def test_generate_fans_out_only_selected_types() -> None:
+    """T3/AC: the fan-out covers exactly the run's selection, in canonical order."""
+    selected = ("changelog_entry", "linkedin_post")
+    artifacts, _events, _client = _generate_selected(selected)
+
+    assert tuple(a.artifact_type for a in artifacts) == selected
+
+
+def test_generate_zero_spend_for_deselected_types() -> None:
+    """T3/AC: deselected types incur ZERO model calls and zero usage events — the model
+    client (the source of all Bedrock spend + telemetry rows) is never invoked for them."""
+    selected = ("changelog_entry",)
+    artifacts, events, client = _generate_selected(selected)
+
+    assert len(client.calls) == 1  # one Bedrock call total: the one selected type
+    assert {c.task_name for c in client.calls} == {"generate_changelog_entry"}
+    assert {a.artifact_type for a in artifacts} == set(selected)
+    # Usage events (→ telemetry rows) exist only for artifacts that were generated.
+    generated_ids = {a.artifact_id for a in artifacts}
+    assert all(e.artifact_id in generated_ids for e in events)
+
+
+def test_generate_single_type_selection_runs_alone() -> None:
+    """Boundary: a single-type selection produces exactly one draft, status='draft'."""
+    artifacts, _events, _client = _generate_selected(("demo_script",))
+    assert len(artifacts) == 1
+    assert artifacts[0].artifact_type == "demo_script"
+    assert artifacts[0].status == "draft"
+
+
+def test_generate_default_selection_is_all_six() -> None:
+    """Back-compat: omitting the selection keeps the full §8.1 fan-out (pre-022 behaviour)."""
+    artifacts, _events, _client = _generate()
+    assert {a.artifact_type for a in artifacts} == set(ARTIFACT_TYPES)
+
+
+def test_selection_model_accepts_any_nonempty_subset() -> None:
+    """The boundary model accepts single, partial, and full selections (spec AC)."""
+    assert ArtifactTypeSelection(selected=("release_blog",)).selected == (
+        "release_blog",
+    )
+    assert ArtifactTypeSelection(selected=ARTIFACT_TYPES).selected == ARTIFACT_TYPES
+
+
+def test_selection_model_rejects_empty_unknown_and_duplicates() -> None:
+    """P5: an empty, unknown, or duplicated selection read from the run row fails closed."""
+    with pytest.raises(ValidationError):
+        ArtifactTypeSelection(selected=())
+    with pytest.raises(ValidationError) as unknown:
+        ArtifactTypeSelection(selected=("release_blog", "full_training_video"))
+    assert "unknown artifact types" in str(unknown.value)
+    with pytest.raises(ValidationError) as dupes:
+        ArtifactTypeSelection(selected=("release_blog", "release_blog"))
+    assert "must not repeat" in str(dupes.value)
 
 
 # --- T5 persist reviewable artifacts ----------------------------------------------

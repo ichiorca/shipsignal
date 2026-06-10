@@ -20,7 +20,7 @@ versions that produced it (§18.3 audit trail).
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from release_worker.content_hash import artifact_content_hash
 
@@ -28,6 +28,43 @@ from release_worker.content_hash import artifact_content_hash
 # so unknown fields are rejected rather than silently carried, and values can't be mutated
 # after validation.
 _StrictModel = ConfigDict(frozen=True, extra="forbid")
+
+# T3 (spec 022) — the closed §8.1 artifact-type vocabulary, in canonical order. One Python
+# source of truth, matching app/lib/artifactTypes.ts and the DB CHECK (migration 0022);
+# the generation specs in content_nodes derive their fan-out from this same set.
+ARTIFACT_TYPES: tuple[str, ...] = (
+    "release_blog",
+    "changelog_entry",
+    "sales_onepager",
+    "linkedin_post",
+    "demo_script",
+    "release_audio_digest",
+)
+
+
+class ArtifactTypeSelection(BaseModel):
+    """T3 (spec 022) — a run's validated artifact-type selection, as read from the
+    ``release_runs.artifact_types`` column.
+
+    P5 (Safety rails): a DB row is boundary data like any other — the worker re-validates
+    it (non-empty, duplicate-free subset of the §8.1 set) before the selection steers the
+    generation fan-out, so schema drift or a hand-edited row fails closed rather than
+    silently generating the wrong artifact set.
+    """
+
+    model_config = _StrictModel
+
+    selected: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("selected")
+    @classmethod
+    def _known_and_unique(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        unknown = [t for t in value if t not in ARTIFACT_TYPES]
+        if unknown:
+            raise ValueError(f"unknown artifact types: {', '.join(sorted(unknown))}")
+        if len(set(value)) != len(value):
+            raise ValueError("artifact types must not repeat")
+        return value
 
 
 class RawSkill(BaseModel):

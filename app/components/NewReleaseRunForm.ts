@@ -17,6 +17,11 @@
 
 import { createElement, useState } from 'react';
 import type { ReactElement } from 'react';
+import {
+  ALL_ARTIFACT_TYPES,
+  typeLabel,
+  type ArtifactType,
+} from '../lib/artifactTypes.ts';
 
 type Result =
   | { readonly kind: 'idle' }
@@ -46,8 +51,22 @@ export function NewReleaseRunForm(): ReactElement {
   const [repo, setRepo] = useState('');
   const [baseRef, setBaseRef] = useState('');
   const [headRef, setHeadRef] = useState('');
+  // T2 (spec 022) — the per-run artifact-type selection; all six checked by default so the
+  // pre-selection behaviour (generate everything) stays the path of least resistance.
+  const [selectedTypes, setSelectedTypes] = useState<readonly ArtifactType[]>(
+    ALL_ARTIFACT_TYPES,
+  );
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<Result>({ kind: 'idle' });
+
+  function toggleType(type: ArtifactType): void {
+    setSelectedTypes((current) =>
+      current.includes(type)
+        ? current.filter((t) => t !== type)
+        : // Keep canonical §8.1 order regardless of click order.
+          ALL_ARTIFACT_TYPES.filter((t) => current.includes(t) || t === type),
+    );
+  }
 
   async function submit(): Promise<void> {
     // Instant client-side check for the obvious "empty field" case; the server's zod
@@ -56,6 +75,9 @@ export function NewReleaseRunForm(): ReactElement {
     if (repo.trim() === '') missing.push('Repository is required.');
     if (baseRef.trim() === '') missing.push('Base ref is required.');
     if (headRef.trim() === '') missing.push('Head ref is required.');
+    if (selectedTypes.length === 0) {
+      missing.push('Select at least one artifact type.');
+    }
     if (missing.length > 0) {
       setResult({ kind: 'error', messages: missing });
       return;
@@ -71,6 +93,7 @@ export function NewReleaseRunForm(): ReactElement {
           repo: repo.trim(),
           base_ref: baseRef.trim(),
           head_ref: headRef.trim(),
+          artifact_types: selectedTypes,
         }),
       });
       const body = await readJson(response);
@@ -81,12 +104,14 @@ export function NewReleaseRunForm(): ReactElement {
         setRepo('');
         setBaseRef('');
         setHeadRef('');
+        setSelectedTypes(ALL_ARTIFACT_TYPES);
       } else if (response.status === 502 && runId !== null) {
         // Soft success: the run row exists; only the Actions dispatch failed.
         setResult({ kind: 'created', runId, dispatched: false });
         setRepo('');
         setBaseRef('');
         setHeadRef('');
+        setSelectedTypes(ALL_ARTIFACT_TYPES);
       } else if (response.status === 400 && Array.isArray(body.details)) {
         setResult({
           kind: 'error',
@@ -133,6 +158,52 @@ export function NewReleaseRunForm(): ReactElement {
         onChange: (e: { target: { value: string } }) => onValue(e.target.value),
       }),
       createElement('span', { id: hintId }, hint),
+    );
+  }
+
+  // T2 (spec 022) — the artifact-type checkbox group (WCAG 2.2 AA): a <fieldset> with a
+  // <legend> names the group; each native checkbox is labelled; the demo_script row carries
+  // a describing hint surfacing the cross-feature dependency (demo media needs the script).
+  function artifactTypeCheckbox(type: ArtifactType): ReactElement {
+    const id = `artifact-type-${type}`;
+    const isDemoScript = type === 'demo_script';
+    const hintId = isDemoScript ? `${id}-hint` : undefined;
+    return createElement(
+      'p',
+      { key: type },
+      createElement('input', {
+        id,
+        name: 'artifact_types',
+        type: 'checkbox',
+        value: type,
+        checked: selectedTypes.includes(type),
+        disabled: pending,
+        'aria-describedby': hintId,
+        onChange: () => toggleType(type),
+      }),
+      createElement('label', { htmlFor: id }, typeLabel(type)),
+      isDemoScript
+        ? createElement(
+            'span',
+            { id: hintId },
+            'Needed for demo media — deselecting it disables demo generation for this run.',
+          )
+        : null,
+    );
+  }
+
+  function artifactTypeGroup(): ReactElement {
+    return createElement(
+      'fieldset',
+      null,
+      createElement('legend', null, 'Artifact types'),
+      createElement(
+        'p',
+        { id: 'artifact-types-hint' },
+        'Which artifacts this run generates. Deselected types cost no model spend and ' +
+          'never appear at review.',
+      ),
+      ...ALL_ARTIFACT_TYPES.map((type) => artifactTypeCheckbox(type)),
     );
   }
 
@@ -210,6 +281,7 @@ export function NewReleaseRunForm(): ReactElement {
         setHeadRef,
         'v1.3.0',
       ),
+      artifactTypeGroup(),
       createElement(
         'button',
         { type: 'submit', disabled: pending },

@@ -126,7 +126,24 @@ class AuroraMetricInputsReader:
             edit_distances=self._edit_distances(),
             approval_latencies_seconds=self._approval_latencies(),
             notify_to_decision_latencies_seconds=self._notify_to_decision_latencies(),
+            demo_script_selected=self._demo_script_selected(),
         )
+
+    def _demo_script_selected(self) -> bool:
+        """T4 (spec 022) — whether demo_script is in the run's artifact-type selection.
+
+        When it is not, media_success_rate is reported not-applicable (the run could never
+        produce demo media). A missing row/value defaults to True (pre-022 behaviour) so
+        the metric never silently flips to n/a on a read hiccup."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT artifact_types FROM release_runs WHERE id = %s",
+                (self._release_run_id,),
+            )
+            row = cur.fetchone()
+        if row is None or row[0] is None:
+            return True
+        return "demo_script" in tuple(row[0])
 
     def _scalar(self, sql: str, params: tuple[object, ...] | None = None) -> int:
         """Run a run-scoped count. Defaults the single param to the run id for the common case."""
