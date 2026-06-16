@@ -11,6 +11,7 @@
 
 import { createElement, useState } from 'react';
 import type { ReactElement } from 'react';
+import { clientFetch } from '../lib/clientFetch.ts';
 
 type SeedResult =
   | { readonly kind: 'idle' }
@@ -25,7 +26,7 @@ export function LoadSampleButton(): ReactElement {
     setPending(true);
     setResult({ kind: 'idle' });
     try {
-      const response = await fetch('/api/demo/seed', { method: 'POST' });
+      const response = await clientFetch('/api/demo/seed', { method: 'POST' });
       const body = (await response.json().catch(() => ({}))) as {
         run_id?: unknown;
         error?: unknown;

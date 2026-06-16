@@ -94,7 +94,7 @@ class VideoAssembler(Protocol):
     it at runtime; the unit gate uses ``InMemoryVideoAssembler``."""
 
     def assemble(
-        self, capture: CaptureResult, narration: NarrationResult
+        self, capture: CaptureResult, narration: NarrationResult, media_id: str
     ) -> AssembledMedia: ...
 
 
@@ -208,11 +208,11 @@ class InMemoryVideoAssembler:
         self.assembled: list[tuple[CaptureResult, NarrationResult]] = []
 
     def assemble(
-        self, capture: CaptureResult, narration: NarrationResult
+        self, capture: CaptureResult, narration: NarrationResult, media_id: str
     ) -> AssembledMedia:
         self.assembled.append((capture, narration))
         return AssembledMedia(
-            local_path=f"{capture.video_local_path}.muxed.mp4",
+            local_path=f"{capture.video_local_path}.{media_id}.muxed.mp4",
             content_type=self._content_type,
             duration_seconds=max(capture.duration_seconds, 0.0),
         )

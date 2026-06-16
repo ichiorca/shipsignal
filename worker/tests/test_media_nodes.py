@@ -273,7 +273,7 @@ def test_assemble_refuses_non_materialized_audio() -> None:
         materialized=False,
     )
     with pytest.raises(ValueError, match="materialized"):
-        assemble_video_ffmpeg(_capture(), partial, assembler)
+        assemble_video_ffmpeg(_capture(), partial, assembler, "media-1")
     assert assembler.assembled == []  # nothing was muxed from a partial stream
 
 
@@ -281,7 +281,7 @@ def test_assemble_runs_on_materialized_audio() -> None:
     synth = InMemoryNarrationSynthesizer()
     narration = generate_narration("Welcome.", synth, _CONFIG)
     assembler = InMemoryVideoAssembler()
-    media = assemble_video_ffmpeg(_capture(), narration, assembler)
+    media = assemble_video_ffmpeg(_capture(), narration, assembler, "media-1")
     assert isinstance(media, AssembledMedia)
     assert len(assembler.assembled) == 1
 

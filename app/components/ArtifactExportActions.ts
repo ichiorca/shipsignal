@@ -12,6 +12,7 @@
 
 import { createElement, useState } from 'react';
 import type { ReactElement } from 'react';
+import { clientFetch } from '../lib/clientFetch.ts';
 import { useReviewerName } from '../lib/useReviewerName.ts';
 
 export interface ArtifactExportActionsProps {
@@ -49,7 +50,7 @@ export function ArtifactExportActions({
   async function copyMarkdown(): Promise<void> {
     setStatus(`Copying the approved markdown for "${artifactLabel}"…`);
     try {
-      const response = await fetch(`${exportBase}?format=markdown`);
+      const response = await clientFetch(`${exportBase}?format=markdown`);
       if (!response.ok) {
         setStatus(
           response.status === 409
@@ -79,7 +80,7 @@ export function ArtifactExportActions({
     setPublishing(true);
     setStatus(`${actionLabel} for "${artifactLabel}"…`);
     try {
-      const response = await fetch(`/api/artifacts/${artifactId}/publish/${destination}`, {
+      const response = await clientFetch(`/api/artifacts/${artifactId}/publish/${destination}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reviewer: effectiveReviewer.trim() }),
@@ -117,7 +118,7 @@ export function ArtifactExportActions({
     setPublishing(true);
     setStatus(`Preparing the Show HN submission for "${artifactLabel}"…`);
     try {
-      const response = await fetch(`/api/artifacts/${artifactId}/publish/hackernews`, {
+      const response = await clientFetch(`/api/artifacts/${artifactId}/publish/hackernews`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),

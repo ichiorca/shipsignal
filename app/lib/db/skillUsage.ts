@@ -4,7 +4,12 @@
 // skill. P5 / constitution §5: rows carry provenance metadata only (no prompt/evidence/output), so
 // nothing sensitive reaches the client. All queries are parameterised.
 
+import { unstable_cache } from 'next/cache';
 import { query } from '@/app/lib/aurora.ts';
+
+/** The Capabilities page does not need live-to-the-second usage; cache the aggregate briefly so
+ *  repeated renders within the window reuse it instead of re-scanning skill_usage_events. */
+const SKILL_USAGE_REVALIDATE_SECONDS = 60;
 
 /** Per-skill usage rollup as the Capabilities page renders it. */
 export interface SkillUsageRow {
@@ -32,8 +37,9 @@ function asInt(value: string | number | null): number {
 }
 
 /** Per-skill usage, most-used first. Aggregated in SQL (GROUP BY skill_name) so the page ships a
- *  compact rollup, not raw per-event rows. Bounded by `limit`. */
-export async function listSkillUsage(limit = 100): Promise<readonly SkillUsageRow[]> {
+ *  compact rollup, not raw per-event rows. Bounded by `limit`. Backed by ix_skill_usage_events_
+ *  skill_name (migration 0029) so the GROUP BY is index-driven rather than a seq-scan. */
+async function querySkillUsage(limit = 100): Promise<readonly SkillUsageRow[]> {
   const result = await query<RawRow>(
     `SELECT skill_name,
             COUNT(*)                          AS usage_count,
@@ -59,3 +65,8 @@ export async function listSkillUsage(limit = 100): Promise<readonly SkillUsageRo
           : row.last_used,
   }));
 }
+
+/** Cached (≤60s) wrapper over `querySkillUsage`. Same signature — callers are unaffected. */
+export const listSkillUsage = unstable_cache(querySkillUsage, ['skill-usage'], {
+  revalidate: SKILL_USAGE_REVALIDATE_SECONDS,
+});

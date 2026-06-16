@@ -19,9 +19,27 @@ from collections.abc import Callable
 from typing import TypeVar
 
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import (
+    ClientError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
+from botocore.exceptions import (
+    ConnectionError as BotoConnectionError,
+)
 
 logger = logging.getLogger("release_worker.bedrock")
+
+# Socket/endpoint failures (read/connect timeout, connection reset, DNS) are transient: botocore's
+# own retries are disabled, so a hung or dropped Bedrock connection would otherwise abort the graph
+# node. These are NOT ClientError subclasses, so they must be caught separately and retried.
+_RETRYABLE_NETWORK_ERRORS = (
+    ReadTimeoutError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    BotoConnectionError,
+)
 
 _MAX_ATTEMPTS = 5
 _BASE_BACKOFF_SECONDS = 0.5
@@ -61,8 +79,10 @@ def _is_throttling(err: ClientError) -> bool:
 def call_with_throttle_retry(operation: Callable[[], _T], *, what: str) -> _T:
     """Run ``operation`` (one Bedrock API call), retrying ThrottlingException with jittered
     backoff up to ``_MAX_ATTEMPTS`` attempts. Non-throttle ``ClientError``s propagate at once.
-    ``what`` names the call for the (no-PII) backoff log line."""
-    last_error: ClientError | None = None
+    A transient socket/endpoint failure (read/connect timeout, connection reset, DNS) is also
+    retried with the same backoff; any other error (including a non-throttle ``ClientError``)
+    propagates at once. ``what`` names the call for the (no-PII) backoff log line."""
+    last_error: Exception | None = None
     for attempt in range(_MAX_ATTEMPTS):
         try:
             return operation()
@@ -72,6 +92,13 @@ def call_with_throttle_retry(operation: Callable[[], _T], *, what: str) -> _T:
             last_error = err
             delay = jittered_backoff(attempt, 0.5)
             logger.warning("%s throttled; backing off %.2fs", what, delay)
+            time.sleep(delay)
+        except _RETRYABLE_NETWORK_ERRORS as err:
+            if attempt == _MAX_ATTEMPTS - 1:
+                raise
+            last_error = err
+            delay = jittered_backoff(attempt, 0.5)
+            logger.warning("%s connection error; backing off %.2fs", what, delay)
             time.sleep(delay)
     # Unreachable: the loop either returns or raises, but keep type-checkers happy.
     raise RuntimeError(f"{what} exhausted retries") from last_error

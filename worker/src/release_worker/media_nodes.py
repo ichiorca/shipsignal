@@ -245,6 +245,7 @@ def assemble_video_ffmpeg(
     capture: CaptureResult,
     narration: NarrationResult,
     assembler: VideoAssembler,
+    media_id: str,
 ) -> AssembledMedia:
     """Assemble the capture + narration into final media with ffmpeg (T5, PRD §5.4).
 
@@ -255,7 +256,7 @@ def assemble_video_ffmpeg(
         raise ValueError(
             "narration audio is not fully materialized; refusing ffmpeg assembly"
         )
-    return assembler.assemble(capture, narration)
+    return assembler.assemble(capture, narration, media_id)
 
 
 def store_media_s3(

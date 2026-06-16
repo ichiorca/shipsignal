@@ -42,9 +42,11 @@ class FfmpegVideoAssembler:
         return cls(work_dir=work_dir, ffmpeg_bin=os.environ.get("FFMPEG_BIN", "ffmpeg"))
 
     def assemble(
-        self, capture: CaptureResult, narration: NarrationResult
+        self, capture: CaptureResult, narration: NarrationResult, media_id: str
     ) -> AssembledMedia:
-        out_path = self._work_dir / "demo.mp4"
+        # Per-media output name: two media runs sharing this work dir (a reused/self-hosted runner)
+        # must not clobber each other's demo.mp4 mid-upload. media_id is unique per generation.
+        out_path = self._work_dir / f"{media_id}.mp4"
         # -shortest stops at the shorter stream; re-encode audio to AAC for MP4 compatibility.
         args = [
             self._ffmpeg,

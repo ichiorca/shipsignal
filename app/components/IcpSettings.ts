@@ -8,6 +8,7 @@
 import { createElement, useState } from 'react';
 import type { ReactElement } from 'react';
 import type { IcpSegment } from '@/app/lib/brandBrain.ts';
+import { clientFetch } from '../lib/clientFetch.ts';
 import { labeledInput, labeledTextarea, labeledSelect, splitLines } from './settingsControls.ts';
 
 export interface IcpSettingsProps {
@@ -63,7 +64,7 @@ export function IcpSettings({ segments }: IcpSettingsProps): ReactElement {
     setPending(true);
     setMessage('Saving segment…');
     try {
-      const response = await fetch('/api/settings/icp', {
+      const response = await clientFetch('/api/settings/icp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -91,7 +92,7 @@ export function IcpSettings({ segments }: IcpSettingsProps): ReactElement {
   async function remove(id: string): Promise<void> {
     setMessage('Deleting…');
     try {
-      const response = await fetch(`/api/settings/icp/${id}`, { method: 'DELETE' });
+      const response = await clientFetch(`/api/settings/icp/${id}`, { method: 'DELETE' });
       if (response.ok) window.location.reload();
       else setMessage(`Could not delete (status ${response.status}).`);
     } catch {

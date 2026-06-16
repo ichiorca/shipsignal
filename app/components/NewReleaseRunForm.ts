@@ -17,6 +17,7 @@
 
 import { createElement, useState } from 'react';
 import type { ReactElement } from 'react';
+import { clientFetch } from '../lib/clientFetch.ts';
 import {
   ALL_ARTIFACT_TYPES,
   typeLabel,
@@ -86,7 +87,7 @@ export function NewReleaseRunForm(): ReactElement {
     setPending(true);
     setResult({ kind: 'idle' });
     try {
-      const response = await fetch('/api/releases', {
+      const response = await clientFetch('/api/releases', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

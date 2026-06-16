@@ -20,14 +20,19 @@ export interface EnsureDeliveryInput {
   readonly targetUrl: string;
 }
 
-/** Claim (or re-read) the ledger row for one delivery. Idempotent: the deterministic
- *  delivery_id is UNIQUE, so concurrent/replayed dispatches land on ONE row. Returns whether
- *  the delivery has already succeeded — the caller skips the POST entirely in that case
- *  (at-least-once dispatch, at-most-once successful send per delivery id). */
+/** Atomically CLAIM the ledger row for one delivery for THIS dispatcher. The deterministic
+ *  delivery_id is UNIQUE, so concurrent/replayed dispatches land on ONE row; the claim is a single
+ *  `UPDATE ... RETURNING` that wins only when the delivery is undelivered AND not already in-flight,
+ *  so two dispatchers racing the same approval (per-artifact dispatch vs. the run-level sweep) can
+ *  never both POST. `shouldDispatch` is false when the row is already delivered OR another dispatch
+ *  claimed it within the lease window. A `last_status = -1` sentinel marks "in flight"; a finished
+ *  attempt overwrites it with the real status (or NULL on a network error), and a crashed dispatch's
+ *  stale claim is reclaimable after the 2-minute lease — so legitimate retries are preserved
+ *  (at-least-once dispatch via the sweep, at-most-once successful POST per delivery id). */
 export async function ensureDelivery(
   input: EnsureDeliveryInput,
   db: Queryable = { query },
-): Promise<{ readonly alreadyDelivered: boolean }> {
+): Promise<{ readonly shouldDispatch: boolean }> {
   await db.query(
     `INSERT INTO outbound_webhook_deliveries
        (delivery_id, release_run_id, artifact_id, event_type, target_url)
@@ -35,11 +40,16 @@ export async function ensureDelivery(
      ON CONFLICT (delivery_id) DO NOTHING`,
     [input.deliveryId, input.releaseRunId, input.artifactId, input.eventType, input.targetUrl],
   );
-  const existing = await db.query<{ delivered_at: string | Date | null }>(
-    `SELECT delivered_at FROM outbound_webhook_deliveries WHERE delivery_id = $1`,
+  const claim = await db.query<{ delivery_id: string }>(
+    `UPDATE outbound_webhook_deliveries
+        SET last_status = -1, updated_at = now()
+      WHERE delivery_id = $1
+        AND delivered_at IS NULL
+        AND (last_status IS DISTINCT FROM -1 OR updated_at < now() - interval '2 minutes')
+      RETURNING delivery_id`,
     [input.deliveryId],
   );
-  return { alreadyDelivered: (existing.rows[0]?.delivered_at ?? null) !== null };
+  return { shouldDispatch: claim.rows.length > 0 };
 }
 
 /** Record one dispatch outcome on the ledger row: attempts accumulate across dispatches;

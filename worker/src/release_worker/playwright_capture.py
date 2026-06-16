@@ -11,6 +11,7 @@ uses ``InMemoryPlaywrightCapturer`` so no browser launches in tests.
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -51,37 +52,47 @@ class PlaywrightDemoCapturer:
         frames_dir = Path(tempfile.mkdtemp(prefix="capture-", dir=self._work_dir))
         frames: list[CaptureFrame] = []
 
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(
-                headless=True,
-                # CI runners (Docker) default /dev/shm to 64MB; without this flag Chromium can
-                # crash or emit corrupt frames mid-capture. Standard headless-CI hardening.
-                args=["--disable-dev-shm-usage"],
-            )
-            context = browser.new_context(
-                record_video_dir=str(frames_dir),
-                viewport={"width": 1280, "height": 720},
-            )
-            page = context.new_page()
-            page.set_default_timeout(_DEFAULT_TIMEOUT_MS)
-            video = page.video  # type: ignore[attr-defined]
-            try:
-                for index, step in enumerate(click_path.steps):
-                    self._run_step(page, step)
-                    shot = frames_dir / f"frame-{index:03d}.png"
-                    page.screenshot(path=str(shot))
-                    frames.append(CaptureFrame(step_index=index, local_path=str(shot)))
-            finally:
-                context.close()  # flush the recorded video
-                browser.close()
+        try:
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(
+                    headless=True,
+                    # CI runners (Docker) default /dev/shm to 64MB; without this flag Chromium can
+                    # crash or emit corrupt frames mid-capture. Standard headless-CI hardening.
+                    args=["--disable-dev-shm-usage"],
+                )
+                context = browser.new_context(
+                    record_video_dir=str(frames_dir),
+                    viewport={"width": 1280, "height": 720},
+                )
+                page = context.new_page()
+                page.set_default_timeout(_DEFAULT_TIMEOUT_MS)
+                video = page.video  # type: ignore[attr-defined]
+                try:
+                    for index, step in enumerate(click_path.steps):
+                        self._run_step(page, step)
+                        shot = frames_dir / f"frame-{index:03d}.png"
+                        page.screenshot(path=str(shot))
+                        frames.append(
+                            CaptureFrame(step_index=index, local_path=str(shot))
+                        )
+                finally:
+                    context.close()  # flush the recorded video
+                    browser.close()
 
-        # Playwright mints a hashed video filename — resolve the ACTUAL path rather than assuming
-        # a fixed name, and fail fast if no file was produced instead of returning a dangling path.
-        video_local_path = (
-            video.path() if video is not None else str(frames_dir / "capture.webm")  # type: ignore[attr-defined]
-        )
-        if not Path(video_local_path).exists():
-            raise RuntimeError("Playwright capture produced no video file")
+            # Playwright mints a hashed video filename — resolve the ACTUAL path rather than
+            # assuming a fixed name, and fail fast if no file was produced instead of returning a
+            # dangling path.
+            video_local_path = (
+                video.path() if video is not None else str(frames_dir / "capture.webm")  # type: ignore[attr-defined]
+            )
+            if not Path(video_local_path).exists():
+                raise RuntimeError("Playwright capture produced no video file")
+        except BaseException:
+            # On ANY failure the frames/video in this dir are orphaned (no CaptureResult references
+            # them), so remove it — otherwise failed captures accumulate on a reused runner. Success
+            # keeps the dir: the result's paths point into it (the caller cleans up post-S3-upload).
+            shutil.rmtree(frames_dir, ignore_errors=True)
+            raise
 
         return CaptureResult(
             video_local_path=str(video_local_path),

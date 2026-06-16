@@ -63,6 +63,17 @@ def is_transient_error(exc: BaseException) -> bool:
     if isinstance(exc, TimeoutError):
         return True
 
+    # botocore socket/endpoint failures (ReadTimeoutError, ConnectTimeoutError,
+    # EndpointConnectionError, ConnectionError) are not TimeoutError subclasses and carry no
+    # status/code — match them by class name so this module stays import-free.
+    if type(exc).__name__ in {
+        "ReadTimeoutError",
+        "ConnectTimeoutError",
+        "EndpointConnectionError",
+        "ConnectionError",
+    }:
+        return True
+
     # botocore ClientError shape: exc.response['Error']['Code'].
     response = getattr(exc, "response", None)
     if isinstance(response, dict):

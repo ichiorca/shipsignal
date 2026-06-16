@@ -98,15 +98,28 @@ export async function decideChannelPublish(
     return { status: 200, body: { published: true, dryRun: false, destination: cmd.channel, url: result.url } };
   } catch {
     // The outward call failed — clear the dedupe marker so a retry can proceed, then report 502.
-    // If the clear ALSO fails, log it: the dedupe key is now stuck and a retry would return a false
-    // "already published" — an operator must delete the approvals row by hand.
+    let dedupeCleared = true;
     await deps.deleteApproval(approvalId).catch((e: unknown) => {
+      // The clear ALSO failed: the dedupe key is now stuck, so a naive retry would short-circuit to
+      // a false "already published" (the idempotent 200 above). Surface this distinctly (500 +
+      // retryBlocked) instead of a 502 "retry me", so the UI does not invite a retry that silently
+      // no-ops, and alerting can fire — an operator must delete the approvals row by hand.
+      dedupeCleared = false;
       console.error('failed to clear publish dedupe marker; retry will be blocked', {
         channel: cmd.channel,
         artifactId: cmd.artifactId,
         message: e instanceof Error ? e.message : String(e),
       });
     });
+    if (!dedupeCleared) {
+      return {
+        status: 500,
+        body: {
+          error: `publishing to ${cmd.channel} failed and the retry guard is stuck; an operator must clear it before retrying`,
+          retryBlocked: true,
+        },
+      };
+    }
     return { status: 502, body: { error: `publishing to ${cmd.channel} failed; check the server logs and retry` } };
   }
 }

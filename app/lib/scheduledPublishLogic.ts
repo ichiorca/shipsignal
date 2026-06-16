@@ -14,6 +14,8 @@ export interface DrainSummary {
   readonly sent: number;
   readonly failed: number;
   readonly dryRun: number;
+  /** Rows reaped from a stuck 'sending' state (a prior drain died mid-dispatch) into 'failed'. */
+  readonly expired: number;
 }
 
 /** Authorize the cron drain endpoint from its Authorization header + the configured secret.
@@ -45,6 +47,10 @@ export interface DrainDeps {
   readonly publish: (channel: ScheduleChannel, snapshot: ApprovedSnapshotView) => Promise<ChannelPublishResult>;
   readonly markSent: (id: string, url: string | null) => Promise<void>;
   readonly markFailed: (id: string, error: string) => Promise<void>;
+  /** Reap rows stuck in 'sending' (a prior drain crashed after claiming but before terminating
+   *  them) by marking them 'failed' so an operator can re-schedule. Returns how many were reaped.
+   *  Marking 'failed' (not re-claiming) preserves at-most-once: a public post is never re-sent. */
+  readonly expireStale?: () => Promise<number>;
 }
 
 /** Drain due schedules. Each row is CLAIMED (pending → sending) before any send, so a crash can't
@@ -57,6 +63,9 @@ export async function drainDueSchedules(
   limit: number,
   deps: DrainDeps,
 ): Promise<DrainSummary> {
+  // Reap any rows wedged in 'sending' by a prior crashed drain BEFORE claiming new work, so they
+  // surface as 'failed' (re-schedulable) instead of blocking their (artifact, channel) slot forever.
+  const expired = deps.expireStale ? await deps.expireStale() : 0;
   const claimed = await deps.claimDue(now.toISOString(), limit);
   let sent = 0;
   let failed = 0;
@@ -94,5 +103,5 @@ export async function drainDueSchedules(
       if (o === 'dry') dryRun += 1;
     }
   }
-  return { processed: claimed.length, sent, failed, dryRun };
+  return { processed: claimed.length, sent, failed, dryRun, expired };
 }

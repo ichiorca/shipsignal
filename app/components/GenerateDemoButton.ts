@@ -15,6 +15,7 @@
 
 import { createElement, useState } from 'react';
 import type { ReactElement } from 'react';
+import { clientFetch } from '../lib/clientFetch.ts';
 import { useReviewerName } from '../lib/useReviewerName.ts';
 
 export interface GenerateDemoButtonProps {
@@ -39,7 +40,7 @@ export function GenerateDemoButton({
     setPending(true);
     setStatus(`Starting demo generation for "${featureLabel}"…`);
     try {
-      const response = await fetch(`/api/features/${featureId}/generate-demo`, {
+      const response = await clientFetch(`/api/features/${featureId}/generate-demo`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reviewer: reviewer.trim() }),

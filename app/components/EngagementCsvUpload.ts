@@ -18,6 +18,7 @@
 
 import { createElement, useState } from 'react';
 import type { ReactElement } from 'react';
+import { clientFetch } from '../lib/clientFetch.ts';
 import { buildCsvTemplate } from '../lib/engagementIngest.ts';
 
 /** The (id, type) pairs the template prefills — passed down by the server component so no
@@ -90,7 +91,7 @@ export function EngagementCsvUpload({
     try {
       const body = new FormData();
       body.append('file', file);
-      const response = await fetch(`/api/releases/${releaseRunId}/engagement`, {
+      const response = await clientFetch(`/api/releases/${releaseRunId}/engagement`, {
         method: 'POST',
         body,
       });

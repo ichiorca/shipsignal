@@ -11,6 +11,7 @@
 
 import { createElement, useEffect, useState } from 'react';
 import type { ReactElement } from 'react';
+import { clientFetch } from '../lib/clientFetch.ts';
 import { useReviewerName } from '../lib/useReviewerName.ts';
 import { formatTimestamp } from '../lib/displayFormat.ts';
 import type { ScheduledPublishView, ScheduleChannel } from '../lib/scheduledPublish.ts';
@@ -99,7 +100,7 @@ export function SchedulePublish({
     setBusy(true);
     setStatus('Scheduling…');
     try {
-      const response = await fetch(`/api/artifacts/${artifactId}/schedule/${channel}`, {
+      const response = await clientFetch(`/api/artifacts/${artifactId}/schedule/${channel}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reviewer: reviewer.trim(), scheduledAt: iso }),
@@ -122,7 +123,7 @@ export function SchedulePublish({
     setBusy(true);
     setStatus('Cancelling…');
     try {
-      const response = await fetch(`/api/artifacts/${artifactId}/schedule/${channel}`, { method: 'DELETE' });
+      const response = await clientFetch(`/api/artifacts/${artifactId}/schedule/${channel}`, { method: 'DELETE' });
       if (response.ok) {
         setStatus('Cancelled. Reloading…');
         window.location.reload();

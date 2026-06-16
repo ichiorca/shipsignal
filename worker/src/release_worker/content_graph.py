@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 from uuid import uuid4
 
+import psycopg
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
@@ -128,7 +129,10 @@ def build_content_generation_graph(
                 for f in state.approved_features
             )
             return format_voice_context(voice_source.retrieve(query, channel=None))
-        except Exception:  # noqa: BLE001 — grounding is advisory; never block the gate path
+        except (OSError, ValueError, RuntimeError, psycopg.Error):
+            # Grounding is advisory; degrade gracefully on the expected transient/data errors
+            # (DB/network/retrieval). A genuine programming error (Type/Attribute/Name) is NOT
+            # caught here so it surfaces instead of silently generating without brand grounding.
             logger.warning(
                 "voice-context retrieval failed; generating without brand grounding"
             )

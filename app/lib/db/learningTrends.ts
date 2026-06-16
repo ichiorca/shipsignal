@@ -32,21 +32,30 @@ function asNumOrNull(value: string | number | null): number | null {
  *  to the most recent `limit` runs that have any eval at all. */
 export async function listRunTrendPoints(limit = 30): Promise<readonly RunTrendPoint[]> {
   const result = await query<TrendRow>(
+    // `latest` keeps each run's most-recent score per metric (backed by ix_eval_runs_learning_types,
+    // migration 0029); `per_run` pivots those two metrics into one row per run via conditional
+    // aggregate, then a single JOIN to release_runs — replacing the prior two correlated scalar
+    // subqueries + EXISTS that re-probed per row.
     `WITH latest AS (
        SELECT DISTINCT ON (release_run_id, eval_type)
               release_run_id, eval_type, score
          FROM eval_runs
         WHERE eval_type IN ('edit_distance', 'feature_rejection_rate')
         ORDER BY release_run_id, eval_type, created_at DESC
+     ),
+     per_run AS (
+       SELECT release_run_id,
+              MAX(score) FILTER (WHERE eval_type = 'edit_distance')          AS edit_distance,
+              MAX(score) FILTER (WHERE eval_type = 'feature_rejection_rate') AS feature_rejection_rate
+         FROM latest
+        GROUP BY release_run_id
      )
      SELECT r.id AS release_run_id,
             r.started_at,
-            (SELECT score FROM latest
-              WHERE release_run_id = r.id AND eval_type = 'edit_distance')          AS edit_distance,
-            (SELECT score FROM latest
-              WHERE release_run_id = r.id AND eval_type = 'feature_rejection_rate') AS feature_rejection_rate
-       FROM release_runs r
-      WHERE EXISTS (SELECT 1 FROM latest WHERE release_run_id = r.id)
+            p.edit_distance,
+            p.feature_rejection_rate
+       FROM per_run p
+       JOIN release_runs r ON r.id = p.release_run_id
       ORDER BY r.started_at DESC
       LIMIT $1`,
     [limit],

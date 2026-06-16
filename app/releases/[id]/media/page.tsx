@@ -26,14 +26,18 @@ export default async function MediaPreviewPage({ params }: MediaPageProps) {
     notFound();
   }
 
-  const assets = await listMediaAssetsForRun(run.id);
+  // Independent of each other (both only need run.id) — fetch in parallel to avoid a serial
+  // round-trip waterfall to Aurora.
+  const [assets, features] = await Promise.all([
+    listMediaAssetsForRun(run.id),
+    listFeaturesForRun(run.id),
+  ]);
   // T4 (spec 022): demo media depends on the demo_script artifact type — if it was
   // deselected at run creation the page says WHY generation is unavailable, rather than
   // showing a generic "nothing yet" that implies media may still arrive.
   const demoScriptSelected = run.artifact_types.includes('demo_script');
   // Demo media is generated per APPROVED feature (from its Gate#2-approved demo script), so the
   // trigger is offered for each approved feature of the run (spec 014, PRD §14.5).
-  const features = await listFeaturesForRun(run.id);
   const approvedFeatures = features.filter((feature) => feature.status === 'approved');
 
   return (

@@ -147,6 +147,9 @@ export async function postWithRetry(
       }
     } catch (err) {
       // Network-level failure: keep a class-of-error message only (no URL, no payload).
+      // err.name (the class, e.g. "TypeError") NOT err.message — the message can contain the target
+      // URL/secret (constitution §5: no secrets in the DB ledger or logs). Diagnosability is traded
+      // for secret-hygiene here deliberately; the audit ledger keeps only the class of failure.
       lastError = err instanceof Error ? `request failed: ${err.name}` : 'request failed';
     }
   }

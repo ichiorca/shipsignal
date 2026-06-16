@@ -8,6 +8,7 @@
 import { createElement, useState } from 'react';
 import type { ReactElement } from 'react';
 import type { IcpSegment, MessagingClaim } from '@/app/lib/brandBrain.ts';
+import { clientFetch } from '../lib/clientFetch.ts';
 import { labeledInput, labeledTextarea, labeledSelect, splitLines } from './settingsControls.ts';
 
 export interface MessagingSettingsProps {
@@ -70,7 +71,7 @@ export function MessagingSettings({ claims, segments }: MessagingSettingsProps):
     setPending(true);
     setMessage('Saving claim…');
     try {
-      const response = await fetch('/api/settings/messaging', {
+      const response = await clientFetch('/api/settings/messaging', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -93,7 +94,7 @@ export function MessagingSettings({ claims, segments }: MessagingSettingsProps):
   async function remove(id: string): Promise<void> {
     setMessage('Deleting…');
     try {
-      const response = await fetch(`/api/settings/messaging/${id}`, { method: 'DELETE' });
+      const response = await clientFetch(`/api/settings/messaging/${id}`, { method: 'DELETE' });
       if (response.ok) window.location.reload();
       else setMessage(`Could not delete (status ${response.status}).`);
     } catch {

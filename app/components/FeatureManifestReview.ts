@@ -18,6 +18,7 @@
 
 import { createElement, useRef, useState } from 'react';
 import type { ReactElement } from 'react';
+import { clientFetch } from '../lib/clientFetch.ts';
 import type { FeatureCluster } from '@/app/lib/db/features.ts';
 import { ConfirmButton } from './ConfirmButton.ts';
 import { useReviewerName } from '../lib/useReviewerName.ts';
@@ -100,7 +101,7 @@ export function FeatureManifestReview({
       const editedValue = edits[feature.id];
       const isEdit = decision === 'edited';
       const url = `/api/features/${feature.id}${isEdit ? '' : `/${decision === 'approved' ? 'approve' : 'reject'}`}`;
-      const response = await fetch(url, {
+      const response = await clientFetch(url, {
         method: isEdit ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
@@ -129,7 +130,7 @@ export function FeatureManifestReview({
     setPending(true);
     setStatus(`Submitting the manifest as ${decision}; the run is resuming…`);
     try {
-      const response = await fetch(`/api/releases/${releaseRunId}/resume`, {
+      const response = await clientFetch(`/api/releases/${releaseRunId}/resume`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reviewer, decision, thread_id: threadId }),

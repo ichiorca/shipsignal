@@ -45,14 +45,15 @@ export async function dispatchArtifactApprovedWebhook(
     if (snapshot === null) return 'skipped-no-snapshot';
 
     const deliveryId = deliveryIdFor(ARTIFACT_APPROVED_EVENT, artifactId);
-    const { alreadyDelivered } = await ensureDelivery({
+    const { shouldDispatch } = await ensureDelivery({
       deliveryId,
       releaseRunId: snapshot.release_run_id,
       artifactId: snapshot.artifact_id,
       eventType: ARTIFACT_APPROVED_EVENT,
       targetUrl: config.url,
     });
-    if (alreadyDelivered) return 'skipped-already-delivered';
+    // Already delivered, or another dispatcher (sweep vs. per-artifact) holds the in-flight claim.
+    if (!shouldDispatch) return 'skipped-already-delivered';
 
     const rawBody = JSON.stringify(buildArtifactApprovedPayload(snapshot, deliveryId));
     const timestamp = String(Math.floor(Date.now() / 1000));
@@ -86,6 +87,8 @@ export async function dispatchArtifactApprovedWebhook(
     // Fail-soft: the approval already succeeded; surface the class of error and move on.
     console.error('outbound webhook dispatch errored', {
       artifactId,
+      // err.name (class) not err.message: the message can carry the target URL/secret, which must
+      // never reach a log line (constitution §5). Metadata only: ids + class of failure.
       message: err instanceof Error ? err.name : 'unknown',
     });
     return 'failed';
@@ -117,6 +120,8 @@ export async function sweepApprovedArtifactWebhooks(
   } catch (err) {
     console.error('outbound webhook sweep errored', {
       releaseRunId,
+      // err.name (class) not err.message: the message can carry the target URL/secret, which must
+      // never reach a log line (constitution §5). Metadata only: ids + class of failure.
       message: err instanceof Error ? err.name : 'unknown',
     });
     return { dispatched: 0, failed: 0 };

@@ -12,6 +12,7 @@ import type { IcpSegment, VoiceExemplar } from '@/app/lib/brandBrain.ts';
 // Relative (not '@/') for the VALUE import so the dependency-free `node --test` a11y harness
 // resolves it at runtime; the bundler alias is only safe for erased type imports.
 import { ALL_ARTIFACT_TYPES, typeLabel } from '../lib/artifactTypes.ts';
+import { clientFetch } from '../lib/clientFetch.ts';
 import { labeledInput, labeledTextarea, labeledSelect } from './settingsControls.ts';
 
 export interface VoiceExemplarSettingsProps {
@@ -91,7 +92,7 @@ export function VoiceExemplarSettings({
     setPending(true);
     setMessage('Saving exemplar…');
     try {
-      const response = await fetch('/api/settings/voice', {
+      const response = await clientFetch('/api/settings/voice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -114,7 +115,7 @@ export function VoiceExemplarSettings({
   async function remove(id: string): Promise<void> {
     setMessage('Deleting…');
     try {
-      const response = await fetch(`/api/settings/voice/${id}`, { method: 'DELETE' });
+      const response = await clientFetch(`/api/settings/voice/${id}`, { method: 'DELETE' });
       if (response.ok) window.location.reload();
       else setMessage(`Could not delete (status ${response.status}).`);
     } catch {

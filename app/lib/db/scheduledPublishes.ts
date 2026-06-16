@@ -127,6 +127,29 @@ export async function claimDuePending(
   return result.rows.map(mapRow);
 }
 
+/** Reap rows wedged in 'sending' by a prior drain that crashed after claiming but before marking
+ *  the row sent/failed (a Vercel/Actions kill, OOM, or hung channel call). After `staleMinutes`
+ *  (well beyond a healthy drain), flip them to 'failed' so an operator can re-schedule — the slot
+ *  is no longer blocked by the UNIQUE(artifact_id, channel) constraint. Marking 'failed' rather
+ *  than re-claiming preserves at-most-once for a public post: a row that may already have been
+ *  sent is never re-published; the operator decides whether to retry. Returns the count reaped. */
+export async function expireStaleSending(
+  staleMinutes = 30,
+  db: Queryable = { query },
+): Promise<number> {
+  const result = await db.query<{ id: string }>(
+    `UPDATE scheduled_publishes
+        SET status = 'failed', attempt_count = attempt_count + 1,
+            last_error = 'dispatch did not finish (worker stopped mid-send); re-schedule to retry',
+            updated_at = now()
+      WHERE status = 'sending'
+        AND updated_at < now() - make_interval(mins => $1)
+      RETURNING id`,
+    [staleMinutes],
+  );
+  return result.rows.length;
+}
+
 /** Mark a CLAIMED row sent (terminal success), recording the live post URL when the channel
  *  returned one. Guarded on status='sending' so it only ever terminates a row this drain claimed. */
 export async function markScheduleSent(
@@ -200,13 +223,17 @@ export async function cancelScheduleByArtifactChannel(
   return (result.rowCount ?? 0) > 0;
 }
 
-/** Upcoming + recent schedules for the Distribute queue (soonest pending first, then recent). */
+/** Upcoming + recent schedules for the Distribute queue (soonest pending first, then recent).
+ *  Bounded to live rows (pending/sending/failed) plus the last 30 days of terminal history, so the
+ *  scan doesn't grow unbounded with every sent/cancelled row ever created as the table accumulates. */
 export async function listUpcomingSchedules(
   limit = 50,
   db: Queryable = { query },
 ): Promise<readonly ScheduledPublishView[]> {
   const result = await db.query<RawRow>(
     `SELECT ${COLUMNS} FROM scheduled_publishes
+      WHERE status IN ('pending', 'sending', 'failed')
+         OR scheduled_at >= now() - interval '30 days'
       ORDER BY (status = 'pending') DESC, scheduled_at ASC
       LIMIT $1`,
     [limit],

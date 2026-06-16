@@ -9,7 +9,12 @@
 // the rest of the batch.
 
 import 'server-only';
-import { claimDuePending, markScheduleSent, markScheduleFailed } from '@/app/lib/db/scheduledPublishes.ts';
+import {
+  claimDuePending,
+  markScheduleSent,
+  markScheduleFailed,
+  expireStaleSending,
+} from '@/app/lib/db/scheduledPublishes.ts';
 import { getApprovedSnapshotForArtifact } from '@/app/lib/db/approvedSnapshots.ts';
 import { getArtifactStatus } from '@/app/lib/db/claims.ts';
 import { buildXPost, buildLinkedInPost } from '@/app/lib/channelPublish.ts';
@@ -33,6 +38,7 @@ const DISPATCH: Record<
 export async function runDueSchedules(now: Date, limit = 25): Promise<DrainSummary> {
   return drainDueSchedules(now, limit, {
     claimDue: claimDuePending,
+    expireStale: () => expireStaleSending(),
     getSnapshot: getApprovedSnapshotForArtifact,
     getStatus: getArtifactStatus,
     publish: (channel, snapshot) => {

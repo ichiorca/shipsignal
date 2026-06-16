@@ -190,7 +190,9 @@ def build_media_generation_graph(
     def _assemble_video_ffmpeg(state: MediaRunState) -> MediaRunState:
         # Refuses to run until the narration audio is fully materialized (the AC).
         assert state.capture is not None and state.narration is not None
-        media = assemble_video_ffmpeg(state.capture, state.narration, assembler)
+        media = assemble_video_ffmpeg(
+            state.capture, state.narration, assembler, state.media_id
+        )
         return state.model_copy(update={"assembled_media": media})
 
     def _store_media_s3(state: MediaRunState) -> MediaRunState:

@@ -20,6 +20,7 @@
 
 import { createElement, useRef, useState } from 'react';
 import type { ReactElement } from 'react';
+import { clientFetch } from '../lib/clientFetch.ts';
 import type { ArtifactWithClaims, ArtifactClaimView } from '@/app/lib/db/claims.ts';
 import type { ScheduledPublishView } from '../lib/scheduledPublish.ts';
 import { typeLabel, groupByType } from '../lib/artifactTypes.ts';
@@ -144,7 +145,7 @@ export function ArtifactReview({
       const isEdit = decision === 'edited';
       const action = decision === 'approved' ? 'approve' : 'reject';
       const url = `/api/artifacts/${artifact.id}${isEdit ? '' : `/${action}`}`;
-      const response = await fetch(url, {
+      const response = await clientFetch(url, {
         method: isEdit ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
@@ -173,7 +174,7 @@ export function ArtifactReview({
     setPending(true);
     setStatus(`Submitting the artifact review as ${decision}; the run is resuming…`);
     try {
-      const response = await fetch(`/api/releases/${releaseRunId}/resume-artifacts`, {
+      const response = await clientFetch(`/api/releases/${releaseRunId}/resume-artifacts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reviewer, decision, thread_id: threadId }),

@@ -143,6 +143,21 @@ class ElevenLabsSynthesizer:
                     logger.warning(
                         "ElevenLabs 429 (%s); backing off %.1fs", code, backoff
                     )
+                except (urllib.error.URLError, TimeoutError) as err:
+                    # Transient network failure (socket timeout, connection reset, DNS): retry with
+                    # the same backoff rather than aborting synthesis. HTTPError is handled above, so
+                    # this only catches non-HTTP transport errors (elevenlabs-rules: retry transient
+                    # network errors, not only 429s).
+                    if attempt == _MAX_ATTEMPTS:
+                        logger.error(
+                            "ElevenLabs TTS network error after %d attempts", attempt
+                        )
+                        raise NarrationSynthesisError(
+                            "narration synthesis failed (network error)"
+                        ) from err
+                    logger.warning(
+                        "ElevenLabs network error; backing off %.1fs", backoff
+                    )
             self._sleep(min(backoff, _MAX_BACKOFF_SECONDS))
             backoff = min(backoff * 2, _MAX_BACKOFF_SECONDS)
         raise NarrationSynthesisError("narration synthesis exhausted retries")

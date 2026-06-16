@@ -53,7 +53,7 @@ const NOW = new Date('2026-06-15T12:30:00.000Z');
 test('all due rows sent → summary counts them', async () => {
   const marks: Marks = { sent: [], failed: [] };
   const summary = await drainDueSchedules(NOW, 25, deps({}, marks));
-  assert.deepEqual(summary, { processed: 2, sent: 2, failed: 0, dryRun: 0 });
+  assert.deepEqual(summary, { processed: 2, sent: 2, failed: 0, dryRun: 0, expired: 0 });
   assert.deepEqual(marks.sent, ['s1', 's2']);
 });
 
@@ -112,7 +112,26 @@ test('dry-run sends are counted', async () => {
 test('no due rows → all zeros', async () => {
   const marks: Marks = { sent: [], failed: [] };
   const summary = await drainDueSchedules(NOW, 25, deps({ claimDue: async () => [] }, marks));
-  assert.deepEqual(summary, { processed: 0, sent: 0, failed: 0, dryRun: 0 });
+  assert.deepEqual(summary, { processed: 0, sent: 0, failed: 0, dryRun: 0, expired: 0 });
+});
+
+test('stale sending rows are reaped (counted as expired) before claiming new work', async () => {
+  const marks: Marks = { sent: [], failed: [] };
+  const order: string[] = [];
+  const summary = await drainDueSchedules(
+    NOW,
+    25,
+    deps(
+      {
+        expireStale: async () => { order.push('expire'); return 3; },
+        claimDue: async () => { order.push('claim'); return []; },
+      },
+      marks,
+    ),
+  );
+  assert.equal(summary.expired, 3);
+  // Reaping MUST run before claiming so a wedged slot is freed for this same drain.
+  assert.deepEqual(order, ['expire', 'claim']);
 });
 
 test('drain auth gate: unset secret disabled; wrong/missing bearer unauthorized; match ok', () => {

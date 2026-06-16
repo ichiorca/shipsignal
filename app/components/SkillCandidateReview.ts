@@ -23,6 +23,7 @@ import type {
   SkillCandidateView,
   SupportingSignalView,
 } from '@/app/lib/db/skillCandidates.ts';
+import { clientFetch } from '../lib/clientFetch.ts';
 import { EMPTY } from '../lib/displayFormat.ts';
 import { lineDiff, type DiffLine } from '../lib/lineDiff.ts';
 import { ConfirmButton } from './ConfirmButton.ts';
@@ -154,7 +155,7 @@ export function SkillCandidateReview({
     setPending(true);
     setStatus(`Recording ${decision}; the run is resuming…`);
     try {
-      const response = await fetch(`/api/releases/${releaseRunId}/resume-skill`, {
+      const response = await clientFetch(`/api/releases/${releaseRunId}/resume-skill`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reviewer, decision, thread_id: threadId }),

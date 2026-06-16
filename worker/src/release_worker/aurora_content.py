@@ -13,6 +13,7 @@ records provenance into Aurora; the canonical skill stays the repo SKILL.md.
 from __future__ import annotations
 
 import json
+import uuid
 
 import psycopg
 
@@ -168,15 +169,37 @@ class AuroraArtifactSink:
             )
 
     def record_skill_usage(self, event: SkillUsageEvent) -> None:
+        # Idempotent under node retry/resume: derive a deterministic id from the usage identity so a
+        # replayed node re-inserts the SAME row and ON CONFLICT (id) DO NOTHING drops the duplicate.
+        # (artifact_id/skill_snapshot_id are nullable, so a UNIQUE over them would not dedupe — a
+        # stable id keyed on the PRIMARY KEY does. Guards the §18.3 provenance ledger and the
+        # skill-learning event counts against double-counting on a transient retry.)
+        usage_id = uuid.uuid5(
+            uuid.NAMESPACE_OID,
+            "|".join(
+                str(part)
+                for part in (
+                    event.release_run_id,
+                    event.artifact_id,
+                    event.graph_name,
+                    event.node_name,
+                    event.skill_name,
+                    event.usage_type,
+                    event.content_hash,
+                )
+            ),
+        )
         with self._conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO skill_usage_events (
-                    release_run_id, artifact_id, graph_name, node_name,
+                    id, release_run_id, artifact_id, graph_name, node_name,
                     skill_snapshot_id, skill_name, skill_version, content_hash, usage_type
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
                 """,
                 (
+                    usage_id,
                     event.release_run_id,
                     event.artifact_id,
                     event.graph_name,
