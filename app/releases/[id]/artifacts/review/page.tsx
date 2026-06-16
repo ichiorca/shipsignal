@@ -9,6 +9,9 @@
 import { notFound } from 'next/navigation';
 import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
 import { listArtifactsWithClaimsForRun } from '@/app/lib/db/claims.ts';
+import { listSchedulesForRun } from '@/app/lib/db/scheduledPublishes.ts';
+import { suggestNextWindow, type ScheduledPublishView } from '@/app/lib/scheduledPublish.ts';
+import { publishMode } from '@/app/lib/channelDispatch.ts';
 import { ArtifactReview } from '@/app/components/ArtifactReview.ts';
 import { typeLabel } from '@/app/lib/artifactTypes.ts';
 
@@ -26,16 +29,31 @@ export default async function ArtifactReviewPage({ params }: ReviewPageProps) {
     notFound();
   }
 
-  const artifacts = await listArtifactsWithClaimsForRun(run.id);
+  // Two independent reads in parallel — the artifacts+claims and the run's schedules.
+  const [artifacts, scheduleRows] = await Promise.all([
+    listArtifactsWithClaimsForRun(run.id),
+    listSchedulesForRun(run.id),
+  ]);
   const blocked = artifacts.filter((a) => a.status === 'blocked').length;
   const approved = artifacts.filter((a) => a.status === 'approved').length;
+
+  // Phase 4 — approve-then-schedule context for the inline schedule controls. Group the run's
+  // schedules by artifact so each approved post shows its own pending/sent state.
+  const schedulingEnabled = publishMode() === 'scheduled';
+  const schedulesByArtifact = scheduleRows.reduce<Record<string, ScheduledPublishView[]>>(
+    (acc, row) => {
+      (acc[row.artifact_id] ??= []).push(row);
+      return acc;
+    },
+    {},
+  );
 
   return (
     <main id="main">
       <nav aria-label="Breadcrumb">
-        <a href="/">All runs</a>
+        <a href="/">All launches</a>
         {' › '}
-        <a href={`/releases/${run.id}`}>Release run</a>
+        <a href={`/releases/${run.id}`}>Launch</a>
         {' › '}
         <span aria-current="page">Review artifacts (Gate #2)</span>
       </nav>
@@ -66,6 +84,9 @@ export default async function ArtifactReviewPage({ params }: ReviewPageProps) {
         releaseRunId={run.id}
         threadId={run.langgraph_thread_id}
         artifacts={artifacts}
+        schedulingEnabled={schedulingEnabled}
+        suggestedTimeIso={suggestNextWindow(new Date())}
+        schedulesByArtifact={schedulesByArtifact}
       />
     </main>
   );

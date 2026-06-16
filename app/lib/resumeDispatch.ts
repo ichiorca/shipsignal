@@ -49,6 +49,7 @@ export async function dispatchResume(args: ResumeDispatchArgs): Promise<void> {
       'X-GitHub-Api-Version': '2022-11-28',
       'Content-Type': 'application/json',
     },
+    signal: AbortSignal.timeout(10_000),
     body: JSON.stringify({
       ref,
       inputs: {

@@ -64,3 +64,24 @@ def test_distinct_excerpts_get_distinct_embeddings() -> None:
         _RUN_ID, _redacted(), InMemoryEvidenceSink(), HashingEmbeddingClient()
     )
     assert records[0].embedding != records[1].embedding
+
+
+def test_evidence_id_is_deterministic_across_runs() -> None:
+    # The id is derived from run + source lineage + redacted content (NOT a random uuid), so a
+    # re-run of the persist node mints the SAME ids — the precondition for S3-key reuse (no
+    # orphaned blob) and the ON CONFLICT no-op (no duplicate Aurora row).
+    first = persist_evidence(_RUN_ID, _redacted(), InMemoryEvidenceSink())
+    second = persist_evidence(_RUN_ID, _redacted(), InMemoryEvidenceSink())
+    assert [r.evidence_id for r in first] == [r.evidence_id for r in second]
+
+
+def test_persist_is_idempotent_on_resink() -> None:
+    # Re-persisting the same redacted evidence into the SAME sink converges (dedupe on the
+    # deterministic id) rather than duplicating rows — mirrors the durable sink's ON CONFLICT
+    # DO NOTHING so a retried/resumed run cannot double-count evidence.
+    sink = InMemoryEvidenceSink()
+    persist_evidence(_RUN_ID, _redacted(), sink)
+    persist_evidence(_RUN_ID, _redacted(), sink)
+    ids = [r.evidence_id for r in sink.records]
+    assert len(ids) == len(_redacted())
+    assert len(set(ids)) == len(ids)

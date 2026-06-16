@@ -10,7 +10,7 @@
 import { NextResponse } from 'next/server';
 import { skillResumeSchema, parseBody } from '@/app/lib/skillReview.ts';
 import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
-import { recordApproval } from '@/app/lib/db/approvals.ts';
+import { recordApprovalIdempotent, deleteApproval } from '@/app/lib/db/approvals.ts';
 import { dispatchResume } from '@/app/lib/resumeDispatch.ts';
 
 export const runtime = 'nodejs';
@@ -42,14 +42,25 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
     return NextResponse.json({ error: 'release run not found' }, { status: 404 });
   }
 
-  // Record the manifest-level decision (immutable audit trail), then resume the skill graph thread.
-  await recordApproval({
-    target_type: 'skill_candidate_manifest',
-    target_id: releaseRunId,
-    decision: parsed.value.decision,
-    reviewer: parsed.value.reviewer,
-    notes: parsed.value.notes,
-  });
+  // Record the manifest-level decision (immutable audit trail), then resume the skill graph
+  // thread. Idempotency-guarded: a double-click / retry must not record a second decision or
+  // dispatch a second worker for the same gate. `null` means this gate was already resumed.
+  const approvalId = await recordApprovalIdempotent(
+    {
+      target_type: 'skill_candidate_manifest',
+      target_id: releaseRunId,
+      decision: parsed.value.decision,
+      reviewer: parsed.value.reviewer,
+      notes: parsed.value.notes,
+    },
+    `skill_candidate_manifest:${releaseRunId}`,
+  );
+  if (approvalId === null) {
+    return NextResponse.json(
+      { release_run_id: releaseRunId, decision: parsed.value.decision, resumed: true },
+      { status: 200 },
+    );
+  }
 
   try {
     await dispatchResume({
@@ -60,8 +71,9 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
       reviewer: parsed.value.reviewer,
     });
   } catch (err) {
-    // The decision is recorded but the resume dispatch didn't start; report 502 so the operator
-    // can retry. Log without leaking secrets (the helper already redacts).
+    // The resume dispatch didn't start; clear the dedupe marker so a retry can proceed, then
+    // report 502. Log without leaking secrets (the helper already redacts).
+    await deleteApproval(approvalId).catch((e: unknown) => console.error("failed to clear dedupe marker; retry may be blocked", { message: e instanceof Error ? e.message : String(e) }));
     console.error('gate#3 resume dispatch failed', {
       runId: releaseRunId,
       message: String(err),

@@ -68,6 +68,7 @@ export async function dispatchArtifactApprovedWebhook(
           [SIGNATURE_HEADER]: signature,
         },
         body: rawBody,
+        signal: AbortSignal.timeout(10_000),
       }),
     );
     await recordDeliveryAttempt(deliveryId, outcome);

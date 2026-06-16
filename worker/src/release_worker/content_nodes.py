@@ -216,6 +216,31 @@ _ARTIFACT_SPECS: tuple[_ArtifactSpec, ...] = (
         "short narrated internal audio-digest script",
         "audio-digest-format",
     ),
+    # Operator decision 2026-06-09 (PRD §8.1): two stakeholder-facing additions, each on
+    # its own format skill like every other type.
+    _ArtifactSpec(
+        "customer_email",
+        "customer-facing email announcement of the release",
+        "customer-email-format",
+    ),
+    _ArtifactSpec(
+        "battlecard_delta",
+        "sales battlecard delta describing what changed versus the prior competitive story",
+        "battlecard-delta-format",
+    ),
+    # Path B / Phase 2 (operator decision 2026-06-15): the public social channels named in the
+    # product tagline, each on its own format skill. HN content is generated here; submitting it
+    # is assisted (Show HN has no submit API), not autopublished.
+    _ArtifactSpec(
+        "x_post",
+        "short X (Twitter) announcement post (single post, may suggest a brief thread)",
+        "x-post-format",
+    ),
+    _ArtifactSpec(
+        "hackernews_post",
+        "Show HN post for Hacker News — factual title plus a plain technical description",
+        "hackernews-post-format",
+    ),
 )
 
 # Bound the fan-out so a large artifact set can't open an unbounded number of concurrent
@@ -277,15 +302,20 @@ def _render_skills(snapshots: tuple[SkillSnapshot, ...]) -> str:
     return "\n\n".join(blocks)
 
 
-def _system_prompt(artifact_label: str, snapshots: tuple[SkillSnapshot, ...]) -> str:
+def _system_prompt(
+    artifact_label: str, snapshots: tuple[SkillSnapshot, ...], voice_context: str = ""
+) -> str:
     skills = _render_skills(snapshots)
     guidance = f"\n\n--- SKILL GUIDANCE ---\n{skills}" if skills else ""
+    # The brand brain (ICP + company voice exemplars + approved messaging), retrieved by relevance
+    # to this release (migration 0025). Empty when no brand brain is configured → prompt unchanged.
+    voice = f"\n\n{voice_context}" if voice_context else ""
     return (
         f"You write release content. Generate a {artifact_label} from the APPROVED "
         "release features supplied by the user. Use ONLY those features; never invent "
         "capabilities, metrics, percentages, customer names, or availability dates. "
         "Follow the brand voice and format guidance. Return strict JSON matching the "
-        f"provided schema (a title and a Markdown body).{guidance}"
+        f"provided schema (a title and a Markdown body).{guidance}{voice}"
     )
 
 
@@ -294,10 +324,12 @@ def _idempotency_key(
     release_run_id: str,
     features: tuple[ApprovedFeature, ...],
     snapshots: tuple[SkillSnapshot, ...],
+    voice_context: str = "",
 ) -> str:
     """Deterministic dedupe key for one generation call (aws-bedrock-rules: Converse has no
     idempotency of its own). Same run + artifact type + approved-feature set + loaded skill
-    versions → same key, so a retried job neither re-bills nor double-generates."""
+    versions + brand-brain grounding → same key, so a retried job neither re-bills nor
+    double-generates, while a changed voice/ICP/messaging grounding correctly regenerates."""
     digest = hashlib.sha256()
     digest.update(artifact_type.encode("utf-8"))
     digest.update(b"\x00")
@@ -310,6 +342,9 @@ def _idempotency_key(
     for snap in sorted(snapshots, key=lambda s: s.skill_name):
         digest.update(b"\x00s")
         digest.update(snap.content_hash.encode("utf-8"))
+    if voice_context:
+        digest.update(b"\x00v")
+        digest.update(voice_context.encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -319,20 +354,24 @@ def _generate_one(
     features: tuple[ApprovedFeature, ...],
     type_snapshots: tuple[SkillSnapshot, ...],
     model_client: ModelClient,
+    voice_context: str = "",
 ) -> GeneratedArtifact:
     """Run one artifact type's Bedrock Converse call and validate the untrusted output.
 
-    The prompt carries only approved features (built from redacted evidence) and this type's
-    selected skill bodies — nothing raw (§5). A malformed payload fails closed as
+    The prompt carries only approved features (built from redacted evidence), this type's
+    selected skill bodies, and the brand-brain grounding (ICP + retrieved company-voice exemplars
+    + approved messaging) — nothing raw (§5). A malformed payload fails closed as
     ``MalformedArtifactOutputError`` (AC4) without echoing the offending content. Pure of any
     id minting or list mutation so it is safe to run concurrently across types (T1)."""
     messages = [{"role": "user", "content": _render_features(features)}]
     raw = model_client.generate_json(
         f"generate_{spec.artifact_type}",
-        _system_prompt(spec.label, type_snapshots),
+        _system_prompt(spec.label, type_snapshots, voice_context),
         messages,
         _GENERATE_SCHEMA,
-        _idempotency_key(spec.artifact_type, release_run_id, features, type_snapshots),
+        _idempotency_key(
+            spec.artifact_type, release_run_id, features, type_snapshots, voice_context
+        ),
     )
     try:
         return GeneratedArtifact.model_validate(raw)
@@ -349,6 +388,7 @@ def generate_artifacts_parallel(
     model_id: str,
     prompt_version: str = PROMPT_VERSION,
     selected_types: tuple[str, ...] = ARTIFACT_TYPES,
+    voice_context: str = "",
 ) -> tuple[tuple[ArtifactDraft, ...], tuple[SkillUsageEvent, ...]]:
     """Generate the run's SELECTED artifact types in parallel via Bedrock Converse
     (T1, PRD §5.3/§8.1; T3 spec 022).
@@ -390,7 +430,12 @@ def generate_artifacts_parallel(
         generated = list(
             executor.map(
                 lambda item: _generate_one(
-                    item[0], release_run_id, features, item[1], model_client
+                    item[0],
+                    release_run_id,
+                    features,
+                    item[1],
+                    model_client,
+                    voice_context,
                 ),
                 planned,
             )

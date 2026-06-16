@@ -7,26 +7,25 @@
 
 import { listSkills } from '@/app/lib/db/skills.ts';
 import { listSkillCandidates } from '@/app/lib/db/skillCandidates.ts';
+import { PageHeader } from '@/app/components/PageHeader.ts';
 import { SkillAdmin } from '@/app/components/SkillAdmin.ts';
 
 // Always reflect the latest snapshots + candidate states.
 export const dynamic = 'force-dynamic';
 
-export default async function SkillAdminPage() {
+export default async function SkillsPage() {
   const [skills, candidates] = await Promise.all([listSkills(), listSkillCandidates()]);
+  const count =
+    `${skills.length === 1 ? '1 active skill' : `${skills.length} active skills`} · ` +
+    `${candidates.length === 1 ? '1 revision candidate' : `${candidates.length} revision candidates`}`;
 
   return (
     <main id="main">
-      <p>
-        <a href="/">← All release runs</a>
-      </p>
-      <h1>Skill admin</h1>
-      <p>
-        {skills.length === 1 ? '1 active skill' : `${skills.length} active skills`} ·{' '}
-        {candidates.length === 1
-          ? '1 revision candidate'
-          : `${candidates.length} revision candidates`}
-      </p>
+      <PageHeader
+        eyebrow="Skill library"
+        title="Skills"
+        description={`Playbook versions — the active repo skills and the revisions the system proposes. ${count}.`}
+      />
       <SkillAdmin skills={skills} candidates={candidates} />
     </main>
   );

@@ -126,6 +126,7 @@ class AuroraClaimSink:
                     id, artifact_id, claim_text, claim_type, support_status,
                     risk_level, checker_metadata_json
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
                 """,
                 (
                     record.claim_id,

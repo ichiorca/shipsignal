@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { decisionSchema, parseBody } from '@/app/lib/featureReview.ts';
 import { getFeature, setFeatureStatus } from '@/app/lib/db/features.ts';
 import { recordApproval } from '@/app/lib/db/approvals.ts';
+import { withTransaction } from '@/app/lib/aurora.ts';
 
 export const runtime = 'nodejs';
 
@@ -37,14 +38,22 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
     return NextResponse.json({ error: 'feature not found' }, { status: 404 });
   }
 
-  await recordApproval({
-    target_type: 'feature',
-    target_id: featureId,
-    decision: 'rejected',
-    reviewer: parsed.value.reviewer,
-    notes: parsed.value.notes,
+  // Record the decision and apply the status ATOMICALLY (mirrors the approve route): the audit
+  // row and the status flip commit together, so a crash between them can't leave a 'rejected'
+  // audit row on a feature still 'pending_review' that then flows into content generation.
+  await withTransaction(async (client) => {
+    await recordApproval(
+      {
+        target_type: 'feature',
+        target_id: featureId,
+        decision: 'rejected',
+        reviewer: parsed.value.reviewer,
+        notes: parsed.value.notes,
+      },
+      client,
+    );
+    await setFeatureStatus(featureId, 'rejected', parsed.value.notes, client);
   });
-  await setFeatureStatus(featureId, 'rejected', parsed.value.notes);
 
   return NextResponse.json({ feature_id: featureId, status: 'rejected' }, { status: 200 });
 }

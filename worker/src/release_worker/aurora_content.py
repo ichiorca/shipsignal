@@ -84,8 +84,14 @@ class AuroraSkillSnapshotSink:
 
         Idempotent via ON CONFLICT DO UPDATE so RETURNING always yields the row id. After
         the upsert, prior snapshots of the same skill at *other* commits are deactivated so
-        exactly one snapshot is active per (repo, skill_path) (§10.5 is_active)."""
-        with self._conn.cursor() as cur:
+        exactly one snapshot is active per (repo, skill_path) (§10.5 is_active).
+
+        The upsert and the deactivation run in ONE explicit transaction: on the autocommit
+        connection they would otherwise be two separate commits, so a concurrent re-snapshot of
+        the same (repo, skill_path) could have its just-activated row stamped is_active=FALSE by
+        the other run's deactivation — leaving the skill invisible to retrieval. The transaction
+        makes the activate-and-deactivate atomic."""
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO skill_repo_snapshots (
@@ -144,6 +150,7 @@ class AuroraArtifactSink:
                     body_markdown, status, model_id, prompt_version, skill_versions_json,
                     content_hash
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
                 """,
                 (
                     record.artifact_id,

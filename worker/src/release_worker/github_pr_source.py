@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -99,7 +100,15 @@ class GitHubPullRequestSource:
 
     def _issue(self, repo: str, number: int) -> dict[str, object] | None:
         url = f"{self._api_root}/repos/{repo}/issues/{number}"
-        payload = self._get(url)
+        try:
+            payload = self._get(url)
+        except urllib.error.HTTPError as err:
+            # A referenced "#N" may be deleted, in another repo, or invisible to the token
+            # (404/403/410). A missing linked issue must NOT abort the entire evidence-collection
+            # phase — skip the link. Genuine server-side failures (5xx) still propagate.
+            if err.code in (403, 404, 410):
+                return None
+            raise
         return payload if isinstance(payload, dict) else None
 
     def fetch_pull_requests(self, boundary: ReleaseBoundary) -> object:

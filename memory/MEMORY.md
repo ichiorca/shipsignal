@@ -1,0 +1,2 @@
+- [UI component conventions](ui-component-conventions.md) — how dashboard components must be authored to pass the test harness
+- [Path B product direction](path-b-product-direction.md) — decisions for making the four-verb tagline real (channels, publish-mode flag, phased plan)

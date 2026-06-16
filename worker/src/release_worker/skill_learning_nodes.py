@@ -89,8 +89,13 @@ def _line_diff(source_text: str, revised_text: str) -> dict[str, tuple[str, ...]
     Dependency-free + reproducible (no model call). Empty when nothing changed."""
     source_lines = source_text.splitlines()
     revised_lines = revised_text.splitlines()
-    removed = tuple(line for line in source_lines if line not in revised_lines)
-    added = tuple(line for line in revised_lines if line not in source_lines)
+    # Membership-test against sets (O(1) per line) so the diff is O(n), not O(n²) — a large
+    # doc-heavy SKILL.md edit otherwise blocks the node on quadratic scanning. Order preserved by
+    # iterating the original line lists.
+    source_set = set(source_lines)
+    revised_set = set(revised_lines)
+    removed = tuple(line for line in source_lines if line not in revised_set)
+    added = tuple(line for line in revised_lines if line not in source_set)
     diff: dict[str, tuple[str, ...]] = {}
     if removed:
         diff["removed"] = removed

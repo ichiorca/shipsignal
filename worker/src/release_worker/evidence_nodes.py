@@ -13,7 +13,8 @@ validates it through Pydantic and fails closed with a user-safe error (AC4).
 
 from __future__ import annotations
 
-from uuid import uuid4
+import concurrent.futures
+import hashlib
 
 from pydantic import ValidationError
 
@@ -41,6 +42,11 @@ from release_worker.signal_extractors import CODE_EXTRACTORS, extract_docs_delta
 # PRD §6.3: git-diff evidence is typed as a code-diff change from the git_diff source.
 _EVIDENCE_TYPE = "code_diff"
 _SOURCE = "git_diff"
+
+# Bound the per-item S3-upload + embed fan-out in persist_evidence so a large diff can't open an
+# unbounded number of concurrent S3/Bedrock calls (aws throttle discipline; matches the generation
+# fan-out cap pattern).
+_MAX_PERSIST_WORKERS = 8
 
 
 def load_release_boundary(
@@ -157,16 +163,20 @@ def persist_evidence(
     to lexical. The embedding is computed only from ``redacted_excerpt`` — the seam is
     strictly downstream of the redact node (§5), so no raw text reaches the embedding model.
     """
-    records: list[EvidenceRecord] = []
-    for item in redacted:
-        evidence_id = uuid4().hex
+
+    def _build_record(item: RedactedEvidence) -> EvidenceRecord:
+        # Deterministic id from the run + source lineage + redacted content (NOT a random uuid).
+        # A LangGraph/Actions re-run of this node then recomputes the SAME id, so the S3 blob
+        # overwrites its own key (no orphaned object) and the Aurora insert (ON CONFLICT DO
+        # NOTHING in record_many) is a no-op rather than a duplicate row.
+        evidence_id = _evidence_id(release_run_id, item)
         s3_uri = sink.store_blob(release_run_id, evidence_id, item.redacted_excerpt)
         embedding = (
             tuple(embedder.embed(item.redacted_excerpt))
             if embedder is not None
             else None
         )
-        record = EvidenceRecord(
+        return EvidenceRecord(
             evidence_id=evidence_id,
             release_run_id=release_run_id,
             evidence_type=item.evidence_type,
@@ -182,9 +192,41 @@ def persist_evidence(
             metadata=item.metadata,
             embedding=embedding,
         )
-        sink.record(record)
-        records.append(record)
+
+    # Each item's S3 upload + embedding is independent blocking I/O; a big release can produce 200+
+    # rows, so do them in a bounded thread pool instead of serially (boto3 S3/Bedrock clients are
+    # thread-safe per-operation). map() preserves order and re-raises the first error (fail-closed).
+    if redacted:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(len(redacted), _MAX_PERSIST_WORKERS)
+        ) as executor:
+            records = list(executor.map(_build_record, redacted))
+    else:
+        records = []
+    # One batched write instead of a DB round-trip per row. Idempotent on the deterministic id, so a
+    # retry converges instead of duplicating.
+    sink.record_many(tuple(records))
     return tuple(records)
+
+
+def _evidence_id(release_run_id: str, item: RedactedEvidence) -> str:
+    """Stable 128-bit hex id for one redacted evidence item, derived from the run id, its source
+    lineage, and the redacted excerpt. Deterministic so re-running the persist node is idempotent
+    (same id → same S3 key → ON CONFLICT no-op). 32 hex chars matches the S3 key segment guard."""
+    digest = hashlib.sha256()
+    for part in (
+        release_run_id,
+        item.evidence_type,
+        item.source,
+        item.repo or "",
+        item.source_url or "",
+        item.file_path or "",
+        item.symbol_name or "",
+        item.redacted_excerpt,
+    ):
+        digest.update(part.encode("utf-8"))
+        digest.update(b"\x00")
+    return digest.hexdigest()[:32]
 
 
 def collect_redact_persist(

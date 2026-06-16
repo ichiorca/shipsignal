@@ -14,7 +14,6 @@ from pydantic import ValidationError
 
 from release_worker.engagement_models import (
     EngagementMetricKind,
-    EngagementSource,
     EngagementTotals,
     EngagementTotalsReader,
     StaticEngagementReader,
@@ -74,9 +73,10 @@ def test_unreported_defaults_to_none_distinct_from_zero() -> None:
 
 
 def test_vocabularies_match_migration_check_constraints() -> None:
-    # The closed vocabularies every layer (migration 0021 CHECKs, TS schemas) agrees on.
+    # The closed metric vocabulary every layer (migration 0021 CHECK, TS schema) agrees on.
+    # The `source` vocabulary is validated TS-side (app/lib/engagement.ts) where ingestion
+    # actually happens; the Python worker only reads aggregate totals, so it carries no source enum.
     assert {k.value for k in EngagementMetricKind} == {"views", "clicks", "conversions"}
-    assert {s.value for s in EngagementSource} == {"manual_csv", "api"}
 
 
 def test_static_reader_satisfies_the_reader_port() -> None:

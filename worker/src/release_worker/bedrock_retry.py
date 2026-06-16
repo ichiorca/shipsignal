@@ -1,0 +1,77 @@
+"""Shared Bedrock resilience helpers: bounded socket-timeout config + throttle retry.
+
+Extracted (staff-review finding: resilience of external calls) so every Bedrock surface —
+Converse generation, Titan embeddings, and ApplyGuardrail — shares ONE retry policy and ONE
+timeout config instead of each re-implementing it (Converse had backoff; embeddings and the
+Guardrail scan had neither, so a single ThrottlingException aborted the phase, and no call had a
+socket timeout so a hung connection blocked a graph node indefinitely).
+
+aws-bedrock-rules: handle ThrottlingException with exponential backoff + jitter, and bound every
+network call with connect/read timeouts. Retries are owned HERE (botocore's own retries are
+disabled in the client config) so there is a single source of retry truth and no double backoff.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from collections.abc import Callable
+from typing import TypeVar
+
+from botocore.config import Config
+from botocore.exceptions import ClientError
+
+logger = logging.getLogger("release_worker.bedrock")
+
+_MAX_ATTEMPTS = 5
+_BASE_BACKOFF_SECONDS = 0.5
+_BACKOFF_CAP_SECONDS = 16.0
+
+# Bound every Bedrock socket: a hung connection must fail fast rather than block a graph node
+# forever. read_timeout is generous for slow large-context generations. botocore's own retries
+# are disabled (max_attempts=0) so call_with_throttle_retry is the single retry authority.
+_CONNECT_TIMEOUT_SECONDS = 10
+_READ_TIMEOUT_SECONDS = 120
+
+_T = TypeVar("_T")
+
+
+def bedrock_client_config() -> Config:
+    """botocore Config bounding socket timeouts; retries delegated to call_with_throttle_retry."""
+    return Config(
+        connect_timeout=_CONNECT_TIMEOUT_SECONDS,
+        read_timeout=_READ_TIMEOUT_SECONDS,
+        retries={"max_attempts": 0},
+    )
+
+
+def jittered_backoff(attempt: int, rand_fraction: float) -> float:
+    """Exponential backoff with full jitter, capped (aws-bedrock-rules).
+
+    ``rand_fraction`` (0..1) is injected so the delay is deterministic under test.
+    """
+    ceiling = min(_BACKOFF_CAP_SECONDS, _BASE_BACKOFF_SECONDS * (2**attempt))
+    return ceiling * rand_fraction
+
+
+def _is_throttling(err: ClientError) -> bool:
+    return err.response.get("Error", {}).get("Code", "") == "ThrottlingException"
+
+
+def call_with_throttle_retry(operation: Callable[[], _T], *, what: str) -> _T:
+    """Run ``operation`` (one Bedrock API call), retrying ThrottlingException with jittered
+    backoff up to ``_MAX_ATTEMPTS`` attempts. Non-throttle ``ClientError``s propagate at once.
+    ``what`` names the call for the (no-PII) backoff log line."""
+    last_error: ClientError | None = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            return operation()
+        except ClientError as err:
+            if not _is_throttling(err) or attempt == _MAX_ATTEMPTS - 1:
+                raise
+            last_error = err
+            delay = jittered_backoff(attempt, 0.5)
+            logger.warning("%s throttled; backing off %.2fs", what, delay)
+            time.sleep(delay)
+    # Unreachable: the loop either returns or raises, but keep type-checkers happy.
+    raise RuntimeError(f"{what} exhausted retries") from last_error

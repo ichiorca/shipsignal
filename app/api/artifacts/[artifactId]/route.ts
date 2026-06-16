@@ -12,6 +12,8 @@ import {
   setArtifactStatus,
 } from '@/app/lib/db/claims.ts';
 import { recordApproval } from '@/app/lib/db/approvals.ts';
+import { cancelSchedulesForArtifact } from '@/app/lib/db/scheduledPublishes.ts';
+import { withTransaction } from '@/app/lib/aurora.ts';
 import { resolveOne } from '@/app/lib/readApi.ts';
 
 export const runtime = 'nodejs';
@@ -57,17 +59,25 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Ne
     return NextResponse.json({ error: 'artifact not found' }, { status: 404 });
   }
 
-  // Record the edit decision (with the edited payload) before mutating the row.
-  await recordApproval({
-    target_type: 'artifact',
-    target_id: artifactId,
-    decision: 'edited',
-    reviewer: parsed.value.reviewer,
-    notes: parsed.value.notes,
-    edited_payload: parsed.value.edits,
+  // Record the edit, apply it, flip status to 'edited', and cancel any queued schedules ATOMICALLY.
+  // An edit un-approves the artifact (it must be re-reviewed), so a pending schedule must not ship
+  // the pre-edit snapshot.
+  await withTransaction(async (client) => {
+    await recordApproval(
+      {
+        target_type: 'artifact',
+        target_id: artifactId,
+        decision: 'edited',
+        reviewer: parsed.value.reviewer,
+        notes: parsed.value.notes,
+        edited_payload: parsed.value.edits,
+      },
+      client,
+    );
+    await applyArtifactEdit(artifactId, parsed.value.edits, client);
+    await setArtifactStatus(artifactId, 'edited', client);
+    await cancelSchedulesForArtifact(artifactId, client);
   });
-  await applyArtifactEdit(artifactId, parsed.value.edits);
-  await setArtifactStatus(artifactId, 'edited');
 
   return NextResponse.json({ artifact_id: artifactId, status: 'edited' }, { status: 200 });
 }

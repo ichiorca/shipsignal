@@ -3,7 +3,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { EMPTY, humanizeStatus, humanizeKey, formatTimestamp } from '../app/lib/displayFormat.ts';
+import {
+  EMPTY,
+  humanizeStatus,
+  humanizeKey,
+  formatTimestamp,
+  relativeTime,
+} from '../app/lib/displayFormat.ts';
 
 test('humanizeStatus turns snake_case enums into a capitalized phrase', () => {
   assert.equal(humanizeStatus('pending_review'), 'Pending review');
@@ -30,4 +36,20 @@ test('formatTimestamp renders an ISO string as a UTC date', () => {
 
 test('formatTimestamp returns the original string when it is not a date', () => {
   assert.equal(formatTimestamp('not-a-date'), 'not-a-date');
+});
+
+test('relativeTime renders compact, scannable ages against an injected now', () => {
+  const now = new Date('2026-06-15T12:00:00.000Z');
+  assert.equal(relativeTime('2026-06-15T11:59:50.000Z', now), 'just now');
+  assert.equal(relativeTime('2026-06-15T11:55:00.000Z', now), '5m ago');
+  assert.equal(relativeTime('2026-06-15T09:00:00.000Z', now), '3h ago');
+  assert.equal(relativeTime('2026-06-13T12:00:00.000Z', now), '2d ago');
+  // Older than ~30d falls back to a short absolute date (no "45d ago").
+  assert.match(relativeTime('2026-01-01T12:00:00.000Z', now), /Jan 1/);
+});
+
+test('relativeTime degrades gracefully and never shows a future negative', () => {
+  const now = new Date('2026-06-15T12:00:00.000Z');
+  assert.equal(relativeTime('2026-06-15T12:05:00.000Z', now), 'just now'); // clock skew
+  assert.equal(relativeTime('not-a-date', now), 'not-a-date');
 });

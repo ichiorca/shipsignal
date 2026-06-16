@@ -78,6 +78,7 @@ from release_worker.aurora_skill_learning import (
     AuroraSkillCandidateSink,
     AuroraSuppressionStore,
 )
+from release_worker.aurora_voice_context import AuroraVoiceContextSource
 from release_worker.bedrock_client import BedrockEmbeddingClient, BedrockModelClient
 from release_worker.checkpointer import build_checkpointer, wants_durable_checkpointer
 from release_worker.content_graph import build_content_generation_graph
@@ -352,6 +353,10 @@ def _run_content_generation(
         # T1 (spec 017): durable checkpointer so a Gate #2 thread resumes across the separate
         # Actions invocation that records the reviewer's decision (PRD §5.6).
         checkpointer=checkpointer,
+        # Brand brain (migration 0025): ground generation in the company's own voice exemplars
+        # (retrieved by similarity to this release), approved messaging, and active ICP. Reuses
+        # the same Bedrock embedder as evidence retrieval. Best-effort inside the node.
+        voice_source=AuroraVoiceContextSource(conn, embedder),
     )
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -785,11 +790,18 @@ def main(argv: list[str] | None = None) -> int:
             repository.mark_failed(release_run_id)
         except Exception:
             logger.exception("could not mark release run %s failed", release_run_id)
-        # T2 (spec 020) / AC1: a failed run needs a human too — same best-effort dispatch
-        # (it can never mask the failure exit code below).
-        _notify_run_failed(
-            conn, webhook_url, release_run_id, args.graph, dashboard_base_url
-        )
+        # T2 (spec 020) / AC1: a failed run needs a human too — best-effort dispatch. It can
+        # never mask the failure exit code below: _notify_run_failed only narrows
+        # (psycopg.Error, RuntimeError), so a notification bug of any OTHER type would otherwise
+        # escape this handler and skip `return 1`. Guard it so the run always exits 1.
+        try:
+            _notify_run_failed(
+                conn, webhook_url, release_run_id, args.graph, dashboard_base_url
+            )
+        except Exception:
+            logger.exception(
+                "could not dispatch run-failed notification for %s", release_run_id
+            )
         return 1
     finally:
         conn.close()

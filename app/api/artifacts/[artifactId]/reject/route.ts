@@ -7,6 +7,8 @@ import { NextResponse } from 'next/server';
 import { artifactDecisionSchema, parseBody } from '@/app/lib/artifactReview.ts';
 import { getArtifactWithClaims, setArtifactStatus } from '@/app/lib/db/claims.ts';
 import { recordApproval } from '@/app/lib/db/approvals.ts';
+import { cancelSchedulesForArtifact } from '@/app/lib/db/scheduledPublishes.ts';
+import { withTransaction } from '@/app/lib/aurora.ts';
 
 export const runtime = 'nodejs';
 
@@ -37,14 +39,23 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
     return NextResponse.json({ error: 'artifact not found' }, { status: 404 });
   }
 
-  await recordApproval({
-    target_type: 'artifact',
-    target_id: artifactId,
-    decision: 'rejected',
-    reviewer: parsed.value.reviewer,
-    notes: parsed.value.notes,
+  // Record the rejection, flip the status, and cancel any queued schedules ATOMICALLY — so a crash
+  // can't leave a "rejected" audit row with a still-publishable status (or a pending schedule that
+  // the drain would later ship).
+  await withTransaction(async (client) => {
+    await recordApproval(
+      {
+        target_type: 'artifact',
+        target_id: artifactId,
+        decision: 'rejected',
+        reviewer: parsed.value.reviewer,
+        notes: parsed.value.notes,
+      },
+      client,
+    );
+    await setArtifactStatus(artifactId, 'rejected', client);
+    await cancelSchedulesForArtifact(artifactId, client);
   });
-  await setArtifactStatus(artifactId, 'rejected');
 
   return NextResponse.json({ artifact_id: artifactId, status: 'rejected' }, { status: 200 });
 }

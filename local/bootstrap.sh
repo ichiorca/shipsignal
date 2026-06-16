@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # ShipSignal local bootstrap (bash / WSL / macOS / Linux).
 #
-# Brings up Postgres (TLS, host:5434) + LocalStack Pro (S3/SNS/Bedrock), creates the
-# S3 buckets, attempts a Bedrock Guardrail, and applies the Alembic migrations.
+# Brings up Postgres (TLS, host:5434) + LocalStack (S3/SNS — free community by default;
+# Bedrock too if you configure Pro), creates the S3 buckets, attempts a Bedrock Guardrail
+# (Pro only), and applies the Alembic migrations.
 #
 # Usage:   bash local/bootstrap.sh      (run from the repo root)
 # Re-run safe (idempotent).
@@ -29,7 +30,10 @@ set -a
 source "$ENV_FILE"
 set +a
 
-: "${LOCALSTACK_AUTH_TOKEN:?LOCALSTACK_AUTH_TOKEN is empty in local/dev-env (required for Bedrock Pro)}"
+if [[ -z "${LOCALSTACK_AUTH_TOKEN:-}" ]]; then
+  echo "No LOCALSTACK_AUTH_TOKEN -> community LocalStack (S3 + SNS only)."
+  echo "  The dashboard works fully; the worker's Bedrock calls need Pro (docs/local-dev.md)."
+fi
 
 # --- Bring up the containers ------------------------------------------------------
 echo "Starting containers ..."
@@ -61,8 +65,8 @@ for bucket in "$EVIDENCE_BUCKET" "$MEDIA_BUCKET"; do
   awslocal_in s3 mb "s3://$bucket" >/dev/null 2>&1 || echo "  (already exists)"
 done
 
-# --- Best-effort Bedrock Guardrail ------------------------------------------------
-if [[ -z "${BEDROCK_GUARDRAIL_ID:-}" ]]; then
+# --- Best-effort Bedrock Guardrail (Pro only — skipped in community S3/SNS mode) --
+if [[ -n "${LOCALSTACK_AUTH_TOKEN:-}" && -z "${BEDROCK_GUARDRAIL_ID:-}" ]]; then
   echo "Attempting to create a Bedrock Guardrail in LocalStack ..."
   if out="$(awslocal_in bedrock create-guardrail \
         --name shipsignal-local \

@@ -111,6 +111,21 @@ test('current and proposed SKILL.md are rendered as labelled diff panels', () =>
   assert.ok(proposed?.textContent?.includes('avoid hype'), 'proposed body shown');
 });
 
+test('changed lines are highlighted with semantic del/ins (UI tier-2 #6)', () => {
+  const { doc } = render(CANDIDATES);
+  // The current panel marks the removed line with <del>; the proposed panel the added line with
+  // <ins> — semantic elements carry the add/remove meaning to assistive tech, not colour alone.
+  const removed = doc.querySelector('section[data-panel="current"] del');
+  const added = doc.querySelector('section[data-panel="proposed"] ins');
+  assert.match(removed?.textContent ?? '', /best-in-class/, 'removed line struck through');
+  assert.match(added?.textContent ?? '', /avoid hype/, 'added line highlighted');
+  // The unchanged heading appears in both panels as a non-highlighted same-line.
+  assert.ok(
+    doc.querySelector('section[data-panel="current"] [data-diff="same"]'),
+    'unchanged lines are rendered plainly',
+  );
+});
+
 test('version, confidence, and source are exposed as text not colour alone', () => {
   const { doc } = render(CANDIDATES);
   const proposedVersion = doc.querySelector('dd[data-proposed-version]');

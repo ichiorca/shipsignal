@@ -23,8 +23,12 @@ against local infrastructure:
 
 - **Docker Desktop** (Compose v2).
 - **Node 22** and **Python 3.11** on the host.
-- A **LocalStack Pro** auth token — https://app.localstack.cloud → Auth Token.
-  (Community LocalStack does **not** emulate Bedrock; Pro is required for model calls.)
+- **LocalStack Pro auth token — OPTIONAL.** The default stack uses the **free community**
+  image (S3 + SNS), which is enough to run and test the whole **dashboard**. A Pro token
+  (https://app.localstack.cloud → Auth Token) is only needed to run the **worker generation
+  graphs** locally (community LocalStack does not emulate Bedrock). To enable it, set in
+  `local/dev-env`: `LOCALSTACK_IMAGE=localstack/localstack-pro:latest`,
+  `LOCALSTACK_SERVICES=s3,sns,bedrock`, and `LOCALSTACK_AUTH_TOKEN=...`.
 - For the media graph only: **ffmpeg** on PATH and **Playwright browsers**
   (`python -m playwright install chromium`).
 
@@ -33,12 +37,14 @@ against local infrastructure:
 ## Quickstart
 
 ```powershell
-# 1. Create your env file and fill in the secrets.
+# 1. Create your env file. For DASHBOARD-ONLY testing the defaults work as-is — no secrets
+#    needed (free community LocalStack, publishing in dry-run, scheduling on).
 Copy-Item local/dev-env.sample local/dev-env
-#    -> edit local/dev-env: LOCALSTACK_AUTH_TOKEN, GITHUB_*, ELEVENLABS_*
+#    -> for the worker graphs only: edit LOCALSTACK_* (Pro), GITHUB_*, ELEVENLABS_*
 
-# 2. Install migration + worker Python deps.
-pip install -r db/requirements.txt -r worker/requirements.txt
+# 2. Install the migration deps (enough for dashboard-only; add worker/requirements.txt
+#    only if you'll run the generation graphs locally).
+pip install -r db/requirements.txt
 
 # 3. Bring up Postgres + LocalStack, create buckets, run migrations.
 pwsh local/bootstrap.ps1        # bash/WSL: bash local/bootstrap.sh
@@ -58,6 +64,41 @@ npm run dev     # http://localhost:3000
 
 Dashboard pages that read the database (release list, feature review, approval gates)
 now work end-to-end against local Postgres.
+
+> Tip: with the dashboard up, use the **Load sample release** button (home page, "Try it with
+> sample data") to seed a complete demo release — features, approved artifacts with
+> claims/evidence, engagement metrics, and eval/cost rows — without running the worker. Handy for
+> exercising the review / ROI / trends screens. It POSTs to `/api/demo/seed` and links you
+> straight to the seeded run.
+
+---
+
+## Testing publishing + scheduling locally (Path B / Phases 3–4)
+
+The default `local/dev-env` is wired for this with **no external accounts**:
+
+- **`PUBLISH_DRY_RUN=1`** — approving an `x_post`/`linkedin_post` and clicking **Publish to X /
+  LinkedIn** runs the whole flow and shows *"Dry run: would post … nothing sent"*. No real
+  tokens, no real posts. (Set `LINKEDIN_*` / `X_ACCESS_TOKEN` and `PUBLISH_DRY_RUN=0` to send
+  for real — X's API is paid, LinkedIn needs an approved app + page token.)
+- **`PUBLISH_MODE=scheduled`** — the **Schedule** controls appear on the Gate #2 review and the
+  standalone artifact page, and the **Distribute → Scheduled posts** queue is live.
+
+Exercise the scheduler end-to-end without waiting for the cron:
+
+```powershell
+# 1. Seed data + approve a post, then schedule it (UI), OR just have a pending schedule.
+# 2. Manually fire the drain the GitHub Actions cron would run (POST, with the bearer secret):
+curl -X POST http://localhost:3000/api/internal/scheduled-publishes/run `
+  -H "Authorization: Bearer local-dev-drain-secret"
+# -> {"ok":true,"processed":N,"sent":N,"failed":0,"dryRun":N}
+```
+
+Then refresh **Distribute → Scheduled posts**: due rows flip `pending → sent` (as dry-runs).
+A post you reject/edit after scheduling is cancelled and never ships (the §5 safety check).
+
+> `SCHEDULED_PUBLISH_SECRET` gates that route — unset it to get a `503` (the feature is off);
+> a wrong/missing bearer is a `401`.
 
 ---
 

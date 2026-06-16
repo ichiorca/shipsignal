@@ -45,8 +45,7 @@ class S3MediaStore:
         mid = _safe_segment(media_id, "media_id")
         ext = _EXTENSIONS.get(media.content_type, "bin")
         key = f"media/{run}/{mid}.{ext}"
-        body = Path(media.local_path).read_bytes()
-        self._put(key, body, media.content_type)
+        self._put_file(key, Path(media.local_path), media.content_type)
         return f"s3://{self._bucket}/{key}"
 
     def store_raw(
@@ -59,16 +58,21 @@ class S3MediaStore:
         run = _safe_segment(release_run_id, "release_run_id")
         mid = _safe_segment(media_id, "media_id")
         key = f"media/{run}/{mid}-raw.webm"
-        body = Path(capture.video_local_path).read_bytes()
-        self._put(key, body, "video/webm")
+        self._put_file(key, Path(capture.video_local_path), "video/webm")
         return f"s3://{self._bucket}/{key}"
 
-    def _put(self, key: str, body: bytes, content_type: str) -> None:
+    def _put_file(self, key: str, local_path: Path, content_type: str) -> None:
+        # Stream the file to S3 (boto3 uses multipart for large objects) rather than reading the
+        # whole asset into memory — a 100-500 MB demo video would otherwise risk an OOM kill on
+        # the Actions runner and doubles peak memory. SSE + ContentType ride along as ExtraArgs.
         # mypy can't see boto3's dynamic client surface; call via the bound method.
-        self._s3.put_object(  # type: ignore[attr-defined]
-            Bucket=self._bucket,
-            Key=key,
-            Body=body,
-            ContentType=content_type,
-            ServerSideEncryption="AES256",
-        )
+        with local_path.open("rb") as fileobj:
+            self._s3.upload_fileobj(  # type: ignore[attr-defined]
+                fileobj,
+                self._bucket,
+                key,
+                ExtraArgs={
+                    "ContentType": content_type,
+                    "ServerSideEncryption": "AES256",
+                },
+            )

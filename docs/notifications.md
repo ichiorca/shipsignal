@@ -26,10 +26,14 @@ escalation).
 
 | Variable | Where | Behaviour |
 |---|---|---|
-| `SLACK_WEBHOOK_URL` | GitHub Actions worker env only | Unset/blank → the feature is **fully off** (the local/dev/CI default): no HTTP call, no ledger row. A non-`https://` value is treated as a misconfiguration and disables the feature with a secret-free warning. |
+| `SLACK_WEBHOOK_URL` | GitHub Actions worker env (notifications) **and** Vercel env (publish) | Unset/blank → the feature is **fully off** (the local/dev/CI default): no HTTP call, no ledger row. A non-`https://` value is treated as a misconfiguration and disables the feature with a secret-free warning. |
 
-There is nothing to configure on the Vercel side — dispatch happens in the worker, at the
-moment the gate interrupt (or failure) is observed.
+Gate/run notifications dispatch from the **worker** at the moment the interrupt (or failure) is
+observed, so nothing extra is needed on the Vercel side *for notifications*. Note, however, that
+the **same** `SLACK_WEBHOOK_URL` is also read server-side by the dashboard's one-click Slack
+publish (`/api/artifacts/{id}/publish/slack`, see `docs/distribution.md`): a Vercel deployment
+that wants publish must set the var in the Vercel env too. Use distinct webhooks per environment
+in both places.
 
 ## Sandbox vs prod separation
 

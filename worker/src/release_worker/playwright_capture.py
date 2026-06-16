@@ -11,6 +11,7 @@ uses ``InMemoryPlaywrightCapturer`` so no browser launches in tests.
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 from release_worker.media_models import (
@@ -44,18 +45,26 @@ class PlaywrightDemoCapturer:
         # Lazy import so module load never requires the heavy browser dep; only the runner has it.
         from playwright.sync_api import sync_playwright
 
-        frames_dir = self._work_dir
+        # Isolate each capture in its OWN subdirectory so a prior run's frames/video can never
+        # leak into this result (the work dir is reused across captures), and a partial failure
+        # cannot return a stale recording.
+        frames_dir = Path(tempfile.mkdtemp(prefix="capture-", dir=self._work_dir))
         frames: list[CaptureFrame] = []
-        video_path = frames_dir / "capture.webm"
 
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
+            browser = pw.chromium.launch(
+                headless=True,
+                # CI runners (Docker) default /dev/shm to 64MB; without this flag Chromium can
+                # crash or emit corrupt frames mid-capture. Standard headless-CI hardening.
+                args=["--disable-dev-shm-usage"],
+            )
             context = browser.new_context(
                 record_video_dir=str(frames_dir),
                 viewport={"width": 1280, "height": 720},
             )
             page = context.new_page()
             page.set_default_timeout(_DEFAULT_TIMEOUT_MS)
+            video = page.video  # type: ignore[attr-defined]
             try:
                 for index, step in enumerate(click_path.steps):
                     self._run_step(page, step)
@@ -66,8 +75,16 @@ class PlaywrightDemoCapturer:
                 context.close()  # flush the recorded video
                 browser.close()
 
+        # Playwright mints a hashed video filename — resolve the ACTUAL path rather than assuming
+        # a fixed name, and fail fast if no file was produced instead of returning a dangling path.
+        video_local_path = (
+            video.path() if video is not None else str(frames_dir / "capture.webm")  # type: ignore[attr-defined]
+        )
+        if not Path(video_local_path).exists():
+            raise RuntimeError("Playwright capture produced no video file")
+
         return CaptureResult(
-            video_local_path=str(video_path),
+            video_local_path=str(video_local_path),
             frames=tuple(frames),
             duration_seconds=len(click_path.steps) * _STEP_SECONDS,
             step_count=len(click_path.steps),

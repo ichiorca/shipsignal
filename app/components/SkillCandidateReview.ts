@@ -24,6 +24,7 @@ import type {
   SupportingSignalView,
 } from '@/app/lib/db/skillCandidates.ts';
 import { EMPTY } from '../lib/displayFormat.ts';
+import { lineDiff, type DiffLine } from '../lib/lineDiff.ts';
 import { ConfirmButton } from './ConfirmButton.ts';
 import { useReviewerName } from '../lib/useReviewerName.ts';
 
@@ -42,13 +43,29 @@ function failureMessage(status: number): string {
   return `the request was rejected (code ${status}).`;
 }
 
-function bodyPanel(label: string, panel: string, body: string): ReactElement {
+// UI tier-2 #6 — a SKILL.md panel with change highlighting. The current panel shows unchanged +
+// removed lines (removed wrapped in <del>); the proposed panel shows unchanged + added lines
+// (added wrapped in <ins>). <del>/<ins> carry the add/remove meaning to assistive tech natively —
+// colour is only a supplement. Lines live in a <pre> so whitespace/structure is preserved.
+function diffPanel(label: string, panel: 'current' | 'proposed', diff: readonly DiffLine[]): ReactElement {
   const headingId = `panel-${panel}`;
+  const lines: ReactElement[] = [];
+  diff.forEach((line, i) => {
+    if (line.kind === 'del' && panel === 'proposed') return; // removed lines are not in "proposed"
+    if (line.kind === 'add' && panel === 'current') return; // added lines are not in "current"
+    // No trailing '\n': each line element is display:block (globals.css), so the block break IS
+    // the line break — adding '\n' inside a <pre> would double-space every row. Empty lines keep
+    // their height via the ::before marker. Leading whitespace is preserved by the <pre>.
+    const text = line.text;
+    if (line.kind === 'del') lines.push(createElement('del', { key: i, 'data-diff': 'del' }, text));
+    else if (line.kind === 'add') lines.push(createElement('ins', { key: i, 'data-diff': 'add' }, text));
+    else lines.push(createElement('span', { key: i, 'data-diff': 'same' }, text));
+  });
   return createElement(
     'section',
     { 'aria-labelledby': headingId, 'data-panel': panel },
     createElement('h3', { id: headingId }, label),
-    createElement('pre', null, body === '' ? '(empty)' : body),
+    createElement('pre', { 'data-skill-diff': true }, lines.length === 0 ? '(empty)' : lines),
   );
 }
 
@@ -70,6 +87,8 @@ function candidateSection(candidate: SkillCandidateView): ReactElement {
   const headingId = `candidate-${candidate.id}`;
   const currentVersion = candidate.current_version ?? EMPTY;
   const confidence = candidate.confidence === null ? EMPTY : candidate.confidence.toFixed(2);
+  // One diff drives both panels, so "current" and "proposed" highlight exactly the same change set.
+  const diff = lineDiff(candidate.current_body, candidate.proposed_body);
   return createElement(
     'section',
     {
@@ -92,8 +111,8 @@ function candidateSection(candidate: SkillCandidateView): ReactElement {
       createElement('dd', { key: 'cod', 'data-confidence': confidence }, confidence),
     ),
     createElement('p', { 'data-proposal-reason': 'true' }, `Likely impact: ${candidate.proposal_reason}`),
-    bodyPanel('Current SKILL.md', 'current', candidate.current_body),
-    bodyPanel('Proposed SKILL.md', 'proposed', candidate.proposed_body),
+    diffPanel('Current SKILL.md (removed lines struck through)', 'current', diff),
+    diffPanel('Proposed SKILL.md (added lines highlighted)', 'proposed', diff),
     createElement('h3', null, 'Supporting signals'),
     candidate.supporting_signals.length === 0
       ? createElement('p', null, 'No supporting signals recorded.')

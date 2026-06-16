@@ -150,12 +150,18 @@ export async function listSkillCandidatesForRun(
     [releaseRunId, limit],
   );
 
-  const candidates: SkillCandidateView[] = [];
-  for (const row of result.rows) {
-    const signals = await loadSignals(asIdList(row.supporting_signal_ids));
-    candidates.push(mapCandidate(row, signals));
-  }
-  return candidates;
+  // Batch the supporting-signal fetch into ONE query rather than one per candidate (N+1).
+  // `loadSignals` returns rows ordered by created_at ASC, so filtering that ordered list per
+  // candidate preserves the same per-candidate signal ordering the per-row query produced.
+  const allSignalIds = [
+    ...new Set(result.rows.flatMap((row) => asIdList(row.supporting_signal_ids))),
+  ];
+  const orderedSignals = await loadSignals(allSignalIds);
+  return result.rows.map((row) => {
+    const idSet = new Set(asIdList(row.supporting_signal_ids));
+    const signals = orderedSignals.filter((s) => idSet.has(s.id));
+    return mapCandidate(row, signals);
+  });
 }
 
 // --- T4 (spec 015): the §14.4 skills read API (not run-scoped, any status) -------------

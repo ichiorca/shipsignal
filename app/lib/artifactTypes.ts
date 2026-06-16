@@ -6,16 +6,25 @@
 // it falls back to its raw id, making the anomaly visible rather than hidden. Pure data +
 // helpers; no client/secret concerns (the form imports this client-side).
 
-/** The closed §8.1 artifact-type vocabulary, as a literal union. */
+/** The closed §8.1 artifact-type vocabulary, as a literal union.
+ *  customer_email + battlecard_delta added by operator decision 2026-06-09 (PRD §8.1;
+ *  migration 0023 widens the DB CHECK in lockstep).
+ *  x_post + hackernews_post added by Path B / Phase 2 (the tagline's "Hacker News, X" channels;
+ *  migration 0026 widens the CHECK to ten). HN content is generated here; publishing it is
+ *  assisted, not automatic (operator decision 2026-06-15). */
 export type ArtifactType =
   | 'release_blog'
   | 'changelog_entry'
   | 'sales_onepager'
   | 'linkedin_post'
   | 'demo_script'
-  | 'release_audio_digest';
+  | 'release_audio_digest'
+  | 'customer_email'
+  | 'battlecard_delta'
+  | 'x_post'
+  | 'hackernews_post';
 
-/** The full initial artifact set (PRD §8.1), in canonical order. */
+/** The full initial artifact set (PRD §8.1 + Path B additions), in canonical order. */
 export const ALL_ARTIFACT_TYPES: readonly ArtifactType[] = [
   'release_blog',
   'changelog_entry',
@@ -23,6 +32,10 @@ export const ALL_ARTIFACT_TYPES: readonly ArtifactType[] = [
   'linkedin_post',
   'demo_script',
   'release_audio_digest',
+  'customer_email',
+  'battlecard_delta',
+  'x_post',
+  'hackernews_post',
 ];
 
 export function isArtifactType(value: string): value is ArtifactType {
@@ -66,6 +79,10 @@ const TYPE_LABELS: Readonly<Record<string, string>> = {
   linkedin_post: 'LinkedIn / social post',
   demo_script: 'Demo script',
   release_audio_digest: 'Release audio digest',
+  customer_email: 'Customer email announcement',
+  battlecard_delta: 'Sales battlecard delta',
+  x_post: 'X (Twitter) post',
+  hackernews_post: 'Hacker News post (Show HN)',
 };
 
 export function typeLabel(artifactType: string): string {

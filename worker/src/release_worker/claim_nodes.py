@@ -30,6 +30,7 @@ blocks the artifact, exactly as for any other type (no per-type bypass).
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import logging
 import re
@@ -135,6 +136,11 @@ def _extract_idempotency_key(artifact: ArtifactDraft) -> str:
     return digest.hexdigest()
 
 
+# Cap concurrent extraction Converse calls — same bound as generation's fan-out so the two
+# nodes present a consistent burst profile to Bedrock's throttle limits.
+_MAX_EXTRACTION_WORKERS = 6
+
+
 def extract_claims(
     artifacts: tuple[ArtifactDraft, ...],
     model_client: ModelClient,
@@ -147,9 +153,18 @@ def extract_claims(
     malformed payload fails closed as ``MalformedClaimOutputError``. Every claim is minted
     ``support_status='unsupported'`` — grounding is decided by ``link_claims_to_evidence``,
     never by the model (constitution §5). ``new_claim_id`` is injected so the node stays pure.
+
+    The per-artifact Bedrock calls are independent I/O, so they fan out concurrently (mirroring
+    ``generate_artifacts_parallel``) rather than summing N sequential round-trips on the Gate #2
+    wait. Determinism is preserved: ``executor.map`` keeps response order, and claim ids are
+    minted afterwards on the calling thread in canonical artifact order so ``new_claim_id`` (a
+    generator in tests) is never raced. A malformed response re-raises on iteration, failing the
+    whole node closed (§5) rather than half-extracting.
     """
-    claims: list[ArtifactClaim] = []
-    for artifact in artifacts:
+    if not artifacts:
+        return ()
+
+    def _extract_one(artifact: ArtifactDraft) -> ClaimExtractionResponse:
         prompt = f"{artifact.title or ''}\n\n{artifact.body_markdown}".strip()
         messages = [{"role": "user", "content": prompt}]
         raw = model_client.generate_json(
@@ -160,10 +175,16 @@ def extract_claims(
             _extract_idempotency_key(artifact),
         )
         try:
-            response = ClaimExtractionResponse.model_validate(raw)
+            return ClaimExtractionResponse.model_validate(raw)
         except ValidationError as err:
             raise MalformedClaimOutputError() from err
 
+    workers = min(len(artifacts), _MAX_EXTRACTION_WORKERS)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        responses = list(executor.map(_extract_one, artifacts))
+
+    claims: list[ArtifactClaim] = []
+    for artifact, response in zip(artifacts, responses, strict=True):
         for extracted in response.claims:
             claims.append(
                 ArtifactClaim(

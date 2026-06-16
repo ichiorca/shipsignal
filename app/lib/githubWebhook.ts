@@ -7,6 +7,9 @@
 // criteria are unit-tested against the exact surface the route handler calls.
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
+// Type-only import (erased at compile time) — keeps this module runtime-pure (node:crypto only)
+// while letting the DeliveryGuidStore contract name the optional transaction client honestly.
+import type { Queryable } from '@/app/lib/aurora.ts';
 
 /** Result of authenticating a raw webhook delivery. */
 export type WebhookAuth =
@@ -56,8 +59,13 @@ export function verifyGithubSignature(
  * -constrained Aurora table so dedupe survives across the serverless fleet.
  */
 export interface DeliveryGuidStore {
-  /** Atomically record the GUID. Returns false if it was already present (replay). */
-  markIfNew(deliveryGuid: string): Promise<boolean> | boolean;
+  /**
+   * Atomically record the GUID. Returns false if it was already present (replay).
+   * `db` is optional so a caller can run the dedupe inside an existing transaction (the Aurora
+   * implementation honours it); in-memory stores ignore it. Declared on the interface so the
+   * transaction client can be threaded through a `DeliveryGuidStore`-typed reference.
+   */
+  markIfNew(deliveryGuid: string, db?: Queryable): Promise<boolean> | boolean;
 }
 
 /** In-memory dedupe store. Exposed for tests and single-process/dev use only. */

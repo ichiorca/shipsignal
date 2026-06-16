@@ -37,14 +37,6 @@ class EngagementMetricKind(StrEnum):
     CONVERSIONS = "conversions"
 
 
-class EngagementSource(StrEnum):
-    """Where an ingested aggregate came from — matches the ``source`` CHECK constraint.
-    Analytics-platform connectors are deferred (spec 021 summary); rows arrive manually."""
-
-    MANUAL_CSV = "manual_csv"
-    API = "api"
-
-
 class EngagementTotals(BaseModel):
     """Run-level aggregate engagement (PRD §17.1 outcome extension), scoped by
     ``release_run_id`` (§2). Each total is the SUM over the run's artifacts of the

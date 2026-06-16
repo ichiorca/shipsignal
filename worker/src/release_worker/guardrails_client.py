@@ -21,6 +21,10 @@ import os
 
 import boto3
 
+from release_worker.bedrock_retry import (
+    bedrock_client_config,
+    call_with_throttle_retry,
+)
 from release_worker.claim_models import GuardrailVerdict
 
 
@@ -50,7 +54,9 @@ class BedrockGuardrailScanner:
                 "BEDROCK_GUARDRAIL_ID / BEDROCK_GUARDRAIL_VERSION "
                 "(a published Guardrail is mandatory)"
             )
-        client = boto3.client("bedrock-runtime", region_name=region)
+        client = boto3.client(
+            "bedrock-runtime", region_name=region, config=bedrock_client_config()
+        )
         return cls(client, guardrail_id, guardrail_version)
 
     def scan(self, text: str) -> GuardrailVerdict:
@@ -60,11 +66,14 @@ class BedrockGuardrailScanner:
         A ``GUARDRAIL_INTERVENED`` action means the content tripped a policy → blocked. The
         intervened assessment categories are summarised (no PII) for the audit trail.
         """
-        response = self._client.apply_guardrail(  # type: ignore[attr-defined]
-            guardrailIdentifier=self._guardrail_id,
-            guardrailVersion=self._guardrail_version,
-            source="OUTPUT",
-            content=[{"text": {"text": text}}],
+        response = call_with_throttle_retry(
+            lambda: self._client.apply_guardrail(  # type: ignore[attr-defined]
+                guardrailIdentifier=self._guardrail_id,
+                guardrailVersion=self._guardrail_version,
+                source="OUTPUT",
+                content=[{"text": {"text": text}}],
+            ),
+            what="Bedrock ApplyGuardrail",
         )
         action = response.get("action", "NONE")
         blocked = action == "GUARDRAIL_INTERVENED"

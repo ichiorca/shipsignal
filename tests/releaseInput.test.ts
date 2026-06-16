@@ -64,7 +64,7 @@ test('accepts a single-type selection', () => {
   assert.deepEqual(result.ok && result.value.artifact_types, ['changelog_entry']);
 });
 
-test('accepts the full six-type selection', () => {
+test('accepts the full §8.1 selection', () => {
   const all = [
     'release_blog',
     'changelog_entry',
@@ -72,6 +72,8 @@ test('accepts the full six-type selection', () => {
     'linkedin_post',
     'demo_script',
     'release_audio_digest',
+    'customer_email',
+    'battlecard_delta',
   ];
   const result = parseCreateReleaseRun({ ...BASE_BODY, artifact_types: all });
   assert.equal(result.ok, true);

@@ -18,8 +18,20 @@ checkpoint rather than a fork — the operator never has to copy a random thread
 
 This is pure logic (an Enum + dicts + string derivation), so the unit gate exercises the
 handoff contract directly without importing langgraph/boto3 (see
-``worker/tests/test_loop_orchestration.py``). ``__main__`` imports it to map the ``--graph``
-arg to a phase and mint the per-phase thread id.
+``worker/tests/test_loop_orchestration.py``).
+
+Two distinct consumers, deliberately:
+
+* ``__main__`` (runtime) imports ONLY ``phase_from_graph`` + ``thread_id_for`` — it runs one
+  ``--graph`` phase per invocation and mints that phase's deterministic thread id. It does NOT
+  walk the sequence itself: phase-to-phase chaining is performed by the CI dispatch layer
+  (each phase is a separate Actions job), one ``--graph`` at a time.
+* ``LOOP_SEQUENCE`` / ``next_phase`` / ``gate_number`` / ``GATE_NUMBER`` are the *declarative*
+  loop contract — the canonical, in-code statement of the constitution §8 order and the
+  three-gate map. They are consumed by the DoD verification test
+  (``worker/tests/test_dod_verification.py``), which asserts the loop's shape matches §8; they
+  are intentionally not called on the runtime path. Keep them in sync with the CI dispatch
+  order — they are the source of truth that the DoD gate checks the pipeline against.
 """
 
 from __future__ import annotations

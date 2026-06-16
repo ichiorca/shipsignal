@@ -30,9 +30,9 @@ export default async function ArtifactsPage({ params }: ArtifactsPageProps) {
   return (
     <main id="main">
       <nav aria-label="Breadcrumb">
-        <a href="/">All runs</a>
+        <a href="/">All launches</a>
         {' › '}
-        <a href={`/releases/${run.id}`}>Release run</a>
+        <a href={`/releases/${run.id}`}>Launch</a>
         {' › '}
         <span aria-current="page">Draft artifacts</span>
       </nav>

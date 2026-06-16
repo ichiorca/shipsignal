@@ -11,7 +11,7 @@ import { generateDemoSchema } from '@/app/lib/mediaTrigger.ts';
 import { parseBody } from '@/app/lib/featureReview.ts';
 import { getFeature } from '@/app/lib/db/features.ts';
 import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
-import { recordApproval } from '@/app/lib/db/approvals.ts';
+import { recordApprovalIdempotent, deleteApproval } from '@/app/lib/db/approvals.ts';
 import { dispatchMediaGeneration } from '@/app/lib/mediaDispatch.ts';
 
 // Aurora + GitHub dispatch require the Node.js runtime (not Edge); secrets stay server-side.
@@ -71,13 +71,25 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
   }
 
   // Record the accountable reviewer who triggered generation (audit trail) before dispatch.
-  await recordApproval({
-    target_type: 'media_trigger',
-    target_id: featureId,
-    decision: 'approved',
-    reviewer: parsed.value.reviewer,
-    notes: parsed.value.notes,
-  });
+  // Idempotency-guarded: a double-click / retry must not record a second trigger or dispatch a
+  // second media job (which would render duplicate assets). `null` means media was already
+  // triggered for this feature.
+  const approvalId = await recordApprovalIdempotent(
+    {
+      target_type: 'media_trigger',
+      target_id: featureId,
+      decision: 'approved',
+      reviewer: parsed.value.reviewer,
+      notes: parsed.value.notes,
+    },
+    `media_trigger:${featureId}`,
+  );
+  if (approvalId === null) {
+    return NextResponse.json(
+      { feature_id: featureId, release_run_id: feature.release_run_id, dispatched: true },
+      { status: 202 },
+    );
+  }
 
   try {
     await dispatchMediaGeneration({
@@ -85,8 +97,9 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
       featureId,
     });
   } catch (err) {
-    // The trigger is recorded but the job didn't start; report 502 so the operator can retry.
+    // The job didn't start; clear the dedupe marker so a retry can proceed, then report 502.
     // Log without leaking secrets (the helper already redacts to status-only).
+    await deleteApproval(approvalId).catch((e: unknown) => console.error("failed to clear dedupe marker; retry may be blocked", { message: e instanceof Error ? e.message : String(e) }));
     console.error('generate-demo dispatch failed', {
       featureId,
       runId: feature.release_run_id,

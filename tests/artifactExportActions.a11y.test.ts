@@ -14,21 +14,47 @@ import { ArtifactExportActions } from '../app/components/ArtifactExportActions.t
 
 const ARTIFACT_ID = 'art11111-1111-2222-3333-444444444444';
 
-function render(): Document {
+function render(artifactType?: string): Document {
+  const props = artifactType === undefined
+    ? { artifactId: ARTIFACT_ID, artifactLabel: 'Onboarding checklists' }
+    : { artifactId: ARTIFACT_ID, artifactLabel: 'Onboarding checklists', artifactType, reviewer: 'Dana' };
   const html = renderToStaticMarkup(
     createElement(
       'main',
       { id: 'main' },
       createElement('h1', null, 'Review artifacts (Gate #2)'),
-      createElement(ArtifactExportActions, {
-        artifactId: ARTIFACT_ID,
-        artifactLabel: 'Onboarding checklists',
-      }),
+      createElement(ArtifactExportActions, props),
     ),
   );
   return new JSDOM(`<!doctype html><html lang="en"><body>${html}</body></html>`).window
     .document;
 }
+
+function buttonTexts(doc: Document): readonly string[] {
+  return [...doc.querySelectorAll(`[data-export-actions="${ARTIFACT_ID}"] button`)].map(
+    (b) => b.textContent ?? '',
+  );
+}
+
+// Path B / Phase 3 — the social publish buttons are strictly type-gated.
+test('an x_post shows "Publish to X" and not the other channel buttons', () => {
+  const texts = buttonTexts(render('x_post'));
+  assert.ok(texts.includes('Publish to X'), `got: ${texts.join(', ')}`);
+  assert.ok(!texts.includes('Publish to LinkedIn'));
+  assert.ok(!texts.includes('Prepare Show HN'));
+});
+
+test('a linkedin_post shows "Publish to LinkedIn"; a hackernews_post shows "Prepare Show HN"', () => {
+  assert.ok(buttonTexts(render('linkedin_post')).includes('Publish to LinkedIn'));
+  assert.ok(buttonTexts(render('hackernews_post')).includes('Prepare Show HN'));
+});
+
+test('a non-social type (release_blog) shows no social channel buttons', () => {
+  const texts = buttonTexts(render('release_blog'));
+  assert.ok(!texts.includes('Publish to X'));
+  assert.ok(!texts.includes('Publish to LinkedIn'));
+  assert.ok(!texts.includes('Prepare Show HN'));
+});
 
 test('export actions have zero axe violations', async () => {
   const results = await axe.run(render().body, {

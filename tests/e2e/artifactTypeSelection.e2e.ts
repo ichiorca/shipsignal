@@ -40,6 +40,8 @@ const DESELECTED = [
   'sales_onepager',
   'demo_script',
   'release_audio_digest',
+  'customer_email',
+  'battlecard_delta',
 ] as const;
 
 function dbClient(): pg.Client {

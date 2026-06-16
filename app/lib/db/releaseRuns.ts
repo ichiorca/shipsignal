@@ -8,7 +8,7 @@ import { query, type Queryable } from '@/app/lib/aurora.ts';
 import { isUuid } from '@/app/lib/uuid.ts';
 import type { RunStatus } from '@/app/lib/runStatus.ts';
 import { isRunStatus } from '@/app/lib/runStatus.ts';
-import { isArtifactType, type ArtifactType } from '@/app/lib/artifactTypes.ts';
+import { isArtifactType, ALL_ARTIFACT_TYPES, type ArtifactType } from '@/app/lib/artifactTypes.ts';
 
 export type TriggerType = 'manual' | 'release_tag' | 'workflow_dispatch';
 
@@ -95,15 +95,16 @@ export async function insertReleaseRun(
   db: Queryable = { query },
 ): Promise<ReleaseRun> {
   const id = randomUUID();
-  // artifact_types: COALESCE onto the column DEFAULT keeps a selection-less insert
-  // identical to pre-022 behaviour (all six) while letting callers pass a subset.
+  // artifact_types: a selection-less insert defaults to "generate everything" (the pre-022
+  // behaviour). The default is derived from ALL_ARTIFACT_TYPES — the one source of truth — rather
+  // than a hardcoded SQL literal, so it can never drift out of sync when the type set grows.
+  const artifactTypes = args.artifact_types
+    ? [...args.artifact_types]
+    : [...ALL_ARTIFACT_TYPES];
   const result = await db.query<ReleaseRunRow>(
     `INSERT INTO release_runs
        (id, repo, base_ref, head_ref, trigger_type, status, artifact_types, run_metadata_json)
-     VALUES ($1, $2, $3, $4, $5, 'created',
-             COALESCE($6::text[],
-                      '{release_blog,changelog_entry,sales_onepager,linkedin_post,demo_script,release_audio_digest}'::text[]),
-             $7)
+     VALUES ($1, $2, $3, $4, $5, 'created', $6::text[], $7)
      RETURNING ${SELECT_COLUMNS}`,
     [
       id,
@@ -111,7 +112,7 @@ export async function insertReleaseRun(
       args.base_ref,
       args.head_ref,
       args.trigger_type,
-      args.artifact_types ? [...args.artifact_types] : null,
+      artifactTypes,
       JSON.stringify(args.run_metadata ?? {}),
     ],
   );

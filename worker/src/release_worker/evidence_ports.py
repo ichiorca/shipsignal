@@ -56,6 +56,11 @@ class EvidenceSink(Protocol):
         """Insert one redacted evidence_items row."""
         ...
 
+    def record_many(self, items: tuple[EvidenceRecord, ...]) -> None:
+        """Insert a batch of redacted evidence_items rows in ONE round trip. Idempotent on the
+        row id (a re-run of the persist node must converge, not duplicate)."""
+        ...
+
 
 class UnknownBoundaryError(KeyError):
     """Raised when a ``BoundaryReader`` has no boundary for a ``release_run_id``."""
@@ -121,3 +126,12 @@ class InMemoryEvidenceSink:
 
     def record(self, item: EvidenceRecord) -> None:
         self.records.append(item)
+
+    def record_many(self, items: tuple[EvidenceRecord, ...]) -> None:
+        # Mirror the durable sink's id-idempotency: skip any row whose id was already recorded,
+        # so a re-persist converges rather than duplicating (matches ON CONFLICT DO NOTHING).
+        seen = {r.evidence_id for r in self.records}
+        for item in items:
+            if item.evidence_id not in seen:
+                self.records.append(item)
+                seen.add(item.evidence_id)

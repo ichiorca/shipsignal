@@ -9,7 +9,7 @@
 import { NextResponse } from 'next/server';
 import { artifactResumeSchema, parseBody } from '@/app/lib/artifactReview.ts';
 import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
-import { recordApproval } from '@/app/lib/db/approvals.ts';
+import { recordApprovalIdempotent, deleteApproval } from '@/app/lib/db/approvals.ts';
 import { dispatchResume } from '@/app/lib/resumeDispatch.ts';
 import { dispatchEval } from '@/app/lib/evalDispatch.ts';
 import { sweepApprovedArtifactWebhooks } from '@/app/lib/outboundDispatch.ts';
@@ -44,13 +44,25 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
   }
 
   // Record the manifest-level decision (audit trail), then resume the content graph thread.
-  await recordApproval({
-    target_type: 'artifact_manifest',
-    target_id: releaseRunId,
-    decision: parsed.value.decision,
-    reviewer: parsed.value.reviewer,
-    notes: parsed.value.notes,
-  });
+  // Idempotency-guarded: a double-click / retry must not record a second decision, dispatch a
+  // second worker, or re-trigger the post-approval eval + webhook sweep. `null` means this gate
+  // was already resumed by an earlier request that owns those side effects.
+  const approvalId = await recordApprovalIdempotent(
+    {
+      target_type: 'artifact_manifest',
+      target_id: releaseRunId,
+      decision: parsed.value.decision,
+      reviewer: parsed.value.reviewer,
+      notes: parsed.value.notes,
+    },
+    `artifact_manifest:${releaseRunId}`,
+  );
+  if (approvalId === null) {
+    return NextResponse.json(
+      { release_run_id: releaseRunId, decision: parsed.value.decision, resumed: true },
+      { status: 200 },
+    );
+  }
 
   try {
     await dispatchResume({
@@ -60,8 +72,9 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
       graph: 'content_generation',
     });
   } catch (err) {
-    // The decision is recorded but the resume dispatch didn't start; report 502 so the
-    // operator can retry. Log without leaking secrets (the helper already redacts).
+    // The resume dispatch didn't start; clear the dedupe marker so a retry can proceed, then
+    // report 502. Log without leaking secrets (the helper already redacts).
+    await deleteApproval(approvalId).catch((e: unknown) => console.error("failed to clear dedupe marker; retry may be blocked", { message: e instanceof Error ? e.message : String(e) }));
     console.error('gate#2 resume dispatch failed', {
       runId: releaseRunId,
       message: String(err),

@@ -116,25 +116,27 @@ export async function listArtifactsWithClaimsForRun(
   const artifacts = artifactResult.rows;
   if (artifacts.length === 0) return [];
 
-  // One round-trip each for all claims and all links, joined to the redacted excerpt.
-  const claimResult = await query<ClaimRow>(
-    `SELECT ac.id, ac.artifact_id, ac.claim_text, ac.claim_type, ac.support_status,
-            ac.risk_level
-       FROM artifact_claims ac
-       JOIN artifacts a ON a.id = ac.artifact_id
-      WHERE a.release_run_id = $1`,
-    [releaseRunId],
-  );
-  const evidenceResult = await query<ClaimEvidenceRow>(
-    `SELECT cel.claim_id, cel.evidence_item_id, ei.evidence_type, ei.redacted_excerpt,
-            cel.support_score
-       FROM claim_evidence_links cel
-       JOIN artifact_claims ac ON ac.id = cel.claim_id
-       JOIN artifacts a ON a.id = ac.artifact_id
-       JOIN evidence_items ei ON ei.id = cel.evidence_item_id
-      WHERE a.release_run_id = $1`,
-    [releaseRunId],
-  );
+  // All claims and all links in parallel (independent queries) — one round-trip of latency, not two.
+  const [claimResult, evidenceResult] = await Promise.all([
+    query<ClaimRow>(
+      `SELECT ac.id, ac.artifact_id, ac.claim_text, ac.claim_type, ac.support_status,
+              ac.risk_level
+         FROM artifact_claims ac
+         JOIN artifacts a ON a.id = ac.artifact_id
+        WHERE a.release_run_id = $1`,
+      [releaseRunId],
+    ),
+    query<ClaimEvidenceRow>(
+      `SELECT cel.claim_id, cel.evidence_item_id, ei.evidence_type, ei.redacted_excerpt,
+              cel.support_score
+         FROM claim_evidence_links cel
+         JOIN artifact_claims ac ON ac.id = cel.claim_id
+         JOIN artifacts a ON a.id = ac.artifact_id
+         JOIN evidence_items ei ON ei.id = cel.evidence_item_id
+        WHERE a.release_run_id = $1`,
+      [releaseRunId],
+    ),
+  ]);
 
   const claimsByArtifact = new Map<string, ClaimRow[]>();
   for (const claim of claimResult.rows) {
@@ -194,6 +196,21 @@ export async function getArtifactWithClaims(
   };
 }
 
+/** The artifact's current status only (a lightweight read — no claims/evidence). Used by the
+ *  scheduled-publish drain to re-verify the artifact is STILL approved at send time (an artifact
+ *  rejected/edited after scheduling must never ship — constitution §5). Null if it doesn't exist. */
+export async function getArtifactStatus(
+  artifactId: string,
+  db: Queryable = { query },
+): Promise<string | null> {
+  if (!isUuid(artifactId)) return null;
+  const result = await db.query<{ status: string }>(
+    `SELECT status FROM artifacts WHERE id = $1`,
+    [artifactId],
+  );
+  return result.rows[0]?.status ?? null;
+}
+
 /** The reviewed statuses an artifact may move to at Gate #2 (a human decision sets these;
  *  no self-approval). Mirrors the Python GateDecision values + the pre-gate states. */
 export type ArtifactStatus =
@@ -203,12 +220,14 @@ export type ArtifactStatus =
   | 'rejected'
   | 'edited';
 
-/** Apply a reviewed status to one artifact. */
+/** Apply a reviewed status to one artifact. Accepts a transaction client so the status flip can
+ *  commit atomically with the approval audit row (the reject/edit routes). */
 export async function setArtifactStatus(
   artifactId: string,
   status: ArtifactStatus,
+  db: Queryable = { query },
 ): Promise<void> {
-  await query(
+  await db.query(
     `UPDATE artifacts SET status = $2, updated_at = now() WHERE id = $1`,
     [artifactId, status],
   );
@@ -240,8 +259,9 @@ export async function tryApproveArtifact(
 export async function applyArtifactEdit(
   artifactId: string,
   edit: { readonly title?: string | undefined; readonly body_markdown?: string | undefined },
+  db: Queryable = { query },
 ): Promise<void> {
-  await query(
+  await db.query(
     `UPDATE artifacts
         SET title         = COALESCE($2, title),
             body_markdown = COALESCE($3, body_markdown),

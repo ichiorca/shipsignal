@@ -12,6 +12,7 @@
 import { createElement } from 'react';
 import type { ReactElement } from 'react';
 import type { CostByNode, CostTotals, RunCostBreakdown } from '@/app/lib/cost.ts';
+import { MiniBar } from './MiniBar.ts';
 
 export interface CostBreakdownProps {
   readonly breakdown: RunCostBreakdown;
@@ -27,7 +28,7 @@ function formatCount(n: number): string {
   return n.toLocaleString('en-US');
 }
 
-function nodeRow(node: CostByNode): ReactElement {
+function nodeRow(node: CostByNode, maxCost: number): ReactElement {
   return createElement(
     'tr',
     { key: `${node.node_name}:${node.model_id}`, 'data-node': node.node_name },
@@ -39,7 +40,14 @@ function nodeRow(node: CostByNode): ReactElement {
     createElement('td', null, formatCount(node.input_tokens)),
     createElement('td', null, formatCount(node.output_tokens)),
     createElement('td', null, `${formatCount(node.latency_ms_total)} ms`),
-    createElement('td', null, formatUsd(node.cost_usd)),
+    // Cost as text + a decorative bar sized against the costliest node (scannable "where the
+    // money goes" without colour/shape being the sole signal).
+    createElement(
+      'td',
+      { 'data-cost-cell': true },
+      createElement('span', { 'data-metric-value': true }, formatUsd(node.cost_usd)),
+      maxCost > 0 ? createElement(MiniBar, { value: node.cost_usd, max: maxCost }) : null,
+    ),
   );
 }
 
@@ -77,6 +85,7 @@ export function CostBreakdown({ breakdown }: CostBreakdownProps): ReactElement {
       'No model-call telemetry has been recorded for this run yet.',
     );
   }
+  const maxCost = byNode.reduce((m, n) => Math.max(m, n.cost_usd), 0);
   return createElement(
     'table',
     null,
@@ -90,7 +99,7 @@ export function CostBreakdown({ breakdown }: CostBreakdownProps): ReactElement {
         ...COLUMNS.map((label) => createElement('th', { key: label, scope: 'col' }, label)),
       ),
     ),
-    createElement('tbody', null, ...byNode.map(nodeRow)),
+    createElement('tbody', null, ...byNode.map((node) => nodeRow(node, maxCost))),
     createElement('tfoot', null, totalsRow(totals)),
   );
 }

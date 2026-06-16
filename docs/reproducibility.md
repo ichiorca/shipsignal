@@ -78,7 +78,10 @@ by the runtime entry point (`python -m release_worker`).
    Gate #2). Review at `/releases/{id}/artifacts/review`; resume with `graph=content_generation`.
    A blocked unsupported-claim artifact can never reach `approved` (constitution §5).
 5. **Phase 3** — dispatch `graph=media_generation`. No gate (its demo_script is already
-   Gate#2-approved); it runs straight through to S3.
+   Gate#2-approved); it runs straight through to S3. This phase can also be triggered on demand
+   from the dashboard: the **Generate demo media** button on `/releases/{id}/media` dispatches
+   `graph=media_generation` for one approved feature (`POST /api/features/{id}/generate-demo`),
+   and the rendered assets appear on that same page.
 6. **Phase 4 + Gate #3** — dispatch `graph=skill_learning` (signals → candidate → Gate #3).
    Review at `/releases/{id}/skills/review`; resume with `graph=skill_learning` and the
    `reviewer`. On **approve** the worker performs the single repo `SKILL.md` write and records
@@ -86,7 +89,15 @@ by the runtime entry point (`python -m release_worker`).
 
 Every dispatch is idempotent at the `(run, phase)` level: a re-dispatch resumes the same
 checkpointed thread, and transient Bedrock/GitHub/S3 blips are retried with backoff
-(`transient_retry`, spec 012 T2) rather than wedging the run.
+(`transient_retry`, spec 012 T2) rather than wedging the run. Idempotency also holds at the
+**gate-decision** layer: each gate-resume, the demo-media trigger, and each one-click publish
+records a `dedupe_key` in `approvals` (partial unique index, migration 0024), so a double-click
+or network retry resolves once — no duplicate worker dispatch, audit row, or outward call. On the
+worker side, every Bedrock surface — Converse generation, Titan embeddings, and Guardrails — now
+shares one throttle-backoff + socket-timeout policy (`bedrock_retry`), so a `ThrottlingException`
+or hung socket on any of them is retried/bounded rather than aborting the phase. Evidence rows
+carry a deterministic id (hash of run + lineage + redacted content), so a re-run of the evidence
+phase converges (`ON CONFLICT` no-op + same S3 key) instead of orphaning blobs or duplicating rows.
 
 See `docs/configuration.md` for the dashboard/API-route env (spec 001) and the constitution
 (`memory/constitution.md` §5/§8) for the safety rails these steps honor.

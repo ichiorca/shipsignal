@@ -1,8 +1,22 @@
-# --- Harness runtime state (local & non-reproducible; the committed config is
-#     harness.cue, levels.cue, tools/, sagas/, .claude/, memory/, hooks/) ---
-.harness/state/
-.harness/traces.jsonl
-.harness/traces.jsonl.*
+# --- Harness internal artifacts (local tooling; NOT part of the hackathon submission) ---
+.harness/
+adapters/
+cue.mod/
+evals/
+hooks/generated/
+hooks/precommit-gate.cue
+hooks/sessionstart-context.cue
+sagas/
+skills/
+tools/
+workflows/
+harness.cue
+harness.lock
+levels.cue
+workflows-active.cue
+specs/build-recommendations-functional.md
+specs/Building an Internal Release-to-Content System from Code Diffs.pdf
+specs/PRD.md
 
 # --- Secrets / environment (also sandbox-protected; never commit) ---
 .env

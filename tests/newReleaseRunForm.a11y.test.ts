@@ -70,13 +70,17 @@ test('the section is labelled by its heading', () => {
 
 // --- T2/T5 (spec 022) — the artifact-type checkbox group ----------------------------
 
-const ALL_SIX = [
+const ALL_TYPES = [
   'release_blog',
   'changelog_entry',
   'sales_onepager',
   'linkedin_post',
   'demo_script',
   'release_audio_digest',
+  'customer_email',
+  'battlecard_delta',
+  'x_post',
+  'hackernews_post',
 ];
 
 test('the artifact-type group is a fieldset with a legend', () => {
@@ -86,9 +90,9 @@ test('the artifact-type group is a fieldset with a legend', () => {
   assert.equal(fieldset?.querySelector('legend')?.textContent, 'Artifact types');
 });
 
-test('all six §8.1 types render as labelled checkboxes, checked by default', () => {
+test('the full §8.1 type set renders as labelled checkboxes, checked by default', () => {
   const doc = render();
-  for (const type of ALL_SIX) {
+  for (const type of ALL_TYPES) {
     const id = `artifact-type-${type}`;
     const box = doc.getElementById(id);
     assert.ok(box, `checkbox #${id} exists`);

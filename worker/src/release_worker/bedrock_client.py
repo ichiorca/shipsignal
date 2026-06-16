@@ -32,12 +32,16 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from decimal import Decimal
 
 import boto3
-from botocore.exceptions import ClientError
 
+from release_worker.bedrock_retry import (
+    bedrock_client_config,
+    call_with_throttle_retry,
+)
 from release_worker.cost_telemetry import (
     CostTelemetrySink,
     ModelCallTelemetry,
@@ -48,19 +52,6 @@ from release_worker.model_routing import resolve_model
 from release_worker.token_budget import BudgetTracker, TokenBudget
 
 logger = logging.getLogger("release_worker.bedrock")
-
-_MAX_ATTEMPTS = 5
-_BASE_BACKOFF_SECONDS = 0.5
-_BACKOFF_CAP_SECONDS = 16.0
-
-
-def _jittered_backoff(attempt: int, rand_fraction: float) -> float:
-    """Exponential backoff with full jitter, capped (aws-bedrock-rules).
-
-    ``rand_fraction`` (0..1) is injected so the delay is deterministic under test.
-    """
-    ceiling = min(_BACKOFF_CAP_SECONDS, _BASE_BACKOFF_SECONDS * (2**attempt))
-    return ceiling * rand_fraction
 
 
 class BedrockModelClient:
@@ -85,8 +76,12 @@ class BedrockModelClient:
         self._release_run_id = release_run_id
         self._telemetry_sink = telemetry_sink
         self._budget = budget
-        # idempotency_key -> parsed JSON response (process-local dedupe cache).
+        # idempotency_key -> parsed JSON response (process-local dedupe cache). Guarded by a lock
+        # because the content/claim graphs call generate_json concurrently from a ThreadPoolExecutor
+        # — an unguarded check-then-write would let two threads both miss and double-charge the
+        # token budget / write duplicate telemetry for one deduped key.
         self._cache: dict[str, dict[str, object]] = {}
+        self._cache_lock = threading.Lock()
 
     @classmethod
     def from_env(
@@ -108,7 +103,9 @@ class BedrockModelClient:
                 "BEDROCK_GUARDRAIL_ID / BEDROCK_GUARDRAIL_VERSION "
                 "(a published Guardrail is mandatory)"
             )
-        client = boto3.client("bedrock-runtime", region_name=region)
+        client = boto3.client(
+            "bedrock-runtime", region_name=region, config=bedrock_client_config()
+        )
         budget = (
             BudgetTracker(TokenBudget.from_env())
             if telemetry_sink is not None
@@ -135,37 +132,27 @@ class BedrockModelClient:
         converse_messages = [
             {"role": m["role"], "content": [{"text": m["content"]}]} for m in messages
         ]
-        last_error: ClientError | None = None
-        for attempt in range(_MAX_ATTEMPTS):
-            try:
-                started = time.monotonic()
-                response = self._client.converse(  # type: ignore[attr-defined]
-                    modelId=model_id,
-                    system=[{"text": system}],
-                    messages=converse_messages,
-                    guardrailConfig={
-                        "guardrailIdentifier": self._guardrail_id,
-                        "guardrailVersion": self._guardrail_version,
-                    },
-                )
-                latency_ms = int((time.monotonic() - started) * 1000)
-                blocks = response["output"]["message"]["content"]
-                text = "".join(b.get("text", "") for b in blocks)
-                usage = response.get("usage", {})
-                in_tokens = int(usage.get("inputTokens", 0))
-                out_tokens = int(usage.get("outputTokens", 0))
-                return text, in_tokens, out_tokens, latency_ms
-            except ClientError as err:
-                code = err.response.get("Error", {}).get("Code", "")
-                if code != "ThrottlingException" or attempt == _MAX_ATTEMPTS - 1:
-                    raise
-                last_error = err
-                # Full jitter; deterministic test override not needed at runtime.
-                delay = _jittered_backoff(attempt, 0.5)
-                logger.warning("Bedrock throttled; backing off %.2fs", delay)
-                time.sleep(delay)
-        # Unreachable: the loop either returns or raises, but keep mypy happy.
-        raise RuntimeError("Bedrock Converse exhausted retries") from last_error
+
+        def _once() -> tuple[str, int, int, int]:
+            started = time.monotonic()
+            response = self._client.converse(  # type: ignore[attr-defined]
+                modelId=model_id,
+                system=[{"text": system}],
+                messages=converse_messages,
+                guardrailConfig={
+                    "guardrailIdentifier": self._guardrail_id,
+                    "guardrailVersion": self._guardrail_version,
+                },
+            )
+            latency_ms = int((time.monotonic() - started) * 1000)
+            blocks = response["output"]["message"]["content"]
+            text = "".join(b.get("text", "") for b in blocks)
+            usage = response.get("usage", {})
+            in_tokens = int(usage.get("inputTokens", 0))
+            out_tokens = int(usage.get("outputTokens", 0))
+            return text, in_tokens, out_tokens, latency_ms
+
+        return call_with_throttle_retry(_once, what="Bedrock Converse")
 
     def generate_json(
         self,
@@ -182,8 +169,10 @@ class BedrockModelClient:
         system prompt as the output contract; the response is parsed as JSON and returned
         untrusted (the caller re-validates via Pydantic).
         """
-        if idempotency_key in self._cache:
-            return self._cache[idempotency_key]
+        with self._cache_lock:
+            cached = self._cache.get(idempotency_key)
+        if cached is not None:
+            return cached
 
         # T1 — pick the model id from the node's configured tier (raises on an unrouted task).
         _tier, model_id = resolve_model(task_name)
@@ -217,8 +206,10 @@ class BedrockModelClient:
         if not isinstance(parsed, dict):
             raise ValueError(f"Bedrock returned non-object JSON for task {task_name}")
 
-        self._cache[idempotency_key] = parsed
-        return parsed
+        # setdefault under the lock: if a same-key call raced us, return the value already cached so
+        # callers of one idempotency key always see one object.
+        with self._cache_lock:
+            return self._cache.setdefault(idempotency_key, parsed)
 
 
 class BedrockEmbeddingClient:
@@ -267,7 +258,9 @@ class BedrockEmbeddingClient:
         A ``release_run_id`` + ``telemetry_sink`` enable per-call cost/latency telemetry."""
         region = os.environ.get("AWS_REGION", "us-east-1")
         model_id = os.environ.get("BEDROCK_EMBED_MODEL_ID", cls._DEFAULT_EMBED_MODEL)
-        client = boto3.client("bedrock-runtime", region_name=region)
+        client = boto3.client(
+            "bedrock-runtime", region_name=region, config=bedrock_client_config()
+        )
         return cls(
             client,
             model_id,
@@ -283,12 +276,16 @@ class BedrockEmbeddingClient:
         untrusted boundary data: a missing/short/non-numeric vector fails fast rather than
         persisting a malformed embedding."""
         body = json.dumps({"inputText": text, "dimensions": self._dims})
-        started = time.monotonic()
-        response = self._client.invoke_model(  # type: ignore[attr-defined]
-            modelId=self._model_id, body=body
-        )
-        latency_ms = int((time.monotonic() - started) * 1000)
-        payload = json.loads(response["body"].read())
+
+        def _once() -> tuple[dict[str, object], int]:
+            started = time.monotonic()
+            response = self._client.invoke_model(  # type: ignore[attr-defined]
+                modelId=self._model_id, body=body
+            )
+            latency_ms = int((time.monotonic() - started) * 1000)
+            return json.loads(response["body"].read()), latency_ms
+
+        payload, latency_ms = call_with_throttle_retry(_once, what="Bedrock embed")
         raw = payload.get("embedding")
         if not isinstance(raw, list) or len(raw) != self._dims:
             raise ValueError(

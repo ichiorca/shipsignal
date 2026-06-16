@@ -32,6 +32,26 @@ export interface RunCostBreakdown {
   readonly totals: CostTotals;
 }
 
+/** One node's total spend (summed across every model that node ran on). The "where the spend
+ *  goes by node" chart rolls up to this so each node appears exactly once. */
+export interface NodeCost {
+  readonly node_name: string;
+  readonly cost_usd: number;
+}
+
+/** Roll per-(node,model) rows up to per-node spend, summing across models, most-expensive first.
+ *  `byNode` arrives grouped by node+model, so a single node can appear multiple times; this
+ *  collapses those into one entry per node (the chart needs unique node labels + a true rollup). */
+export function aggregateCostByNode(byNode: readonly CostByNode[]): readonly NodeCost[] {
+  const totals = new Map<string, number>();
+  for (const row of byNode) {
+    totals.set(row.node_name, (totals.get(row.node_name) ?? 0) + row.cost_usd);
+  }
+  return [...totals.entries()]
+    .map(([node_name, cost_usd]) => ({ node_name, cost_usd }))
+    .sort((a, b) => b.cost_usd - a.cost_usd);
+}
+
 /** Sum per-node rows into run totals. Pure — the cost view, the page, and the test share this
  *  one implementation so they never disagree on the arithmetic. */
 export function summarizeCost(byNode: readonly CostByNode[]): CostTotals {

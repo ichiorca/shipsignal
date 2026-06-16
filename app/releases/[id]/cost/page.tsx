@@ -15,7 +15,9 @@ import { getRunCostBreakdown } from '@/app/lib/db/modelCallTelemetry.ts';
 import { listArtifactRefsForRun } from '@/app/lib/db/artifacts.ts';
 import { getRunEngagementByType } from '@/app/lib/db/engagementMetrics.ts';
 import { buildRoiSummary } from '@/app/lib/engagement.ts';
+import { aggregateCostByNode } from '@/app/lib/cost.ts';
 import { CostBreakdown } from '@/app/components/CostBreakdown.ts';
+import { BarChart } from '@/app/components/BarChart.ts';
 import { EngagementCsvUpload } from '@/app/components/EngagementCsvUpload.ts';
 import { RoiBreakdown } from '@/app/components/RoiBreakdown.ts';
 
@@ -48,9 +50,9 @@ export default async function RunCostPage({ params }: CostPageProps) {
   return (
     <main id="main">
       <nav aria-label="Breadcrumb">
-        <a href="/">All runs</a>
+        <a href="/">All launches</a>
         {' › '}
-        <a href={`/releases/${run.id}`}>Release run</a>
+        <a href={`/releases/${run.id}`}>Launch</a>
         {' › '}
         <span aria-current="page">Model cost &amp; latency</span>
       </nav>
@@ -65,6 +67,22 @@ export default async function RunCostPage({ params }: CostPageProps) {
             `estimated $${totals.cost_usd.toFixed(4)} · ` +
             `${(totals.input_tokens + totals.output_tokens).toLocaleString('en-US')} tokens`}
       </p>
+      {breakdown.byNode.length > 0 ? (
+        <section aria-labelledby="spend-chart-heading">
+          <h2 id="spend-chart-heading">Where the spend goes</h2>
+          <BarChart
+            caption="Estimated cost by node (most expensive first)"
+            labelHeader="Node"
+            valueHeader="Est. cost"
+            data={aggregateCostByNode(breakdown.byNode).map((n) => ({
+              label: n.node_name,
+              value: n.cost_usd,
+            }))}
+            formatValue={(usd) => `$${usd.toFixed(4)}`}
+          />
+        </section>
+      ) : null}
+
       <CostBreakdown breakdown={breakdown} />
 
       <section aria-labelledby="roi-heading">

@@ -2,8 +2,9 @@
 #
 #   * postgres  : pgvector + TLS, published on host port 5434 (5432/5433 are in use
 #                 on this host). Container still listens on 5432 internally.
-#   * localstack: LocalStack Pro (S3 + SNS + Bedrock). Bedrock + Guardrails require
-#                 the Pro image and a LOCALSTACK_AUTH_TOKEN.
+#   * localstack: S3 + SNS on the FREE community image by default (enough for the dashboard).
+#                 For the worker's Bedrock model calls, set LOCALSTACK_IMAGE to the Pro image,
+#                 add 'bedrock' to LOCALSTACK_SERVICES, and supply LOCALSTACK_AUTH_TOKEN.
 #
 # Run via the bootstrap script (recommended) or directly:
 #   docker compose --env-file local/dev-env -f local/docker-compose.yml up -d --build
@@ -39,13 +40,15 @@ services:
       - pgdata:/var/lib/postgresql/data
 
   localstack:
-    image: localstack/localstack-pro:latest
+    # Community image (S3 + SNS) by default — enough for the dashboard. Override to
+    # localstack/localstack-pro:latest in local/dev-env for Bedrock (worker graphs).
+    image: ${LOCALSTACK_IMAGE:-localstack/localstack:latest}
     ports:
       - "4566:4566"
     environment:
-      # Pro features (Bedrock, Guardrails) only activate with a valid auth token.
-      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:?set LOCALSTACK_AUTH_TOKEN in local/dev-env}
-      SERVICES: s3,sns,bedrock
+      # Optional: only needed (and only honored) by the Pro image for Bedrock/Guardrails.
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:-}
+      SERVICES: ${LOCALSTACK_SERVICES:-s3,sns}
       DEBUG: ${LS_DEBUG:-0}
       # Bedrock spins up a model backend (Ollama) in a sibling container — needs the
       # Docker socket. Set LS_PERSISTENCE=1 to keep buckets/models across restarts.

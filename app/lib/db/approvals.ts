@@ -24,7 +24,11 @@ export type ApprovalTargetType =
   // spec 014 T1 — records the reviewer who triggered demo-media generation for a feature
   // (PRD §14.5). Not a gate decision, but logged in the same gate-agnostic audit table
   // (§10.4, free-text target_type) so the trigger names an accountable human.
-  | 'media_trigger';
+  | 'media_trigger'
+  // operator feedback 2026-06-09 — records the reviewer who published an approved artifact
+  // to a real destination (GitHub Release / Slack). Same rationale as media_trigger: not a
+  // gate, but every outward-facing action names an accountable human.
+  | 'artifact_publish';
 
 export interface RecordApprovalArgs {
   readonly target_type: ApprovalTargetType;
@@ -61,4 +65,47 @@ export async function recordApproval(
     throw new Error('insert approval returned no row');
   }
   return row.id;
+}
+
+/**
+ * Idempotency-guarded variant for the one-shot dispatch routes (manifest resume, per-candidate
+ * skill decision, media trigger, artifact publish). Each such action fires a non-idempotent
+ * side effect, so a double-click / retry must NOT record a second audit row or re-dispatch.
+ *
+ * `dedupeKey` is enforced by the partial unique index `ux_approvals_dedupe` (migration 0024).
+ * On the FIRST call the row is inserted and its id returned. On a replay (a row with the same
+ * key already exists) the insert is a no-op and `null` is returned — the caller treats `null`
+ * as "already actioned" and returns 200 WITHOUT re-dispatching.
+ *
+ * Note: the dedupe row marks a *completed* dispatch. If the outward dispatch then fails, the
+ * caller must `deleteApproval(id)` to clear the marker so a retry can proceed (see the routes).
+ */
+export async function recordApprovalIdempotent(
+  args: RecordApprovalArgs,
+  dedupeKey: string,
+  db: Queryable = { query },
+): Promise<string | null> {
+  const result = await db.query<{ id: string }>(
+    `INSERT INTO approvals
+       (target_type, target_id, decision, reviewer, notes, edited_payload_json, dedupe_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+     RETURNING id`,
+    [
+      args.target_type,
+      args.target_id,
+      args.decision,
+      args.reviewer,
+      args.notes ?? null,
+      args.edited_payload ? JSON.stringify(args.edited_payload) : null,
+      dedupeKey,
+    ],
+  );
+  return result.rows[0]?.id ?? null;
+}
+
+/** Best-effort removal of an approvals row by id. Used to roll back a dedupe marker when the
+ *  one-shot dispatch it guarded fails, so a subsequent retry is not blocked as a replay. */
+export async function deleteApproval(id: string, db: Queryable = { query }): Promise<void> {
+  await db.query('DELETE FROM approvals WHERE id = $1', [id]);
 }

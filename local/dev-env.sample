@@ -19,8 +19,16 @@ AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=test
 AWS_SECRET_ACCESS_KEY=test
 
-# Required by docker-compose to enable LocalStack Pro (Bedrock + Guardrails).
-# Get this from https://app.localstack.cloud  ->  Auth Token.
+# Two modes (see docs/local-dev.md "Quickstart"):
+#   * DASHBOARD-ONLY (default, FREE): community LocalStack provides S3 + SNS. This is enough
+#     to run and test the whole DASHBOARD end-to-end — seed demo data with the home page's
+#     "Load sample release" button. Bedrock model calls are NOT available in this mode, which
+#     only matters if you run the worker generation graphs locally.
+#   * FULL (LocalStack Pro, PAID): adds emulated Bedrock + Guardrails for the worker graphs.
+#     Set LOCALSTACK_IMAGE=localstack/localstack-pro:latest, add bedrock to LOCALSTACK_SERVICES,
+#     and paste your token below (https://app.localstack.cloud -> Auth Token).
+LOCALSTACK_IMAGE=localstack/localstack:latest
+LOCALSTACK_SERVICES=s3,sns
 LOCALSTACK_AUTH_TOKEN=
 
 # Optional LocalStack toggles (used by docker-compose):
@@ -77,6 +85,25 @@ ELEVENLABS_OUTPUT_FORMAT=mp3_44100_128
 # Scratch dir for narration/video the worker writes before S3 upload (default /tmp
 # does not exist on Windows — keep this repo-local).
 MEDIA_WORK_DIR=./.localmedia
+
+# ----------------------------------------------------------------------------------
+# Publishing channels (Path B / Phases 3-4) — all OPTIONAL; safe defaults for local.
+# ----------------------------------------------------------------------------------
+# With no channel credentials, publishing runs as a DRY-RUN: the full approve->publish loop
+# executes and the UI shows exactly what WOULD post, but nothing is sent. Ideal for local.
+# PUBLISH_DRY_RUN=1 forces dry-run even if you later add real tokens.
+PUBLISH_DRY_RUN=1
+# 'manual' (default) or 'scheduled'. Use 'scheduled' to exercise approve-then-schedule + the
+# "Schedule" controls on the Gate #2 / artifact pages and the Distribute "Scheduled posts" queue.
+PUBLISH_MODE=scheduled
+# Real channel tokens — leave empty to keep everything in dry-run.
+LINKEDIN_ACCESS_TOKEN=
+LINKEDIN_ORG_ID=
+X_ACCESS_TOKEN=
+# Shared secret guarding the scheduled-publish DRAIN endpoint (POST /api/internal/
+# scheduled-publishes/run). Any random string locally; unset = drain returns 503 (off). To
+# fire due posts locally, POST to that route with header: Authorization: Bearer <this value>.
+SCHEDULED_PUBLISH_SECRET=local-dev-drain-secret
 
 # ----------------------------------------------------------------------------------
 # Misc

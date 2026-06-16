@@ -1,7 +1,8 @@
 # ShipSignal local bootstrap (Windows / PowerShell).
 #
-# Brings up Postgres (TLS, host:5434) + LocalStack Pro (S3/SNS/Bedrock), creates the
-# S3 buckets, attempts a Bedrock Guardrail, and applies the Alembic migrations.
+# Brings up Postgres (TLS, host:5434) + LocalStack (S3/SNS — free community by default;
+# Bedrock too if you configure Pro), creates the S3 buckets, attempts a Bedrock Guardrail
+# (Pro only), and applies the Alembic migrations.
 #
 # Usage:   pwsh local/bootstrap.ps1
 # Re-run safe (idempotent). Run from the repo root.
@@ -33,7 +34,8 @@ Get-Content $envFile | ForEach-Object {
 }
 
 if (-not $env:LOCALSTACK_AUTH_TOKEN) {
-  throw "LOCALSTACK_AUTH_TOKEN is empty in local/dev-env (required for Bedrock Pro)."
+  Write-Host "No LOCALSTACK_AUTH_TOKEN -> community LocalStack (S3 + SNS only)." -ForegroundColor Yellow
+  Write-Host "  The dashboard works fully; the worker's Bedrock calls need Pro (docs/local-dev.md)." -ForegroundColor Yellow
 }
 
 # --- Bring up the containers ------------------------------------------------------
@@ -68,8 +70,8 @@ foreach ($bucket in @($env:EVIDENCE_BUCKET, $env:MEDIA_BUCKET)) {
   try { AwsLocal @('s3', 'mb', "s3://$bucket") | Out-Null } catch { Write-Host "  (already exists)" }
 }
 
-# --- Best-effort Bedrock Guardrail ------------------------------------------------
-if (-not $env:BEDROCK_GUARDRAIL_ID) {
+# --- Best-effort Bedrock Guardrail (Pro only — skipped in community S3/SNS mode) --
+if ($env:LOCALSTACK_AUTH_TOKEN -and -not $env:BEDROCK_GUARDRAIL_ID) {
   Write-Host "Attempting to create a Bedrock Guardrail in LocalStack ..." -ForegroundColor Cyan
   try {
     $out = AwsLocal @(

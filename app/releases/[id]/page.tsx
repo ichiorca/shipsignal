@@ -6,13 +6,14 @@
 
 import { notFound } from 'next/navigation';
 import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
-import type { ReleaseRun } from '@/app/lib/db/releaseRuns.ts';
+import { nextStep, buildPipeline } from '@/app/lib/runProgress.ts';
+import { RunPipeline } from '@/app/components/RunPipeline.ts';
 import { listEvidenceForRun } from '@/app/lib/db/evidenceItems.ts';
 import { getRunCostBreakdown } from '@/app/lib/db/modelCallTelemetry.ts';
 import { listArtifactRefsForRun } from '@/app/lib/db/artifacts.ts';
 import { getRunEngagementByType } from '@/app/lib/db/engagementMetrics.ts';
 import { buildRoiSummary } from '@/app/lib/engagement.ts';
-import { EvidenceTable } from '@/app/components/EvidenceTable.ts';
+import { EvidenceFeed } from '@/app/components/EvidenceFeed.ts';
 import { CategorizedSignals } from '@/app/components/CategorizedSignals.ts';
 import { RoiBreakdown } from '@/app/components/RoiBreakdown.ts';
 import { humanizeStatus, formatTimestamp } from '@/app/lib/displayFormat.ts';
@@ -22,19 +23,6 @@ export const dynamic = 'force-dynamic';
 
 interface RunDetailPageProps {
   readonly params: Promise<{ id: string }>;
-}
-
-/** The action a reviewer should take next, derived from the run's status, so the page tells
- *  them what to do instead of presenting every link with equal weight (UX review H3). */
-function nextStep(run: ReleaseRun): { readonly label: string; readonly href: string } | null {
-  switch (run.status) {
-    case 'features_pending_review':
-      return { label: 'Review the feature manifest (Gate #1)', href: `/releases/${run.id}/review` };
-    case 'artifacts_pending_review':
-      return { label: 'Review the generated artifacts (Gate #2)', href: `/releases/${run.id}/artifacts/review` };
-    default:
-      return null;
-  }
 }
 
 export default async function RunDetailPage({ params }: RunDetailPageProps) {
@@ -58,6 +46,8 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
     breakdown,
   );
   const next = nextStep(run);
+  // UI tier-1 #2: the lifecycle stepper — where the run is, what's next, only reachable stages link.
+  const pipeline = buildPipeline(run);
 
   // Every screen that exists for a run, in pipeline order. Previously Media, Gate #3
   // skills review, and Evals had no link in from the run and were reachable only by URL.
@@ -74,9 +64,11 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
   return (
     <main id="main">
       <nav aria-label="Breadcrumb">
-        <a href="/">← All release runs</a>
+        <a href="/">← All launches</a>
       </nav>
-      <h1>Release run {run.repo}</h1>
+      <h1>
+        {run.repo} <span data-run-range>· {run.base_ref}…{run.head_ref}</span>
+      </h1>
 
       {next !== null ? (
         <p role="status">
@@ -89,7 +81,10 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
         </p>
       )}
 
+      <RunPipeline stages={pipeline} />
+
       <nav aria-label="Run sections">
+        <h2>Jump to a screen</h2>
         <ul>
           {sections.map((section) => (
             <li key={section.href}>
@@ -129,7 +124,8 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
 
       <h2>Evidence</h2>
       <p>{evidence.length === 1 ? '1 item' : `${evidence.length} items`}</p>
-      <EvidenceTable items={evidence} />
+      {/* Frontend audit (gap #2) — search + pagination around the evidence table. */}
+      <EvidenceFeed items={evidence} />
     </main>
   );
 }

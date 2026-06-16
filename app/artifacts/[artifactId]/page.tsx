@@ -8,7 +8,11 @@
 
 import { notFound } from 'next/navigation';
 import { getArtifactWithClaims } from '@/app/lib/db/claims.ts';
+import { listSchedulesForArtifact } from '@/app/lib/db/scheduledPublishes.ts';
+import { suggestNextWindow } from '@/app/lib/scheduledPublish.ts';
+import { publishMode } from '@/app/lib/channelDispatch.ts';
 import { ArtifactExportActions } from '@/app/components/ArtifactExportActions.ts';
+import { SchedulePublish } from '@/app/components/SchedulePublish.ts';
 import { ClaimInspector } from '@/app/components/ClaimInspector.ts';
 
 // Always reflect the latest claim + support state for the artifact.
@@ -25,6 +29,12 @@ export default async function ClaimInspectorPage({ params }: ClaimInspectorPageP
     notFound();
   }
 
+  // Phase 4 — scheduling data for an approved post (the component renders nothing for a
+  // non-schedulable type, e.g. a blog or Hacker News post).
+  const schedulingEnabled = publishMode() === 'scheduled';
+  const schedules =
+    artifact.status === 'approved' ? await listSchedulesForArtifact(artifact.id) : [];
+
   return (
     <main id="main">
       <p>
@@ -33,13 +43,26 @@ export default async function ClaimInspectorPage({ params }: ClaimInspectorPageP
       <h1>Claim inspector</h1>
       <p>
         {artifact.title ?? artifact.artifact_type} ·{' '}
-        {artifact.claims.length === 1 ? '1 claim' : `${artifact.claims.length} claims`}
+        {artifact.claims.length === 1 ? '1 claim' : `${artifact.claims.length} claims`} ·{' '}
+        <a href={`/artifacts/${artifact.id}/provenance`}>Why we can say this →</a>
       </p>
-      {/* T2 (spec 019) — an approved artifact exposes its §18.1 snapshot for copy/download. */}
+      {/* T2 (spec 019) — an approved artifact exposes its §18.1 snapshot for copy/download, plus
+          one-click publish to its real destinations. `artifactType` enables the publish buttons
+          (the component supplies its own reviewer field here, since this page has no gate form). */}
       {artifact.status === 'approved' ? (
         <ArtifactExportActions
           artifactId={artifact.id}
           artifactLabel={artifact.title ?? artifact.artifact_type}
+          artifactType={artifact.artifact_type}
+        />
+      ) : null}
+      {artifact.status === 'approved' ? (
+        <SchedulePublish
+          artifactId={artifact.id}
+          artifactType={artifact.artifact_type}
+          schedulingEnabled={schedulingEnabled}
+          suggestedTimeIso={suggestNextWindow(new Date())}
+          schedules={schedules}
         />
       ) : null}
       <ClaimInspector artifact={artifact} />

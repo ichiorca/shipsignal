@@ -10,6 +10,7 @@ import {
   buildExportRecord,
   exportFilename,
   isExportFormat,
+  provenanceFooterMarkdown,
   renderExport,
   renderHtmlExport,
   renderMarkdownExport,
@@ -62,12 +63,51 @@ test('markdown export prepends the approved title as an H1', () => {
 
 test('markdown export does not double an existing leading H1', () => {
   const led = { ...SNAPSHOT, final_body_markdown: '# Checklists ship\n\nBody.' };
-  assert.equal(renderMarkdownExport(led), led.final_body_markdown);
+  const rendered = renderMarkdownExport(led);
+  assert.ok(rendered.startsWith(led.final_body_markdown));
+  assert.equal(rendered.match(/^# /gm)?.length, 1, 'exactly one H1');
 });
 
-test('markdown export with a null title and no links is the body verbatim', () => {
+test('markdown export with a null title is the body followed only by the trust footer', () => {
   const untitled = { ...SNAPSHOT, final_title: null, final_body_markdown: 'Plain body.' };
-  assert.equal(renderMarkdownExport(untitled), 'Plain body.');
+  assert.equal(
+    renderMarkdownExport(untitled),
+    `Plain body.\n\n${provenanceFooterMarkdown(untitled)}`,
+  );
+});
+
+// Operator feedback 2026-06-09 (trust badge): the provenance footer is stamped onto every
+// RENDERED deliverable — claims evidence-linked, content hash, run id — while the JSON
+// provenance record stays byte-identical to the approved snapshot.
+
+test('rendered exports carry the provenance trust footer', () => {
+  const markdown = renderMarkdownExport(SNAPSHOT);
+  assert.ok(markdown.includes('**Provenance:** 1/1 claims evidence-linked (100%)'));
+  assert.ok(markdown.includes('content hash `abc123`')); // short hash: full value < 12 chars
+  assert.ok(markdown.includes(`release run \`${SNAPSHOT.release_run_id}\``));
+  // The HTML export renders the same footer through the escape-first renderer.
+  const html = renderHtmlExport(SNAPSHOT);
+  assert.ok(html.includes('<strong>Provenance:</strong>'));
+  assert.ok(html.includes('claims evidence-linked'));
+});
+
+test('the footer states partial support honestly and degrades for zero claims', () => {
+  const partial = {
+    ...SNAPSHOT,
+    claim_support: [
+      ...SNAPSHOT.claim_support,
+      { claim_id: 'c2', support_status: 'unsupported', risk_level: 'high' },
+    ],
+  };
+  assert.ok(
+    provenanceFooterMarkdown(partial).includes('1/2 claims evidence-linked (50%)'),
+  );
+  const claimless = { ...SNAPSHOT, claim_support: [] };
+  assert.ok(provenanceFooterMarkdown(claimless).includes('no factual claims extracted'));
+});
+
+test('the JSON provenance record never carries the rendered footer', () => {
+  assert.ok(!renderExport(SNAPSHOT, 'json').includes('Provenance:'));
 });
 
 // T2 (spec 021) — export-time UTM stamping on the spec-019 paths.

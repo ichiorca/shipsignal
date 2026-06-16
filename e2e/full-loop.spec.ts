@@ -28,7 +28,9 @@ test.describe('full loop end-to-end across all three gates', () => {
   }) => {
     // --- Release review (run detail) — the loop's entry surface (PRD §13.1). ----------
     await page.goto(`/releases/${RUN_ID}`);
-    await expect(page.getByRole('heading', { level: 1 })).toContainText('Release run');
+    // The launch-detail page is the entry surface; its h1 is the repo + compare range, so confirm
+    // we landed via the (Path B / Phase 1) renamed breadcrumb back to the launches feed.
+    await expect(page.getByRole('link', { name: '← All launches' })).toBeVisible();
     // The operator reaches Gate #1 from here, not by guessing a URL.
     await page.getByRole('link', { name: /Review feature manifest \(Gate #1\)/ }).click();
 

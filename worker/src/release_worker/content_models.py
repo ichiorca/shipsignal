@@ -30,8 +30,9 @@ from release_worker.content_hash import artifact_content_hash
 _StrictModel = ConfigDict(frozen=True, extra="forbid")
 
 # T3 (spec 022) — the closed §8.1 artifact-type vocabulary, in canonical order. One Python
-# source of truth, matching app/lib/artifactTypes.ts and the DB CHECK (migration 0022);
+# source of truth, matching app/lib/artifactTypes.ts and the DB CHECK (migration 0023);
 # the generation specs in content_nodes derive their fan-out from this same set.
+# customer_email + battlecard_delta added by operator decision 2026-06-09 (PRD §8.1).
 ARTIFACT_TYPES: tuple[str, ...] = (
     "release_blog",
     "changelog_entry",
@@ -39,6 +40,13 @@ ARTIFACT_TYPES: tuple[str, ...] = (
     "linkedin_post",
     "demo_script",
     "release_audio_digest",
+    "customer_email",
+    "battlecard_delta",
+    # Path B / Phase 2 — the tagline's "Hacker News, X" channels. Content is generated like any
+    # other type; HN publishing is assisted (no submit API), not automatic. Migration 0026 widens
+    # the DB CHECK in lockstep, matching app/lib/artifactTypes.ts.
+    "x_post",
+    "hackernews_post",
 )
 
 

@@ -21,8 +21,10 @@
 import { createElement, useRef, useState } from 'react';
 import type { ReactElement } from 'react';
 import type { ArtifactWithClaims, ArtifactClaimView } from '@/app/lib/db/claims.ts';
+import type { ScheduledPublishView } from '../lib/scheduledPublish.ts';
 import { typeLabel, groupByType } from '../lib/artifactTypes.ts';
 import { ArtifactExportActions } from './ArtifactExportActions.ts';
+import { SchedulePublish } from './SchedulePublish.ts';
 import { ConfirmButton } from './ConfirmButton.ts';
 import { useReviewerName } from '../lib/useReviewerName.ts';
 
@@ -30,6 +32,10 @@ export interface ArtifactReviewProps {
   readonly releaseRunId: string;
   readonly threadId: string | null;
   readonly artifacts: readonly ArtifactWithClaims[];
+  /** Phase 4 — approve-then-schedule context (optional; defaults to scheduling-off). */
+  readonly schedulingEnabled?: boolean;
+  readonly suggestedTimeIso?: string;
+  readonly schedulesByArtifact?: Readonly<Record<string, readonly ScheduledPublishView[]>>;
 }
 
 type Decision = 'approved' | 'rejected' | 'edited';
@@ -105,6 +111,9 @@ export function ArtifactReview({
   releaseRunId,
   threadId,
   artifacts,
+  schedulingEnabled = false,
+  suggestedTimeIso = '',
+  schedulesByArtifact = {},
 }: ArtifactReviewProps): ReactElement {
   const [reviewer, setReviewer] = useReviewerName();
   const [reviewerError, setReviewerError] = useState(false);
@@ -257,6 +266,21 @@ export function ArtifactReview({
         ? createElement(ArtifactExportActions, {
             artifactId: artifact.id,
             artifactLabel: artifact.title ?? typeLabel(artifact.artifact_type),
+            // Publish destinations (operator feedback 2026-06-09): type gates the GitHub
+            // Release button; the reviewer name flows into the publish audit log.
+            artifactType: artifact.artifact_type,
+            reviewer,
+          })
+        : null,
+      // Phase 4 — schedule an approved post inline from the Gate #2 surface (renders nothing for a
+      // non-schedulable type, or a hint when PUBLISH_MODE isn't 'scheduled').
+      artifact.status === 'approved'
+        ? createElement(SchedulePublish, {
+            artifactId: artifact.id,
+            artifactType: artifact.artifact_type,
+            schedulingEnabled,
+            suggestedTimeIso,
+            schedules: schedulesByArtifact[artifact.id] ?? [],
           })
         : null,
     );

@@ -93,6 +93,10 @@ def _raw_skills(sha: str = _SHA) -> tuple[RawSkill, ...]:
         "social-post-format",
         "demo-script-format",
         "audio-digest-format",
+        "customer-email-format",
+        "battlecard-delta-format",
+        "x-post-format",
+        "hackernews-post-format",
     )
     skills = [
         RawSkill(
@@ -204,7 +208,8 @@ def test_load_approved_features_refuses_when_none_approved() -> None:
 
 # --- T1/T2 (spec 007) generate the full initial artifact set in parallel ----------
 
-# The full initial set (PRD §8.1); deferred types (§8.2) must never be produced.
+# The full initial set (PRD §8.1, incl. the 2026-06-09 operator additions); deferred
+# types (§8.2) must never be produced.
 _INITIAL_TYPES = frozenset(
     {
         "release_blog",
@@ -213,12 +218,16 @@ _INITIAL_TYPES = frozenset(
         "linkedin_post",
         "demo_script",
         "release_audio_digest",
+        "customer_email",
+        "battlecard_delta",
+        # Path B / Phase 2 — the tagline's public social channels.
+        "x_post",
+        "hackernews_post",
     }
 )
 _DEFERRED_TYPES = frozenset(
     {
         "full_training_video",
-        "battlecard_delta",
         "localized_assets",
         "autopublished_assets",
     }
@@ -231,6 +240,10 @@ _FORMAT_SKILL_BY_TYPE = {
     "linkedin_post": "social-post-format",
     "demo_script": "demo-script-format",
     "release_audio_digest": "audio-digest-format",
+    "customer_email": "customer-email-format",
+    "battlecard_delta": "battlecard-delta-format",
+    "x_post": "x-post-format",
+    "hackernews_post": "hackernews-post-format",
 }
 
 
@@ -259,7 +272,7 @@ def test_generate_produces_full_initial_set_as_drafts() -> None:
     artifacts, _events, _client = _generate()
 
     types = {a.artifact_type for a in artifacts}
-    assert types == _INITIAL_TYPES  # the four new types alongside blog + changelog
+    assert types == _INITIAL_TYPES  # the full §8.1 set, nothing more or less
     assert types.isdisjoint(_DEFERRED_TYPES)  # §8.2 deferred types never produced
     for a in artifacts:
         assert a.status == "draft"  # no self-approval (§5)
@@ -391,7 +404,7 @@ def test_generate_single_type_selection_runs_alone() -> None:
     assert artifacts[0].status == "draft"
 
 
-def test_generate_default_selection_is_all_six() -> None:
+def test_generate_default_selection_is_the_full_set() -> None:
     """Back-compat: omitting the selection keeps the full §8.1 fan-out (pre-022 behaviour)."""
     artifacts, _events, _client = _generate()
     assert {a.artifact_type for a in artifacts} == set(ARTIFACT_TYPES)

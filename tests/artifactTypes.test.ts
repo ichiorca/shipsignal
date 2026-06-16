@@ -10,7 +10,7 @@ import {
   parseArtifactTypesDefault,
 } from '../app/lib/artifactTypes.ts';
 
-test('unset or blank env yields all six §8.1 types', () => {
+test('unset or blank env yields the full §8.1 type set', () => {
   assert.deepEqual(parseArtifactTypesDefault(undefined), ALL_ARTIFACT_TYPES);
   assert.deepEqual(parseArtifactTypesDefault(''), ALL_ARTIFACT_TYPES);
   assert.deepEqual(parseArtifactTypesDefault('   '), ALL_ARTIFACT_TYPES);

@@ -157,6 +157,7 @@ class AuroraLearningSignalSink:
                     revised_text, diff_json, reviewer, rejection_category, severity,
                     related_skill_snapshot_ids
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
                 """,
                 (
                     signal.signal_id,
@@ -193,45 +194,50 @@ class AuroraRepoActiveSkillReader:
         if not snapshot_ids:
             return ()
         with self._conn.cursor() as cur:
+            # One query for the latest ACTIVE snapshot per referenced (repo, skill_path), instead
+            # of a SELECT per path (N+1). DISTINCT ON keeps the freshest row per pair; the inner
+            # join restricts to the (repo, skill_path) pairs the referenced snapshots name.
             cur.execute(
                 """
-                SELECT DISTINCT repo, skill_path
-                  FROM skill_repo_snapshots
-                 WHERE id = ANY(%s)
+                SELECT DISTINCT ON (a.repo, a.skill_path)
+                       a.id, a.repo, a.skill_path, a.skill_name, a.skill_version, a.content_hash
+                  FROM skill_repo_snapshots a
+                  JOIN (
+                         SELECT DISTINCT repo, skill_path
+                           FROM skill_repo_snapshots
+                          WHERE id = ANY(%s)
+                       ) ref
+                    ON ref.repo = a.repo AND ref.skill_path = a.skill_path
+                 WHERE a.is_active
+                 ORDER BY a.repo, a.skill_path, a.synced_at DESC
                 """,
                 (list(snapshot_ids),),
             )
-            paths = cur.fetchall()
+            rows = cur.fetchall()
 
-            actives: dict[str, ActiveSkill] = {}
-            for repo, skill_path in paths:
-                if skill_path in actives:
-                    continue
-                cur.execute(
-                    """
-                    SELECT id, skill_name, skill_version, content_hash
-                      FROM skill_repo_snapshots
-                     WHERE repo = %s AND skill_path = %s AND is_active
-                     ORDER BY synced_at DESC
-                     LIMIT 1
-                    """,
-                    (repo, skill_path),
-                )
-                row = cur.fetchone()
-                if row is None:
-                    continue
-                content = self._read_body(skill_path)
-                if content is None:
-                    continue
-                actives[skill_path] = ActiveSkill(
-                    snapshot_id=str(row[0]),
-                    repo=repo,
-                    skill_name=row[1],
-                    skill_path=skill_path,
-                    skill_version=row[2],
-                    content=content,
-                    content_hash=row[3],
-                )
+        actives: dict[str, ActiveSkill] = {}
+        for (
+            snapshot_id,
+            repo,
+            skill_path,
+            skill_name,
+            skill_version,
+            content_hash,
+        ) in rows:
+            if skill_path in actives:
+                continue  # dedupe by skill_path (same path under two repos → first wins)
+            content = self._read_body(skill_path)
+            if content is None:
+                continue  # file missing in the checkout → fail closed (skip)
+            actives[skill_path] = ActiveSkill(
+                snapshot_id=str(snapshot_id),
+                repo=repo,
+                skill_name=skill_name,
+                skill_path=skill_path,
+                skill_version=skill_version,
+                content=content,
+                content_hash=content_hash,
+            )
         return tuple(actives.values())
 
     def _read_body(self, skill_path: str) -> str | None:
@@ -311,6 +317,7 @@ class AuroraSkillCandidateSink:
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s
                 )
+                ON CONFLICT (id) DO NOTHING
                 """,
                 (
                     candidate.candidate_id,

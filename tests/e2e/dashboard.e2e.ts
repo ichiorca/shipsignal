@@ -16,9 +16,11 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { ab, abText, abCount, abVisible, BASE_URL, e2eSkip, closeBrowser } from './agentBrowser.ts';
 
-/** Fill the create-run form and submit it. */
+/** Fill the create-run form and submit it. The create surface lives behind a progressive-
+ *  disclosure <details> (UI tier-3 #9), so expand it before interacting with the inputs. */
 function createRun(repo: string, base: string, head: string): void {
   ab(['open', BASE_URL]);
+  ab(['click', 'details[data-new-run] > summary']);
   ab(['fill', '#repo', repo]);
   ab(['fill', '#base_ref', base]);
   ab(['fill', '#head_ref', head]);
@@ -29,7 +31,9 @@ after(() => closeBrowser());
 
 test('the dashboard home page renders the run feed and a labelled create-run form', { skip: e2eSkip }, () => {
   ab(['open', BASE_URL]);
-  assert.equal(abText('h1'), 'Release runs');
+  assert.equal(abText('h1'), 'Launches');
+  // Expand the create disclosure (tier-3 #9) before asserting the form is present + operable.
+  ab(['click', 'details[data-new-run] > summary']);
   // The create-run form (the UI we added) is present, with all three labelled inputs.
   assert.equal(abCount('section[aria-labelledby="new-run-heading"]'), 1);
   for (const id of ['repo', 'base_ref', 'head_ref']) {

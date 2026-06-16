@@ -25,6 +25,7 @@ dashboard approve path refuses it (a failure escalates rather than auto-passing)
 
 from __future__ import annotations
 
+import logging
 from uuid import uuid4
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -64,6 +65,9 @@ from release_worker.content_ports import (
 from release_worker.content_state import ContentRunState
 from release_worker.feature_models import GateDecision
 from release_worker.model_client import ModelClient
+from release_worker.voice_context import VoiceContextSource, format_voice_context
+
+logger = logging.getLogger("release_worker.content")
 
 
 def build_content_generation_graph(
@@ -81,6 +85,7 @@ def build_content_generation_graph(
     dashboard_base_url: str,
     named_entity_policy: NamedEntityPolicy | None = None,
     checkpointer: object | None = None,
+    voice_source: VoiceContextSource | None = None,
 ):
     """Compile the content-generation graph through Gate #2.
 
@@ -105,6 +110,30 @@ def build_content_generation_graph(
         )
         return state.model_copy(update={"skill_snapshots": snapshots})
 
+    def _voice_context(state: ContentRunState) -> str:
+        # Brand brain grounding (migration 0025): retrieve the company's own voice exemplars by
+        # similarity to this release + the approved messaging + active ICP, and render them into a
+        # prompt block. Best-effort: a retrieval failure must never fail generation — it falls
+        # back to the un-grounded prompt (the prior behaviour). No-op when no voice_source wired.
+        if voice_source is None:
+            return ""
+        try:
+            # Embed any newly-added exemplars first (runtime adapter only) so /settings additions
+            # are usable immediately; the in-memory fake has no such method.
+            embed_pending = getattr(voice_source, "embed_pending", None)
+            if callable(embed_pending):
+                embed_pending()
+            query = " ".join(
+                f"{f.title} {f.user_value} {f.summary_internal}".strip()
+                for f in state.approved_features
+            )
+            return format_voice_context(voice_source.retrieve(query, channel=None))
+        except Exception:  # noqa: BLE001 — grounding is advisory; never block the gate path
+            logger.warning(
+                "voice-context retrieval failed; generating without brand grounding"
+            )
+            return ""
+
     def _generate_artifacts_parallel(state: ContentRunState) -> ContentRunState:
         # T1 (spec 007): fans out the initial artifact set (PRD §8.1) concurrently,
         # each on its per-type skill selection (T2). uuid4 is thread-safe, so the parallel
@@ -118,6 +147,7 @@ def build_content_generation_graph(
             lambda: uuid4().hex,
             model_id,
             selected_types=state.artifact_types,
+            voice_context=_voice_context(state),
         )
         return state.model_copy(update={"artifacts": artifacts, "usage_events": events})
 

@@ -21,6 +21,31 @@ only artifacts a human approved — and only their immutable approved snapshots 
 - Exports never include the reviewer's name (data minimization); the `approval_id` in the JSON
   record is the internal audit reference.
 
+## Publish to real destinations (one-click)
+
+Beyond copy/download, an approved artifact can be published to a real destination in one click
+(operator feedback 2026-06-09). Like everything here it is **human-gated**: the button names an
+accountable reviewer, recorded in the `approvals` audit log *before* any outward call, and it
+operates only on the immutable approved snapshot (§18.1), never the editable row.
+
+| Destination | Endpoint | Eligible types | Secret |
+|---|---|---|---|
+| GitHub Release | `POST /api/artifacts/{artifactId}/publish/github-release` | `changelog_entry`, `release_blog` | `GITHUB_TOKEN` |
+| Slack announcement | `POST /api/artifacts/{artifactId}/publish/slack` | any approved type | `SLACK_WEBHOOK_URL` |
+
+- **Where the buttons appear:** the Gate #2 review page *and* the approved-artifact claim
+  inspector (`/artifacts/{id}`). On the inspector the action island supplies its own reviewer
+  field (it has no surrounding gate form); on the review page it reuses the shared reviewer name.
+- **Slack off-switch:** `POST …/publish/slack` returns **503** when `SLACK_WEBHOOK_URL` is unset
+  (the feature is simply off for that deployment). A non-approved artifact returns **409**.
+- **Idempotency (two layers).** The GitHub publish is keyed by the release **tag** — an existing
+  release for the tag is updated in place, so a re-click can never stack duplicate releases. On
+  top of that, every publish records a `dedupe_key` of `artifact_publish:{artifactId}:{destination}`
+  in `approvals` (partial unique index, migration 0024): a double-click / retry returns 200
+  **without** a second audit row or a second outward call. If the outward call itself fails, the
+  dedupe marker is rolled back so a genuine retry can still proceed. (The same dedupe pattern now
+  guards the gate-resume routes and the demo-media trigger — see `docs/reproducibility.md`.)
+
 ## Outbound webhook (`artifact.approved`)
 
 When configured, ShipSignal POSTs the approved content to one consumer endpoint at each

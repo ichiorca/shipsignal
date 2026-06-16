@@ -51,6 +51,18 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        # This project uses long, descriptive revision ids (e.g.
+        # '0004_feature_manifest_and_approvals' = 35 chars). Alembic would otherwise create
+        # ``alembic_version.version_num`` as the default VARCHAR(32) and fail to record any
+        # revision id past 32 chars (StringDataRightTruncation). Pre-create the table wide so a
+        # fresh DB (local bootstrap, CI ephemeral PG) applies the full chain; on an existing DB
+        # this CREATE IF NOT EXISTS is a harmless no-op.
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS alembic_version ("
+            "version_num VARCHAR(128) NOT NULL "
+            "CONSTRAINT alembic_version_pkc PRIMARY KEY)"
+        )
+        connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()

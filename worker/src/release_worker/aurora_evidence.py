@@ -86,46 +86,61 @@ class S3AuroraEvidenceSink:
         )
         return f"s3://{self._bucket}/{key}"
 
-    def record(self, item: EvidenceRecord) -> None:
-        # T2 (spec 017): persist the pgvector ``embedding`` alongside the redacted row so
-        # §11 semantic retrieval has a vector to rank. ``None`` binds as SQL NULL (older
-        # runs / no embedder) and the cosine query's ``embedding IS NOT NULL`` filter then
-        # leaves that row to the lexical fallback. The vector is built from the redacted
-        # excerpt only (§5). The value is bound as a parameter (cast ::vector), never
-        # string-interpolated, so it carries no injection surface.
+    # T2 (spec 017): persist the pgvector ``embedding`` alongside the redacted row so §11
+    # semantic retrieval has a vector to rank. ``None`` binds as SQL NULL (older runs / no
+    # embedder) and the cosine query's ``embedding IS NOT NULL`` filter then leaves that row to
+    # the lexical fallback. The vector is built from the redacted excerpt only (§5). Every value
+    # is a bound parameter (cast ::vector / ::jsonb), never string-interpolated — no injection
+    # surface. ON CONFLICT (id) DO NOTHING makes a re-persist idempotent (the id is deterministic,
+    # so a retried node converges instead of erroring on the primary key).
+    _INSERT_SQL = """
+        INSERT INTO evidence_items (
+            id, release_run_id, evidence_type, source, source_url, repo,
+            file_path, symbol_name, raw_excerpt_s3_uri, redacted_excerpt,
+            embedding, confidence, risk_flags, metadata_json
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s::vector, %s, %s::jsonb, %s::jsonb
+        )
+        ON CONFLICT (id) DO NOTHING
+        """
+
+    def _row_params(self, item: EvidenceRecord) -> tuple[object, ...]:
         embedding_literal = (
             format_vector_literal(item.embedding)
             if item.embedding is not None
             else None
         )
+        return (
+            item.evidence_id,
+            item.release_run_id,
+            item.evidence_type,
+            item.source,
+            item.source_url,
+            item.repo,
+            item.file_path,
+            item.symbol_name,
+            item.raw_excerpt_s3_uri,
+            item.redacted_excerpt,
+            embedding_literal,
+            item.confidence,
+            json.dumps(list(item.risk_flags)),
+            json.dumps(item.metadata),
+        )
+
+    def record(self, item: EvidenceRecord) -> None:
         with self._conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO evidence_items (
-                    id, release_run_id, evidence_type, source, source_url, repo,
-                    file_path, symbol_name, raw_excerpt_s3_uri, redacted_excerpt,
-                    embedding, confidence, risk_flags, metadata_json
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s::vector, %s, %s::jsonb, %s::jsonb
-                )
-                """,
-                (
-                    item.evidence_id,
-                    item.release_run_id,
-                    item.evidence_type,
-                    item.source,
-                    item.source_url,
-                    item.repo,
-                    item.file_path,
-                    item.symbol_name,
-                    item.raw_excerpt_s3_uri,
-                    item.redacted_excerpt,
-                    embedding_literal,
-                    item.confidence,
-                    json.dumps(list(item.risk_flags)),
-                    json.dumps(item.metadata),
-                ),
+            cur.execute(self._INSERT_SQL, self._row_params(item))
+
+    def record_many(self, items: tuple[EvidenceRecord, ...]) -> None:
+        # One round trip for the whole batch (a big release can produce 200+ rows) instead of a
+        # cursor open/execute per row. ``executemany`` pipelines the rows on one cursor; the
+        # ON CONFLICT keeps it idempotent under a retried persist node.
+        if not items:
+            return
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                self._INSERT_SQL, [self._row_params(item) for item in items]
             )
 
 

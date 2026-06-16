@@ -78,9 +78,26 @@ test('empty run list has zero axe violations', async () => {
 
 test('table is semantically structured: caption + column headers', () => {
   const doc = render(SAMPLE_RUNS);
-  assert.equal(doc.querySelector('table > caption')?.textContent, 'Release runs');
+  assert.equal(doc.querySelector('table > caption')?.textContent, 'Launches');
   const headers = [...doc.querySelectorAll('thead th[scope="col"]')].map((h) => h.textContent);
-  assert.deepEqual(headers, ['Run', 'Repository', 'Compare range', 'Trigger', 'Status', 'Started']);
+  assert.deepEqual(headers, ['Launch', 'Trigger', 'Status', 'Next action', 'Started']);
+});
+
+test('runs awaiting review sort to the top with a direct next-action link', () => {
+  // A completed run first in the input, an awaiting run second — the awaiting run must surface
+  // first and expose a link straight to its gate (the action-oriented ordering, UI tier-1 #3).
+  const awaitingRun: ReleaseRun = {
+    ...SAMPLE_RUNS[0]!,
+    id: 'cccccccc-1111-2222-3333-444444444444',
+    status: 'features_pending_review',
+  };
+  const doc = render([SAMPLE_RUNS[0]!, awaitingRun]);
+  const firstRowStatus = doc
+    .querySelector('tbody tr td[data-status]')
+    ?.getAttribute('data-status');
+  assert.equal(firstRowStatus, 'features_pending_review', 'awaiting run sorts first');
+  const action = doc.querySelector('td[data-next-action="pending"] a[href]');
+  assert.equal(action?.getAttribute('href'), `/releases/${awaitingRun.id}/review`);
 });
 
 test('status is conveyed as humanized text, not colour alone', () => {

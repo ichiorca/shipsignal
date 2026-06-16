@@ -43,3 +43,27 @@ export function formatTimestamp(iso: string): string {
   }).format(date);
   return `${formatted} UTC`;
 }
+
+/**
+ * Compact relative time for scannable lists, e.g. 'just now', '5m ago', '3h ago', '2d ago',
+ * 'Jun 8' for anything older than ~30 days. `now` is injectable so the output is deterministic
+ * under test. Falls back to the raw string for an unparseable date (never throws).
+ */
+export function relativeTime(iso: string, now: Date = new Date()): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const seconds = Math.round((now.getTime() - date.getTime()) / 1000);
+  if (seconds < 0) return 'just now'; // clock skew / future timestamp
+  if (seconds < 45) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days <= 30) return `${days}d ago`;
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  }).format(date);
+}
