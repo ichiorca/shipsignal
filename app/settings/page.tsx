@@ -1,23 +1,18 @@
-// Brand & customer settings (migration 0025 / PO gap): the configuration surface that was
-// missing — who you market to (ICP), your company voice (the embedded corpus), and your approved
-// messaging. Generation grounds every artifact in this. Server Component: reads Aurora server-side
-// and renders the client editors. P6 (WCAG 2.2 AA): one <main> landmark, headed sections.
+// Brand & customer settings (migration 0025 / PO gap): the audience + positioning configuration —
+// who you market to (ICP) and your approved messaging. The company VOICE (voice guide + exemplars)
+// moved to its own authoring module at /voice (operator decision 2026-06-22), so it is not
+// duplicated here. Generation grounds every artifact in all of these. Server Component: reads Aurora
+// server-side and renders the client editors. P6 (WCAG 2.2 AA): one <main> landmark, headed sections.
 
 import { listIcpSegments } from '@/app/lib/db/icpSegments.ts';
-import { listVoiceExemplars } from '@/app/lib/db/voiceExemplars.ts';
 import { listMessagingClaims } from '@/app/lib/db/messagingClaims.ts';
 import { IcpSettings } from '@/app/components/IcpSettings.ts';
-import { VoiceExemplarSettings } from '@/app/components/VoiceExemplarSettings.ts';
 import { MessagingSettings } from '@/app/components/MessagingSettings.ts';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SettingsPage() {
-  const [segments, exemplars, claims] = await Promise.all([
-    listIcpSegments(),
-    listVoiceExemplars(),
-    listMessagingClaims(),
-  ]);
+  const [segments, claims] = await Promise.all([listIcpSegments(), listMessagingClaims()]);
 
   return (
     <main id="main">
@@ -26,9 +21,9 @@ export default async function SettingsPage() {
       </nav>
       <h1>Brand &amp; customer settings</h1>
       <p>
-        Configure who you market to, your company voice, and your approved messaging. Every
-        generated artifact is grounded in this — your ICP, your voice, your positioning — so the
-        output sounds like you and speaks to your customers.
+        Configure who you market to and the approved messaging generation may use. Your company
+        voice — the brand language every draft is written in — is authored on the{' '}
+        <a href="/voice">Brand Voice</a> page.
       </p>
 
       <section aria-labelledby="icp-heading">
@@ -38,16 +33,6 @@ export default async function SettingsPage() {
           draft and the audience-relevance eval.
         </p>
         <IcpSettings segments={segments} />
-      </section>
-
-      <section aria-labelledby="voice-heading">
-        <h2 id="voice-heading">Company voice</h2>
-        <p>
-          Paste your real published content (past blogs, posts, emails). The worker embeds each
-          exemplar; at generation time the closest ones to the release are retrieved and used as
-          style references — this is how output matches <em>your</em> voice, not a generic tone.
-        </p>
-        <VoiceExemplarSettings exemplars={exemplars} segments={segments} />
       </section>
 
       <section aria-labelledby="messaging-heading">

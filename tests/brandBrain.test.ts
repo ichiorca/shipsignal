@@ -7,6 +7,7 @@ import {
   slugifyIcpId,
   icpInputSchema,
   voiceExemplarInputSchema,
+  voiceGuideInputSchema,
   messagingClaimInputSchema,
 } from '../app/lib/brandBrain.ts';
 
@@ -44,6 +45,27 @@ test('voiceExemplarInputSchema requires content and validates the channel', () =
     false,
   );
   assert.equal(voiceExemplarInputSchema.safeParse({ body_text: '' }).success, false);
+});
+
+test('voiceGuideInputSchema applies empty defaults and trims/limits fields', () => {
+  // Every field is optional — an empty object is a valid (empty) guide.
+  const empty = voiceGuideInputSchema.safeParse({});
+  assert.equal(empty.success, true);
+  if (empty.success) {
+    assert.equal(empty.data.tone, '');
+    assert.deepEqual(empty.data.do_rules, []);
+    assert.deepEqual(empty.data.prefer_terms, []);
+  }
+  // Scalar fields are trimmed; list entries are trimmed too and must be non-empty after trimming
+  // (the editor's splitLines strips blank lines before they ever reach the schema).
+  const parsed = voiceGuideInputSchema.parse({
+    tone: '  confident  ',
+    do_rules: ['  Lead with value  '],
+  });
+  assert.equal(parsed.tone, 'confident'); // trimmed
+  assert.deepEqual(parsed.do_rules, ['Lead with value']); // trimmed entry
+  // A blank list entry is rejected outright (not silently dropped).
+  assert.equal(voiceGuideInputSchema.safeParse({ do_rules: ['ok', '  '] }).success, false);
 });
 
 test('messagingClaimInputSchema requires text and defaults to approved positioning', () => {

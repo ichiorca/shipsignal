@@ -60,6 +60,7 @@ from release_worker.content_policy import NamedEntityPolicy
 from release_worker.content_ports import (
     ApprovedFeatureReader,
     ArtifactSink,
+    CapabilitySkillSource,
     SkillSnapshotSink,
     SkillSource,
 )
@@ -87,6 +88,7 @@ def build_content_generation_graph(
     named_entity_policy: NamedEntityPolicy | None = None,
     checkpointer: object | None = None,
     voice_source: VoiceContextSource | None = None,
+    capability_source: CapabilitySkillSource | None = None,
 ):
     """Compile the content-generation graph through Gate #2.
 
@@ -138,6 +140,15 @@ def build_content_generation_graph(
             )
             return ""
 
+    def _capability_skills(state: ContentRunState) -> dict[str, frozenset[str]] | None:
+        # Resolve the persisted capability→skill override (DB-wins-per-type, code-default floor;
+        # peer-parity allowed_for). The source's own resolve() is fail-safe to the code default, so
+        # None here only means "no source wired" (unit gate) → generation uses per-type code
+        # defaults. No-op cost beyond one indexed read of capability_skills.
+        if capability_source is None:
+            return None
+        return capability_source.resolve()
+
     def _generate_artifacts_parallel(state: ContentRunState) -> ContentRunState:
         # T1 (spec 007): fans out the initial artifact set (PRD §8.1) concurrently,
         # each on its per-type skill selection (T2). uuid4 is thread-safe, so the parallel
@@ -152,6 +163,7 @@ def build_content_generation_graph(
             model_id,
             selected_types=state.artifact_types,
             voice_context=_voice_context(state),
+            capability_skills=_capability_skills(state),
         )
         return state.model_copy(update={"artifacts": artifacts, "usage_events": events})
 

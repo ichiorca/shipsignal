@@ -48,6 +48,32 @@ export const icpInputSchema = z.object({
 });
 export type IcpInput = z.infer<typeof icpInputSchema>;
 
+// --- Voice guide (structured, authored voice knowledge — migration 0033) ---------------------
+// The company's voice *rules* as first-class config: tone, reading level, do/don't rules, and a
+// preferred/avoided vocabulary. Authored on the Brand Voice page and rendered into every generation
+// prompt alongside the retrieved exemplars. A singleton (one company — constitution §2).
+
+export interface VoiceGuide {
+  readonly tone: string;
+  readonly reading_level: string;
+  readonly do_rules: readonly string[];
+  readonly dont_rules: readonly string[];
+  readonly prefer_terms: readonly string[];
+  readonly avoid_terms: readonly string[];
+  readonly notes: string;
+}
+
+export const voiceGuideInputSchema = z.object({
+  tone: z.string().trim().max(300).default(''),
+  reading_level: z.string().trim().max(120).default(''),
+  do_rules: stringList,
+  dont_rules: stringList,
+  prefer_terms: stringList,
+  avoid_terms: stringList,
+  notes: z.string().trim().max(4000).default(''),
+});
+export type VoiceGuideInput = z.infer<typeof voiceGuideInputSchema>;
+
 // --- Company voice exemplars (the embedded voice corpus) -------------------------------------
 
 export interface VoiceExemplar {

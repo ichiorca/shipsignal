@@ -124,6 +124,34 @@ def test_paging_follows_full_pages_then_stops_on_empty(
     assert len(seen) == 2  # page 1 (full) then page 2 (empty)
 
 
+def test_normal_diff_is_not_marked_truncated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_pages(monkeypatch, [[{"filename": "a", "status": "added", "patch": ""}]])
+    payload = gds.GitHubDiffSource(token="t").fetch_raw_diff(_BOUNDARY)
+    assert payload["truncated"] is False
+
+
+def test_hitting_the_compare_file_cap_marks_truncated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Shrink the cap so the test needn't synthesize 300 files. A page at the cap means GitHub
+    # truncated the compare `files` array, so the payload must flag it (no silent partial diff).
+    monkeypatch.setattr(gds, "_COMPARE_FILE_CAP", 2)
+    _install_pages(
+        monkeypatch,
+        [
+            [
+                {"filename": "a", "status": "added", "patch": ""},
+                {"filename": "b", "status": "added", "patch": ""},
+            ]
+        ],
+    )
+    payload = gds.GitHubDiffSource(token="t").fetch_raw_diff(_BOUNDARY)
+    assert len(payload["files"]) == 2
+    assert payload["truncated"] is True
+
+
 def test_get_refuses_non_https_url() -> None:
     with pytest.raises(ValueError):
         gds.GitHubDiffSource(token="t")._get("http://api.github.com/x")

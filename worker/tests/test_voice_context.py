@@ -10,6 +10,7 @@ from release_worker.voice_context import (
     MessagingClaim,
     VoiceContext,
     VoiceExemplar,
+    VoiceGuide,
     format_voice_context,
 )
 
@@ -57,6 +58,32 @@ def test_format_renders_icp_messaging_and_voice_exemplars() -> None:
     assert (
         "do not copy" in rendered.lower()
     )  # the "don't plagiarize, match the voice" instruction
+
+
+def test_format_renders_voice_guide_rules_first() -> None:
+    guide = VoiceGuide(
+        tone="confident, plain, no hype",
+        reading_level="grade 8",
+        do_rules=("Lead with user value",),
+        dont_rules=("No superlatives",),
+        prefer_terms=("ship",),
+        avoid_terms=("leverage",),
+    )
+    rendered = format_voice_context(VoiceContext(guide=guide))
+    assert "COMPANY VOICE & MESSAGING" in rendered
+    assert "confident, plain, no hype" in rendered  # tone rule
+    assert "grade 8" in rendered  # reading level
+    assert "Lead with user value" in rendered  # do rule
+    assert "No superlatives" in rendered  # don't rule
+    assert "ship" in rendered and "leverage" in rendered  # vocabulary
+    # The authored rules render before the example exemplars (rules first, samples after).
+    full = format_voice_context(VoiceContext(guide=guide, exemplars=_ctx().exemplars))
+    assert full.index("brand voice") < full.index("REAL examples")
+
+
+def test_empty_guide_does_not_add_a_block() -> None:
+    # A guide with only blank fields is empty ⇒ no voice block (generation prompt unchanged).
+    assert format_voice_context(VoiceContext(guide=VoiceGuide())) == ""
 
 
 def test_empty_context_renders_empty_string() -> None:

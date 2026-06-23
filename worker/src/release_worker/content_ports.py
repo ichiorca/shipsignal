@@ -48,6 +48,19 @@ class SkillSource(Protocol):
 
 
 @runtime_checkable
+class CapabilitySkillSource(Protocol):
+    """Resolve the per-capability (artifact_type) skill selection that grounds each artifact type.
+
+    Returns ``{artifact_type: frozenset(skill_name, ...)}``. Peer-parity with ``allowed_for`` in
+    hindsight-guild-internal: a persisted operator override (the ``capability_skills`` table) wins
+    per type over the code default ({format skill, brand-voice}); a DB error or an unmapped type
+    falls back to the code default so grounding never fails closed. ``AuroraCapabilitySkillSource``
+    satisfies it at runtime; ``InMemoryCapabilitySkillSource`` is the unit-gate fake."""
+
+    def resolve(self) -> dict[str, frozenset[str]]: ...
+
+
+@runtime_checkable
 class SkillSnapshotSink(Protocol):
     """Upsert a ``skill_repo_snapshots`` row and return its effective id (PRD §10.5).
 
@@ -91,6 +104,18 @@ class InMemorySkillSource:
 
     def list_skills(self) -> tuple[RawSkill, ...]:
         return self._skills
+
+
+class InMemoryCapabilitySkillSource:
+    """In-process ``CapabilitySkillSource`` returning a preset capability→skill map, so a test can
+    drive both the code-default path (seed it with the defaults) and an override path (seed a type
+    with a different skill set) without a DB."""
+
+    def __init__(self, mapping: dict[str, frozenset[str]]) -> None:
+        self._mapping = dict(mapping)
+
+    def resolve(self) -> dict[str, frozenset[str]]:
+        return dict(self._mapping)
 
 
 class InMemorySkillSnapshotSink:

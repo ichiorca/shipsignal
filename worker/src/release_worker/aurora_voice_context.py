@@ -19,6 +19,7 @@ from release_worker.voice_context import (
     MessagingClaim,
     VoiceContext,
     VoiceExemplar,
+    VoiceGuide,
 )
 
 _MESSAGING_LIMIT = 20
@@ -52,9 +53,34 @@ class AuroraVoiceContextSource:
         self, query_text: str, channel: str | None = None, top_k: int = 3
     ) -> VoiceContext:
         return VoiceContext(
+            guide=self._voice_guide(),
             exemplars=self._retrieve_exemplars(query_text, channel, top_k),
             claims=self._approved_claims(),
             segments=self._active_segments(),
+        )
+
+    def _voice_guide(self) -> VoiceGuide | None:
+        """The singleton authored voice guide (migration 0033), or None if the row is absent."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT tone, reading_level, do_rules, dont_rules, prefer_terms,
+                       avoid_terms, notes
+                  FROM voice_guide
+                 WHERE id = 'default'
+                """
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return VoiceGuide(
+            tone=row[0] or "",
+            reading_level=row[1] or "",
+            do_rules=tuple(row[2] or ()),
+            dont_rules=tuple(row[3] or ()),
+            prefer_terms=tuple(row[4] or ()),
+            avoid_terms=tuple(row[5] or ()),
+            notes=row[6] or "",
         )
 
     def _retrieve_exemplars(

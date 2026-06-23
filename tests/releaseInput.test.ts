@@ -114,3 +114,22 @@ test('rejects duplicate artifact types', () => {
   assert.equal(result.ok, false);
   assert.ok(result.ok === false && result.errors.some((e) => e.includes('must not repeat')));
 });
+
+// --- migration 0030 — optional saved-project association ----------------------------
+
+test('accepts an optional project_id slug', () => {
+  const result = parseCreateReleaseRun({ ...BASE_BODY, project_id: 'proj_acme' });
+  assert.equal(result.ok, true);
+  assert.equal(result.ok && result.value.project_id, 'proj_acme');
+});
+
+test('rejects a project_id with illegal characters', () => {
+  const result = parseCreateReleaseRun({ ...BASE_BODY, project_id: 'proj/acme; drop' });
+  assert.equal(result.ok, false);
+});
+
+test('omitted project_id parses ok (ad-hoc run)', () => {
+  const result = parseCreateReleaseRun(BASE_BODY);
+  assert.equal(result.ok, true);
+  assert.equal(result.ok && result.value.project_id, undefined);
+});

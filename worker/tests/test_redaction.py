@@ -30,6 +30,24 @@ def test_ipv4_is_redacted_but_version_string_is_not() -> None:
     assert "ip" in result.risk_flags
 
 
+def test_four_part_version_assignment_is_not_redacted_as_ip() -> None:
+    # A 4-part version (all-valid octets) in a version-assignment context is preserved — redacting
+    # build metadata like S6_OVERLAY_VERSION=3.2.3.0 is lossy and a personal IP is implausible here.
+    result = redact("ARG S6_OVERLAY_VERSION=3.2.3.0")
+    assert "3.2.3.0" in result.text
+    assert "[redacted-ip]" not in result.text
+    assert "ip" not in result.risk_flags
+
+
+def test_four_part_address_in_non_version_context_is_still_redacted() -> None:
+    # The version exception is narrow: a dotted-quad anywhere else is still treated as an IP.
+    for line in ("host=10.20.30.40", "connect to 10.20.30.40", "DB_HOST: 10.20.30.40"):
+        result = redact(line)
+        assert "10.20.30.40" not in result.text, line
+        assert "[redacted-ip]" in result.text
+        assert "ip" in result.risk_flags
+
+
 def test_aws_access_key_is_redacted() -> None:
     result = redact("AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE")
 

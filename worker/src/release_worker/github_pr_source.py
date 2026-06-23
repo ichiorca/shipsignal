@@ -18,6 +18,7 @@ the unit gate never makes a network call — it exercises the node against the f
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import urllib.error
@@ -25,6 +26,8 @@ import urllib.parse
 import urllib.request
 
 from release_worker.evidence_models import ReleaseBoundary
+
+logger = logging.getLogger("release_worker.evidence")
 
 _API_ROOT = "https://api.github.com"
 _PER_PAGE = 100
@@ -119,6 +122,9 @@ class GitHubPullRequestSource:
         """
         shas = self._commit_shas(boundary.repo, boundary.base_ref, boundary.head_ref)
         prs = self._prs_for_commits(boundary.repo, shas)
+        # The PR resolver stops at _MAX_PRS; hitting it means more PRs exist for the range than we
+        # collected. Track it (and the issue cap below) so the payload can flag a partial result.
+        truncated = len(prs) >= _MAX_PRS
 
         issues_fetched = 0
         pull_requests: list[dict[str, object]] = []
@@ -141,6 +147,7 @@ class GitHubPullRequestSource:
             referenced = {int(n) for n in _ISSUE_REF.findall(f"{title} {body}")}
             for issue_number in sorted(referenced):
                 if issues_fetched >= _MAX_ISSUES:
+                    truncated = True  # more linked issues exist than the cap allows
                     break
                 if issue_number == number:
                     continue  # the PR references itself
@@ -169,4 +176,15 @@ class GitHubPullRequestSource:
                 }
             )
 
-        return {"pull_requests": pull_requests}
+        if truncated:
+            logger.warning(
+                "PR/issue collection for %s %s...%s hit a quota cap (PRs<=%d, issues<=%d); the "
+                "PR/issue evidence is partial",
+                boundary.repo,
+                boundary.base_ref,
+                boundary.head_ref,
+                _MAX_PRS,
+                _MAX_ISSUES,
+            )
+
+        return {"pull_requests": pull_requests, "truncated": truncated}

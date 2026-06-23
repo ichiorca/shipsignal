@@ -28,7 +28,9 @@ AWS_SECRET_ACCESS_KEY=test
 #     Set LOCALSTACK_IMAGE=localstack/localstack-pro:latest, add bedrock to LOCALSTACK_SERVICES,
 #     and paste your token below (https://app.localstack.cloud -> Auth Token).
 LOCALSTACK_IMAGE=localstack/localstack:latest
-LOCALSTACK_SERVICES=s3,sns
+# secretsmanager (community) backs per-project GitHub credentials (Projects feature, migration
+# 0030). The worker resolves a project's token from Secrets Manager at run time.
+LOCALSTACK_SERVICES=s3,sns,secretsmanager
 LOCALSTACK_AUTH_TOKEN=
 
 # Optional LocalStack toggles (used by docker-compose):
@@ -74,6 +76,16 @@ GITHUB_WORKFLOW_FILE=release-run.yml
 GITHUB_WORKFLOW_REF=main
 # HMAC secret for the inbound GitHub webhook route (any random string locally).
 GITHUB_WEBHOOK_SECRET=local-dev-webhook-secret
+#
+# Per-PROJECT GitHub credentials (Projects feature, migration 0030): a project may map to its OWN
+# token held in AWS Secrets Manager — the DB stores only the secret NAME/ARN (never the token). The
+# worker resolves it at run time; a run with no project falls back to GITHUB_TOKEN above.
+#   Create a demo secret in LocalStack:
+#     awslocal secretsmanager create-secret --name shipsignal/github/<project> \
+#       --secret-string '<the-PAT>'        # (or '{"token":"<the-PAT>"}')
+#   Then in /projects set the project's "GitHub secret reference" to that name (shipsignal/github/<project>).
+# PROD: grant the worker's OIDC role (AWS_RELEASE_RUN_ROLE_ARN) secretsmanager:GetSecretValue scoped
+# to arn:aws:secretsmanager:*:*:secret:shipsignal/github/* (least privilege).
 
 # ----------------------------------------------------------------------------------
 # ElevenLabs (real API — LocalStack cannot emulate this). Media graph only.

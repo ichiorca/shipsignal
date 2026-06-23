@@ -47,6 +47,15 @@ _KV_SECRET = re.compile(
 _PLACEHOLDER_EMAIL = "[redacted-email]"
 _PLACEHOLDER_IP = "[redacted-ip]"
 
+# A 4-part dotted number is ambiguous: a real IPv4 vs a 4-segment version (e.g. 3.2.3.0, all-valid
+# octets). When the dotted-quad is the value of a version-style assignment we keep it: redacting
+# build metadata like `S6_OVERLAY_VERSION=3.2.3.0` is lossy and a personal IP is implausible in that
+# context. The check is intentionally narrow (an explicit version keyword immediately before the
+# value) so the redact-before-leak bias holds for every other context.
+_VERSION_CONTEXT = re.compile(
+    r"(?i)(?:version|_ver\b|\bver\b|release|revision|build|tag)\s*[:=]?\s*[\"']?$"
+)
+
 
 def _kv_replacement(match: re.Match[str]) -> str:
     return f"{match.group(1)}=[redacted-secret]"
@@ -109,6 +118,24 @@ def redact(text: str) -> RedactionResult:
     redacted = out
 
     redacted = sub("email", _EMAIL, _PLACEHOLDER_EMAIL, redacted)
-    redacted = sub("ip", _IPV4, _PLACEHOLDER_IP, redacted)
+
+    # IPv4 is context-aware: a dotted-quad that is the value of a version assignment is a version
+    # number, not an address, so it is preserved. Every other dotted-quad is redacted (and flagged).
+    ip_hits = 0
+
+    def _ip_sub(match: re.Match[str]) -> str:
+        nonlocal ip_hits
+        before = match.string[: match.start()]
+        line_left = before[before.rfind("\n") + 1 :]
+        if _VERSION_CONTEXT.search(line_left):
+            return match.group(
+                0
+            )  # keep version numbers like S6_OVERLAY_VERSION=3.2.3.0
+        ip_hits += 1
+        return _PLACEHOLDER_IP
+
+    redacted = _IPV4.sub(_ip_sub, redacted)
+    if ip_hits:
+        flags.add("ip")
 
     return RedactionResult(text=_normalize(redacted), risk_flags=tuple(sorted(flags)))

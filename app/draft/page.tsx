@@ -8,10 +8,14 @@
 import { PageHeader } from '@/app/components/PageHeader.ts';
 import { NewReleaseRunForm } from '@/app/components/NewReleaseRunForm.ts';
 import { LoadSampleButton } from '@/app/components/LoadSampleButton.ts';
+import { listActiveProjects } from '@/app/lib/db/projects.ts';
+import { projectToView } from '@/app/lib/projects.ts';
 
 export const dynamic = 'force-dynamic';
 
-export default function DraftingPage() {
+export default async function DraftingPage() {
+  // Offer saved projects as a pre-fill picker in the run form (empty → ad-hoc only).
+  const projects = (await listActiveProjects()).map(projectToView);
   return (
     <main id="main">
       <PageHeader
@@ -27,7 +31,7 @@ export default function DraftingPage() {
           deterministic signals, and clusters them into a feature manifest for your approval — no
           marketing copy is generated from raw diffs.
         </p>
-        <NewReleaseRunForm />
+        <NewReleaseRunForm projects={projects} />
       </section>
       {/* A one-click path to a fully-populated synthetic run — time-to-wow with no GitHub token. */}
       <section aria-labelledby="sample-release-heading">

@@ -1,21 +1,25 @@
 // Reskin (peer parity with hindsight-guild/web Capabilities.tsx) — the "Capabilities" view.
-// ShipSignal's capabilities are the active repo skills that ground generation: each one is a
-// versioned SKILL.md loaded from the repo, with its commit SHA and Aurora snapshot history as
-// provenance. We present those as the system's capabilities. There is no `skill_usage_events`
-// table in this app, so per-agent usage detail is surfaced honestly as "lives in each launch's
-// skill ledger" with a link to /skills rather than invented usage metrics. Server Component:
-// reads Aurora server-side (no secret/DB handle reaches the client). P6 (WCAG 2.2 AA): one <main>
-// landmark, sections are cards (global CSS), data lives in a captioned semantic table.
+// ShipSignal's capabilities are the artifact types the engine can produce; each is grounded by a
+// resolved set of skills (its format skill + brand-voice, peer-parity with the agent→skill
+// allowlist). This page shows that capability→skill mapping (migration 0032) and how often each
+// skill is actually used — NOT the raw skill library, which lives on /skills (the skill admin owns
+// versions/commits/revision history; duplicating it here was redundant). Server Component: reads
+// Aurora server-side (no secret/DB handle reaches the client). P6 (WCAG 2.2 AA): one <main>
+// landmark, sections are cards (global CSS), data lives in captioned semantic tables.
 
-import { listSkills } from '@/app/lib/db/skills.ts';
 import { listSkillUsage } from '@/app/lib/db/skillUsage.ts';
+import { listCapabilitySkills } from '@/app/lib/db/capabilitySkills.ts';
 import { PageHeader } from '@/app/components/PageHeader.ts';
 import { EMPTY, relativeTime, formatTimestamp } from '@/app/lib/displayFormat.ts';
+import { typeLabel } from '@/app/lib/artifactTypes.ts';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CapabilitiesPage() {
-  const [skills, usage] = await Promise.all([listSkills(), listSkillUsage()]);
+  const [usage, capabilities] = await Promise.all([
+    listSkillUsage(),
+    listCapabilitySkills(),
+  ]);
   const maxUses = usage.reduce((m, u) => Math.max(m, u.usage_count), 0);
 
   return (
@@ -23,48 +27,55 @@ export default async function CapabilitiesPage() {
       <PageHeader
         eyebrow="Skill library"
         title="Capabilities"
-        description="Which skills each agent has, and how they're used."
+        description="What the engine can produce, which skills ground each capability, and how those skills are used."
       />
 
-      <section aria-labelledby="capabilities-heading">
-        <h2 id="capabilities-heading">Active skills</h2>
+      <section aria-labelledby="mapping-heading">
+        <h2 id="mapping-heading">Capability → skill mapping</h2>
         <p>
-          {skills.length === 0
-            ? 'No active skills are loaded yet.'
-            : `${skills.length === 1 ? '1 skill' : `${skills.length} skills`} ground every draft. ` +
-              'Each is a repo SKILL.md loaded at its recorded commit, with its full revision ' +
-              'history staged in the Aurora provenance ledger.'}
+          {capabilities.length === 0
+            ? 'No capability mapping is seeded yet — run the reference seeder (it loads the ' +
+              'code-default mapping) and each artifact type and the skills that ground it appear here.'
+            : 'Which skills ground each capability (artifact type) the engine can produce. The ' +
+              'worker resolves this exact mapping at generation time — an operator override wins per ' +
+              'capability, otherwise the seeded code default applies. The skills themselves (versions, ' +
+              'commits, and revision history) live in the '}
+          {capabilities.length === 0 ? null : <a href="/skills">skill library</a>}
+          {capabilities.length === 0 ? null : '.'}
         </p>
-        {skills.length > 0 ? (
+        {capabilities.length > 0 ? (
           <table>
-            <caption>Active repo skills with version, commit, and recorded snapshot count.</caption>
+            <caption>
+              Each capability (artifact type) and the skills that ground its generation.
+            </caption>
             <thead>
               <tr>
-                <th scope="col">Skill</th>
-                <th scope="col">Repo path</th>
-                <th scope="col">Version</th>
-                <th scope="col">Active commit</th>
-                <th scope="col">Snapshots</th>
+                <th scope="col">Capability</th>
+                <th scope="col">Grounding skills</th>
+                <th scope="col">Source</th>
               </tr>
             </thead>
             <tbody>
-              {skills.map((skill) => (
-                <tr key={`${skill.repo}:${skill.skill_path}`}>
-                  <th scope="row">
-                    <a href={`/skills#${encodeURIComponent(skill.skill_name)}`}>
-                      {skill.skill_name}
-                    </a>
-                  </th>
+              {capabilities.map((cap) => (
+                <tr key={cap.artifact_type} data-capability={cap.artifact_type}>
+                  <th scope="row">{typeLabel(cap.artifact_type)}</th>
                   <td>
-                    <code>{skill.skill_path}</code>
+                    <ul data-skill-list>
+                      {cap.skills.map((skill) => (
+                        <li key={skill.skill_name}>
+                          <a href={`/skills#${encodeURIComponent(skill.skill_name)}`}>
+                            {skill.skill_name}
+                          </a>
+                          {skill.required ? null : <span data-optional> (optional)</span>}
+                        </li>
+                      ))}
+                    </ul>
                   </td>
-                  <td>{skill.active_version ?? EMPTY}</td>
                   <td>
-                    <code title={skill.active_commit_sha}>
-                      {skill.active_commit_sha.slice(0, 12)}
-                    </code>
+                    {cap.skills.some((s) => s.source === 'operator-override')
+                      ? 'Operator override'
+                      : 'Code default'}
                   </td>
-                  <td>{skill.snapshot_count}</td>
                 </tr>
               ))}
             </tbody>

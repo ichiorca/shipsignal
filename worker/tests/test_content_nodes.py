@@ -30,6 +30,7 @@ from release_worker.content_models import (
     RawSkill,
 )
 from release_worker.content_nodes import (
+    code_default_capability_skills,
     generate_artifacts_parallel,
     load_approved_features,
     parse_frontmatter,
@@ -39,6 +40,7 @@ from release_worker.content_nodes import (
 from release_worker.content_ports import (
     InMemoryApprovedFeatureReader,
     InMemoryArtifactSink,
+    InMemoryCapabilitySkillSource,
     InMemorySkillSnapshotSink,
 )
 from release_worker.model_client import RecordingModelClient
@@ -308,6 +310,49 @@ def test_generate_wires_each_type_to_its_format_skill() -> None:
     assert all(e.usage_type == "generation" for e in events)
     assert all(e.graph_name == "content_generation_graph" for e in events)
     assert all(e.node_name == "generate_artifacts_parallel" for e in events)
+
+
+def test_code_default_capability_skills_maps_each_type_to_format_and_brand_voice() -> (
+    None
+):
+    """The code-default capability map (the floor) is each type → {its format skill, brand-voice}."""
+    defaults = code_default_capability_skills()
+    assert set(defaults) == _INITIAL_TYPES
+    for artifact_type, format_skill in _FORMAT_SKILL_BY_TYPE.items():
+        assert defaults[artifact_type] == frozenset({format_skill, "brand-voice"})
+
+
+def test_generate_capability_override_wins_per_type() -> None:
+    """A capability override drops the format skill for one type (brand-voice only); other types
+    keep the code default. Mirrors the worker resolving an operator-set `capability_skills` row."""
+    overridden = code_default_capability_skills()
+    overridden["release_blog"] = frozenset(
+        {"brand-voice"}
+    )  # override: drop blog-format
+    source = InMemoryCapabilitySkillSource(overridden)
+
+    client = RecordingModelClient(_artifact_response())
+    art_ids = (f"art-{n}" for n in itertools.count())
+    artifacts, events = generate_artifacts_parallel(
+        _RUN_ID,
+        _approved_features(),
+        _snapshots(),
+        client,
+        lambda: next(art_ids),
+        model_id="m",
+        capability_skills=source.resolve(),
+    )
+
+    events_by_artifact: dict[str, set[str]] = {}
+    for e in events:
+        events_by_artifact.setdefault(e.artifact_id, set()).add(e.skill_name)
+    for a in artifacts:
+        if a.artifact_type == "release_blog":
+            expected = {"brand-voice"}  # override removed blog-format
+        else:
+            expected = {_FORMAT_SKILL_BY_TYPE[a.artifact_type], "brand-voice"}
+        assert set(a.skill_versions) == expected
+        assert events_by_artifact[a.artifact_id] == expected
 
 
 def test_generate_idempotency_key_stable_for_same_inputs() -> None:

@@ -60,17 +60,48 @@ class MessagingClaim(BaseModel):
     evidence_url: str | None = None
 
 
-class VoiceContext(BaseModel):
-    """The bundle retrieved for one generation: voice exemplars + messaging + ICP."""
+class VoiceGuide(BaseModel):
+    """The company's structured voice rules (migration 0033) — authored config, not retrieved.
+
+    The most authoritative voice signal: it states the rules directly (tone, reading level, do/don't,
+    vocabulary) where the exemplars only show them by example. Rendered at the TOP of the prompt
+    block so the model reads the rules before the samples."""
 
     model_config = _Strict
 
+    tone: str = ""
+    reading_level: str = ""
+    do_rules: tuple[str, ...] = ()
+    dont_rules: tuple[str, ...] = ()
+    prefer_terms: tuple[str, ...] = ()
+    avoid_terms: tuple[str, ...] = ()
+    notes: str = ""
+
+    def is_empty(self) -> bool:
+        return not (
+            self.tone
+            or self.reading_level
+            or self.do_rules
+            or self.dont_rules
+            or self.prefer_terms
+            or self.avoid_terms
+            or self.notes
+        )
+
+
+class VoiceContext(BaseModel):
+    """The bundle for one generation: the authored voice guide + retrieved exemplars + messaging + ICP."""
+
+    model_config = _Strict
+
+    guide: VoiceGuide | None = None
     exemplars: tuple[VoiceExemplar, ...] = ()
     claims: tuple[MessagingClaim, ...] = ()
     segments: tuple[IcpSegment, ...] = ()
 
     def is_empty(self) -> bool:
-        return not (self.exemplars or self.claims or self.segments)
+        guide_empty = self.guide is None or self.guide.is_empty()
+        return guide_empty and not (self.exemplars or self.claims or self.segments)
 
 
 @runtime_checkable
@@ -120,6 +151,25 @@ def format_voice_context(ctx: VoiceContext) -> str:
         return ""
 
     sections: list[str] = []
+
+    if ctx.guide is not None and not ctx.guide.is_empty():
+        guide = ctx.guide
+        lines = ["Write in our brand voice — follow these rules:"]
+        if guide.tone:
+            lines.append(f"- Tone: {guide.tone}")
+        if guide.reading_level:
+            lines.append(f"- Reading level: {guide.reading_level}")
+        if guide.do_rules:
+            lines.append(f"- Always: {'; '.join(guide.do_rules)}")
+        if guide.dont_rules:
+            lines.append(f"- Never: {'; '.join(guide.dont_rules)}")
+        if guide.prefer_terms:
+            lines.append(f"- Prefer these words: {', '.join(guide.prefer_terms)}")
+        if guide.avoid_terms:
+            lines.append(f"- Avoid these words: {', '.join(guide.avoid_terms)}")
+        if guide.notes:
+            lines.append(f"- Notes: {guide.notes}")
+        sections.append("\n".join(lines))
 
     if ctx.segments:
         lines = [

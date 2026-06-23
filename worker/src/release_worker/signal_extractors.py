@@ -94,10 +94,20 @@ _JSX_TEXT = re.compile(r">\s*([A-Z][A-Za-z0-9 ,.'!?\-]{3,})\s*<")
 _HAS_LETTER = re.compile(r"[A-Za-z]")
 _UI_ATTR_CONFIDENCE = 0.8
 _UI_TEXT_CONFIDENCE = 0.6
+# UI copy lives in application source, NOT in docs or CI/config. Markdown headings/link text and
+# YAML `description:`/`title:` keys (e.g. GitHub Actions inputs) otherwise match the UI patterns and
+# pollute the manifest with non-product copy. Docs already have their own `docs_delta` signal, so
+# skip docs + markup/config file types and the `.github/` CI tree here (precision, not recall: real
+# UI strings live in code/JSX/locale-JSON, which are not excluded).
+_NON_UI_FILE = re.compile(
+    r"(?i)(?:\.(?:ya?ml|md|mdx|markdown|rst|adoc|txt)$|(?:^|/)\.github/)"
+)
 
 
 def extract_ui_strings(file: RawDiffFile) -> tuple[CodeSignal, ...]:
     """New/changed user-visible labels, buttons, error messages, empty states."""
+    if _NON_UI_FILE.search(file.file_path):
+        return ()
     out: list[CodeSignal] = []
     for line, content in _added_lines(file.patch_text):
         for attr, value in _UI_ATTR.findall(content):

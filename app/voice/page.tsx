@@ -1,139 +1,63 @@
-// Reskin (peer parity with hindsight-guild/web Voice.tsx) — the "Brand Voice" view. NOTE: this is
-// the COMPANY/FOUNDER brand voice that grounds generation, NOT a customer-voice corpus. ShipSignal
-// grounds every draft in the founder's published voice exemplars, the ICP segments it markets to,
-// and the approved, evidence-backed messaging claims. This page is read-only: the editable CRUD for
-// all three lives at /settings (the "brand & customer brain"). Server Component: reads Aurora
-// server-side (no secret/DB handle reaches the client). P6 (WCAG 2.2 AA): one <main> landmark,
-// sections render as cards (global CSS), each starts with an <h2>; status is conveyed as text.
+// Brand Voice — the authoring module for the company's own brand language. This is the COMPANY/
+// FOUNDER voice that grounds generation, NOT a customer-voice corpus. It is editable here (operator
+// decision 2026-06-22): the brand voice is configurable knowledge, so this page IS where you author
+// it — a structured voice guide (tone, reading level, do/don't rules, preferred/avoided vocabulary)
+// plus the example posts the worker embeds and retrieves per release. Audience (ICP) and the
+// messaging library live on /settings; the voice itself lives here (no duplication). Server
+// Component: reads Aurora server-side (no secret/DB handle reaches the client) and renders the
+// client editors. P6 (WCAG 2.2 AA): one <main> landmark; each section starts with an <h2>; the
+// editors are labelled, keyboard-operable, and report status politely.
 
+import { getVoiceGuide } from '@/app/lib/db/voiceGuide.ts';
 import { listVoiceExemplars } from '@/app/lib/db/voiceExemplars.ts';
 import { listIcpSegments } from '@/app/lib/db/icpSegments.ts';
-import { listMessagingClaims } from '@/app/lib/db/messagingClaims.ts';
 import { PageHeader } from '@/app/components/PageHeader.ts';
-import { humanizeStatus } from '@/app/lib/displayFormat.ts';
+import { VoiceGuideSettings } from '@/app/components/VoiceGuideSettings.ts';
+import { VoiceExemplarSettings } from '@/app/components/VoiceExemplarSettings.ts';
 
 export const dynamic = 'force-dynamic';
 
 export default async function BrandVoicePage() {
-  const [exemplars, icpSegments, claims] = await Promise.all([
+  const [guide, exemplars, segments] = await Promise.all([
+    getVoiceGuide(),
     listVoiceExemplars(),
     listIcpSegments(),
-    listMessagingClaims(),
   ]);
 
   return (
     <main id="main">
       <PageHeader
-        eyebrow="Skill library"
+        eyebrow="Settings"
         title="Brand Voice"
-        description="The company/founder voice every draft is grounded in."
-        actions={<a href="/settings">Edit in settings</a>}
+        description="Your company's own brand language — the voice every generated draft is written in. Author it here; generation grounds in it directly."
+        actions={<a href="/admin">← Admin</a>}
       />
+
+      <section aria-labelledby="guide-heading">
+        <h2 id="guide-heading">Voice guide</h2>
+        <p>
+          The rules that define how you sound: tone, reading level, what to always do, what to never
+          do, and the words you prefer or avoid. Every draft is generated against this guide.
+        </p>
+        <VoiceGuideSettings guide={guide} />
+      </section>
 
       <section aria-labelledby="exemplars-heading">
         <h2 id="exemplars-heading">Voice exemplars</h2>
         <p>
-          {exemplars.length === 0
-            ? 'No voice exemplars yet. Add the founder’s published posts in settings so generation can match your voice.'
-            : `${
-                exemplars.length === 1 ? '1 exemplar' : `${exemplars.length} exemplars`
-              } of the founder’s own published content. The worker embeds each one so retrieval can ground a draft in your actual voice.`}
+          Paste your real published content (past blogs, posts, emails). The worker embeds each one;
+          at generation time the closest to the release are retrieved as live style references — this
+          is how output matches <em>your</em> voice, not a generic tone. Examples complement the
+          guide above: the guide states the rules, the exemplars show them in practice.
         </p>
-        {exemplars.length > 0 ? (
-          <ul>
-            {exemplars.map((exemplar) => (
-              <li key={exemplar.id}>
-                <h3>{exemplar.title === '' ? 'Untitled exemplar' : exemplar.title}</h3>
-                <p>
-                  Channel: {exemplar.channel}
-                  {exemplar.source !== null && exemplar.source !== '' ? (
-                    <> · Source: {exemplar.source}</>
-                  ) : null}{' '}
-                  · {exemplar.embedded ? 'Embedded' : 'Embedding pending'}
-                </p>
-                <blockquote>{exemplar.body_text}</blockquote>
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        <VoiceExemplarSettings exemplars={exemplars} segments={segments} />
       </section>
 
-      <section aria-labelledby="icp-heading">
-        <h2 id="icp-heading">Audience (ICP segments)</h2>
+      <section aria-labelledby="related-heading">
+        <h2 id="related-heading">Audience &amp; messaging</h2>
         <p>
-          {icpSegments.length === 0
-            ? 'No ICP segments defined yet. Define who you market to in settings.'
-            : 'Who the voice speaks to. Generation grounds against the active segments below.'}
-        </p>
-        {icpSegments.length > 0 ? (
-          <ul>
-            {icpSegments.map((segment) => (
-              <li key={segment.id}>
-                <h3>{segment.name}</h3>
-                <p>Status: {humanizeStatus(segment.status)}</p>
-                {segment.description !== '' ? <p>{segment.description}</p> : null}
-                {segment.buyer_roles.length > 0 ? (
-                  <p>Buyer roles: {segment.buyer_roles.join(', ')}</p>
-                ) : null}
-                {segment.pain_points.length > 0 ? (
-                  <p>Pain points: {segment.pain_points.join(', ')}</p>
-                ) : null}
-                {segment.approved_angles.length > 0 ? (
-                  <p>Approved angles: {segment.approved_angles.join(', ')}</p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="claims-heading">
-        <h2 id="claims-heading">Approved messaging</h2>
-        <p>
-          {claims.length === 0
-            ? 'No messaging claims yet. Add approved, evidence-backed claims in settings.'
-            : 'The approved, evidence-backed claims generation may make — each scoped to the ICP segments it applies to.'}
-        </p>
-        {claims.length > 0 ? (
-          <table>
-            <caption>Messaging claims with type, status, and applicable ICP segments.</caption>
-            <thead>
-              <tr>
-                <th scope="col">Claim</th>
-                <th scope="col">Type</th>
-                <th scope="col">Status</th>
-                <th scope="col">Applies to</th>
-              </tr>
-            </thead>
-            <tbody>
-              {claims.map((claim) => (
-                <tr key={claim.id}>
-                  <th scope="row">
-                    {claim.evidence_url !== null && claim.evidence_url !== '' ? (
-                      <a href={claim.evidence_url}>{claim.claim_text}</a>
-                    ) : (
-                      claim.claim_text
-                    )}
-                  </th>
-                  <td>{humanizeStatus(claim.claim_type)}</td>
-                  <td>{humanizeStatus(claim.status)}</td>
-                  <td>
-                    {claim.applies_to_icp.length === 0
-                      ? 'All segments'
-                      : claim.applies_to_icp.join(', ')}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="edit-heading">
-        <h2 id="edit-heading">Editing the brand voice</h2>
-        <p>
-          This page is read-only. To add, edit, or archive voice exemplars, ICP segments, and
-          messaging claims, open <a href="/settings">settings</a> — the brand &amp; audience brain.
+          Who this voice speaks to (ICP segments) and the approved, evidence-backed claims it may
+          make live in <a href="/settings">brand &amp; customer settings</a>.
         </p>
       </section>
     </main>

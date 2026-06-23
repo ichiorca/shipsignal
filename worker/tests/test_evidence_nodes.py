@@ -83,6 +83,33 @@ def test_collect_redact_persist_strips_pii_and_secret_before_storage() -> None:
         assert row.risk_flags  # the redactor flagged what it stripped
 
 
+def test_binary_files_with_empty_patch_produce_no_code_diff_evidence() -> None:
+    """A binary/no-patch file (image, screenshot, lockfile blob) carries no diff content, so it
+    must not create empty code_diff evidence (which would noise up clustering + waste S3 blobs).
+    Only files with actual patch text become evidence."""
+    diff: dict[str, object] = {
+        "repo": "org/product",
+        "base_ref": "v1.0.0",
+        "head_ref": "v1.1.0",
+        "files": [
+            {
+                "file_path": "docs/screenshot.png",
+                "status": "added",
+                "patch_text": "",
+                "hunks": [],
+            },
+            {
+                "file_path": "src/app.tsx",
+                "status": "modified",
+                "patch_text": "+ const x = 1\n",
+                "hunks": [],
+            },
+        ],
+    }
+    collected = collect_git_diff(_BOUNDARY, StaticDiffSource(diff))
+    assert [c.file_path for c in collected] == ["src/app.tsx"]
+
+
 def test_persisted_row_carries_required_provenance_fields() -> None:
     """AC2: every evidence_items row has release_run_id, source, source_url, s3 uri."""
     sink = InMemoryEvidenceSink()

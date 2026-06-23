@@ -38,6 +38,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     head_ref: parsed.value.head_ref,
     trigger_type: 'manual',
     artifact_types: parsed.value.artifact_types ?? DEFAULT_ARTIFACT_TYPES,
+    ...(parsed.value.project_id ? { project_id: parsed.value.project_id } : {}),
   });
 
   try {

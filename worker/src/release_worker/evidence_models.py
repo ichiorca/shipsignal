@@ -75,6 +75,10 @@ class RawDiffPayload(BaseModel):
     base_ref: str = Field(min_length=1)
     head_ref: str = Field(min_length=1)
     files: tuple[RawDiffFile, ...] = ()
+    # True when the diff source could not return every changed file (e.g. GitHub's compare API
+    # caps `files` at 300). The collector logs a warning so a large release is never silently
+    # built from a partial, path-biased file set; downstream/UI can read this flag too.
+    truncated: bool = False
 
 
 class CollectedEvidence(BaseModel):
@@ -192,6 +196,10 @@ class PullRequestPayload(BaseModel):
     model_config = _StrictModel
 
     pull_requests: tuple[PullRequestMeta, ...] = ()
+    # True when the source hit its PR/issue quota caps and could not resolve every PR/issue for the
+    # range (mirrors RawDiffPayload.truncated for the file diff). The collector logs a warning so a
+    # large release's PR/issue evidence is never silently partial.
+    truncated: bool = False
 
 
 # --- T3 (spec 003) — deterministic code-signal contract ---------------------------

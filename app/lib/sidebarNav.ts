@@ -4,11 +4,13 @@
 //   - Skill library  : institutional knowledge — what the system knows & remembers.
 //   - Signals & Trends: observability — what happened, what's happening, what's trending.
 //
-// Names + taglines are kept identical to hindsight-guild for a clean future merge, EXCEPT
-// "Customer Voice" → "Brand Voice": ShipSignal grounds generation in the company/founder voice
-// (the voice exemplars), not customer feedback (operator note 2026-06-16). Each item maps to a
-// ShipSignal route backed by real data, or an honest "coming soon" where the concept has no
+// Names + taglines are kept identical to hindsight-guild for a clean future merge. Each item maps
+// to a ShipSignal route backed by real data, or an honest "coming soon" where the concept has no
 // ShipSignal equivalent yet (Agents roster, Experiments).
+//
+// Brand Voice is intentionally NOT a top-level item (operator note 2026-06-22): it is company
+// CONFIG the operator authors, not institutional skill knowledge, so it lives under Admin alongside
+// the other configuration surfaces (/settings, /projects, /webhooks) — reached via the Admin hub.
 
 import type { NavIconName } from '@/app/components/navIcons.ts';
 
@@ -42,7 +44,6 @@ export const SIDEBAR_SECTIONS: readonly SidebarSection[] = [
     items: [
       { href: '/skills', label: 'Skills', description: 'Playbook versions', icon: 'skills' },
       { href: '/capabilities', label: 'Capabilities', description: 'Agent skills + usage', icon: 'capabilities' },
-      { href: '/voice', label: 'Brand Voice', description: 'Your founder voice', icon: 'voice' },
       { href: '/agents', label: 'Agents', description: 'Team roster + inboxes', icon: 'agents' },
     ],
   },

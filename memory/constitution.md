@@ -15,7 +15,7 @@ These are project-level invariants that hold across every feature and spec in th
 - In scope: GitHub-sourced release detection, evidence collection, deterministic signal extraction, feature clustering, human-gated content + media generation, skill self-learning ledger.
 - Out of scope (non-goals — adding any is a constitutional change): full autopublishing without human approval, generalized/AI video generation, multi-VCS support beyond GitHub, Bedrock Knowledge Bases/Agents, Step Functions/EventBridge/Lambda/ECS, self-hosted models, statistical skill-promotion tests.
 - Tenancy: **internal, single-org tool**. Every record is scoped to a `release_run_id`; cross-run data bleed is forbidden.
-- Repo shape: canonical skills live in-repo as `skills/**/SKILL.md`. Aurora is a **staging/telemetry/provenance layer only** — it never becomes the source of truth for skills.
+- Repo shape: skills are authored as `skills/**/SKILL.md` and **stored, versioned, and evolved in Aurora** (the `skills` table: `current_version` + a `versions{}` map), which is the **source of truth** for a skill's active body. The repo `skills/**/SKILL.md` is a **derived, reconciled cache** (rewritten from the DB current version) kept for Agent-Skills-format portability. Aurora remains the staging/telemetry/provenance layer for everything else.
 
 ## 3. Primitives — use them; do not reinvent
 
@@ -35,7 +35,7 @@ These are project-level invariants that hold across every feature and spec in th
 
 - Structured state (releases, evidence, features, claims, artifacts, skill ledger, approvals) lives in **Aurora**. Large/binary artifacts (raw evidence bundles, screenshots, media, audio) live in **S3** — referenced from Aurora by key, never inlined as blobs.
 - Every persisted row carries `release_run_id` and provenance/source lineage. Every generated claim must link to concrete evidence; an unlinkable claim must not be persisted as approved.
-- Forbidden storage shapes: PII or unredacted evidence written before the redaction node runs; secrets in any DB column, S3 object, or log; PII shipped to the React client; skill source-of-truth stored only in Aurora (must be the repo `SKILL.md` + recorded commit SHA); LangGraph state used as a durable store in place of Aurora.
+- Forbidden storage shapes: PII or unredacted evidence written before the redaction node runs; secrets in any DB column, S3 object, or log; PII shipped to the React client; LangGraph state used as a durable store in place of Aurora. (Skills are DB-versioned in the `skills` table as the source of truth, reconciled to the repo `SKILL.md` cache — see §2.)
 
 ## 5. Safety rails (non-negotiable)
 
@@ -45,7 +45,7 @@ These are project-level invariants that hold across every feature and spec in th
 - **Bedrock Guardrails + deterministic policy checks** run on every generated artifact before it reaches Gate #2. Unsupported-claim and PII/sensitive-info checks are blocking, not advisory.
 - **GDPR rails:** data minimization (collect only release-relevant evidence); lawful redaction of personal data in diffs/PRs/issues; support data-subject erasure across Aurora **and** S3; no PII in telemetry or logs; honor purpose limitation (evidence used only for content generation). A data-subject-rights request is an escalation trigger, not a silent operation.
 - **Secrets** come only from GitHub/Vercel/AWS env (or Secrets Manager in prod). Never hardcoded, committed, logged, or sent to the client. Webhook handlers (GitHub/S3/Bedrock/ElevenLabs/Vercel) verify signatures and enforce idempotency/replay protection.
-- **Blast radius:** the only file the system overwrites is the approved `skills/**/SKILL.md`, and only after Gate #3, recording the resulting commit SHA in Aurora. No other repo writes. File writes stay workspace-sandboxed; network egress stays allowlisted per the harness guardrails.
+- **Blast radius:** on Gate #3 approval the system writes the approved skill version to the Aurora `skills` table (a new `versions{}` entry + bumped `current_version`) and **reconciles** the derived `skills/**/SKILL.md` cache; no other repo writes. File writes stay workspace-sandboxed; network egress stays allowlisted per the harness guardrails.
 
 ## 6. Quality bars
 
@@ -67,14 +67,14 @@ An autonomous session MUST pause and ask a human when:
 - A generated claim cannot be linked to concrete evidence.
 - A change would touch scope/non-goals (§2), add a service/dependency, alter storage shape, or modify a webhook/secret/IAM boundary.
 - A GDPR data-subject request (erasure/access) or any personal-data handling decision arises.
-- The skill-learning graph would overwrite a repo `SKILL.md` (Gate #3) or promote a candidate.
+- The skill-learning graph would write a new skill version (Gate #3 — bump `current_version` in the `skills` table + reconcile the `SKILL.md` cache) or promote a candidate.
 - Quality bars (§6) cannot be met, or a fix would require weakening a safety rail.
 - Tests/migrations are red and the fix is non-obvious, or required credentials/permissions are missing.
 
 ## 8. Definition of done
 
 v1.0 is shipped only when:
-- The full loop runs end-to-end: release trigger → evidence collect/redact/persist → deterministic signals → feature clustering → **Gate #1** → artifact generation (blog/changelog, sales one-pager, social snippets, demo script, audio digest, optional demo video) → claim extraction + evidence linking → deterministic checks + Guardrails → **Gate #2** → optional media (Playwright + ffmpeg + ElevenLabs → S3) → learning signals → skill candidate → **Gate #3** → repo `SKILL.md` replaced with commit SHA recorded in Aurora.
+- The full loop runs end-to-end: release trigger → evidence collect/redact/persist → deterministic signals → feature clustering → **Gate #1** → artifact generation (blog/changelog, sales one-pager, social snippets, demo script, audio digest, optional demo video) → claim extraction + evidence linking → deterministic checks + Guardrails → **Gate #2** → optional media (Playwright + ffmpeg + ElevenLabs → S3) → learning signals → skill candidate → **Gate #3** → the approved skill version written to the `skills` table (`current_version` bumped) and the `SKILL.md` cache reconciled.
 - Every shipped artifact has claim-level provenance traceable to evidence; nothing publishes without its gate.
 - All §6 quality bars green on `main`; privacy evals pass CRITICAL/HIGH.
 - Dashboard supports release review, feature approval, artifact review, and skill-proposal approval, all keyboard-operable and WCAG 2.2 AA.

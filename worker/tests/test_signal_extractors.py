@@ -70,6 +70,25 @@ def test_ui_strings_no_ui_change_yields_nothing() -> None:
     assert extract_ui_strings(_file("src/calc.ts", patch)) == ()
 
 
+def test_ui_strings_skips_docs_and_ci_config_files() -> None:
+    # UI copy lives in app source — NOT in Markdown docs, YAML, or .github CI files. A YAML
+    # `description:` key and a Markdown heading both match the UI patterns but are not product copy,
+    # so these files yield no ui_string signals (docs get docs_delta instead).
+    yaml_patch = (
+        '@@ -1,1 +1,2 @@\n jobs:\n+    description: "Optional run id to deploy"\n'
+    )
+    md_patch = "@@ -1,1 +1,2 @@\n intro\n+## Runs Anywhere, Not Just Your Laptop\n"
+    assert extract_ui_strings(_file(".github/workflows/deploy.yml", yaml_patch)) == ()
+    assert extract_ui_strings(_file("README.md", md_patch, status="modified")) == ()
+
+
+def test_ui_strings_still_detected_in_source_files() -> None:
+    # The scoping is precision-only: real UI copy in app source still fires.
+    patch = "@@ -1,1 +1,2 @@\n ctx\n+  <button>Ask before edits</button>\n"
+    signals = extract_ui_strings(_file("apps/desktop/src/Composer.tsx", patch))
+    assert [s.excerpt for s in signals] == ["Ask before edits"]
+
+
 def test_ui_strings_is_deterministic() -> None:
     patch = "@@ -1,1 +1,2 @@\n x\n+  <h1>Welcome aboard</h1>\n"
     first = extract_ui_strings(_file("src/Home.tsx", patch))

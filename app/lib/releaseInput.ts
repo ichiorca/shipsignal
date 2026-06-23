@@ -9,14 +9,15 @@ import { ALL_ARTIFACT_TYPES, type ArtifactType } from './artifactTypes.ts';
 
 // A GitHub "owner/repo" slug. Conservative charset (GitHub's own allowed set) so a
 // crafted value can't smuggle a path-traversal or URL-injection payload downstream.
-const repoSlug = z
+// Exported so the Projects feature validates repos with the SAME rule (one source of truth).
+export const repoSlug = z
   .string()
   .trim()
   .regex(/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/, 'expected "owner/repo"');
 
 // A git ref (branch, tag, or SHA). Reject whitespace and the ref-name metacharacters
-// git itself forbids; keep it short to bound abuse.
-const gitRef = z
+// git itself forbids; keep it short to bound abuse. Exported for reuse (Projects default refs).
+export const gitRef = z
   .string()
   .trim()
   .min(1)
@@ -39,12 +40,23 @@ const artifactTypes = z
     message: 'artifact types must not repeat',
   });
 
+// An optional saved-project association (slug id, e.g. 'proj_acme'). When present the run is linked
+// to the project so the worker can resolve its per-project GitHub credential; the repo/refs are
+// still sent explicitly (the form pre-fills them from the project), so this is purely an association.
+const projectId = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9_-]+$/, 'invalid project id');
+
 export const createReleaseRunSchema = z
   .object({
     repo: repoSlug,
     base_ref: gitRef,
     head_ref: gitRef,
     artifact_types: artifactTypes.optional(),
+    project_id: projectId.optional(),
   })
   .strict(); // reject unknown keys rather than silently dropping them
 

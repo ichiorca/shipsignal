@@ -88,6 +88,13 @@ fi
 echo "Applying Alembic migrations ..."
 DATABASE_URL="${DATABASE_URL/postgresql:\/\//postgresql+psycopg://}" python -m alembic upgrade head
 
+# --- Seed the canonical skill library as REFERENCE data (idempotent) --------------
+# The repo skills/**/SKILL.md ARE the source of truth (constitution §2); this snapshots them
+# into skill_repo_snapshots so the dashboard's Skills page reflects the real library on a fresh
+# DB. Reuses the worker's own snapshot logic (no drift). Uses the plain DATABASE_URL from dev-env.
+echo "Seeding reference skills (skills/**/SKILL.md -> skill_repo_snapshots) ..."
+python scripts/seed_reference_skills.py
+
 cat <<'EOF'
 
 Local stack is up.

@@ -104,6 +104,14 @@ try {
   $env:DATABASE_URL = $prevUrl
 }
 
+# --- Seed the canonical skill library as REFERENCE data (idempotent) --------------
+# The repo skills/**/SKILL.md ARE the source of truth (constitution §2); this snapshots them into
+# skill_repo_snapshots so the dashboard's Skills page reflects the real library on a fresh DB.
+# Reuses the worker's own snapshot logic (no drift). Uses the plain DATABASE_URL from dev-env.
+Write-Host "Seeding reference skills (skills/**/SKILL.md -> skill_repo_snapshots) ..." -ForegroundColor Cyan
+python scripts/seed_reference_skills.py
+if ($LASTEXITCODE -ne 0) { throw "seed_reference_skills failed" }
+
 Write-Host ""
 Write-Host "Local stack is up." -ForegroundColor Green
 Write-Host "  Postgres : localhost:5434 (TLS, sslmode=require)"

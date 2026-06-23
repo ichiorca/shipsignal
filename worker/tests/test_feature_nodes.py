@@ -100,6 +100,53 @@ def test_clustering_prompt_contains_only_redacted_evidence() -> None:
     assert not any(hasattr(e, "raw_excerpt") for e in _evidence())
 
 
+def _docs_evidence(n: int) -> tuple[EvidenceRecord, ...]:
+    return tuple(
+        EvidenceRecord(
+            evidence_id=f"{i:032x}",
+            release_run_id=_RUN_ID,
+            evidence_type="docs_delta",
+            source="git_diff",
+            repo="org/product",
+            file_path="docs/guide.md",
+            raw_excerpt_s3_uri=f"s3://b/evidence/r/d{i}.txt",
+            # Length varies so the "keep the meatiest docs" ordering is observable.
+            redacted_excerpt=f"## Doc heading number {i} " + ("detail " * (i % 7)),
+            confidence=0.5,
+        )
+        for i in range(n)
+    )
+
+
+def test_clustering_input_drops_empties_and_caps_docs_flood() -> None:
+    """Fix B: a docs-heavy release must not drown the marketable signals (or balloon the token
+    bill). The clustering PROMPT drops empty-excerpt items and caps docs_delta, while keeping every
+    marketable item. The persisted evidence set is unchanged (only the prompt is bounded)."""
+    empty = EvidenceRecord(
+        evidence_id="0" * 32,
+        release_run_id=_RUN_ID,
+        evidence_type="code_diff",
+        source="git_diff",
+        repo="org/product",
+        file_path="assets/logo.png",
+        raw_excerpt_s3_uri="s3://b/evidence/r/empty.txt",
+        redacted_excerpt="   ",  # binary/no-patch → empty after strip
+        confidence=None,
+    )
+    evidence = _evidence() + _docs_evidence(120) + (empty,)
+    client = RecordingModelClient(_cluster_response())
+
+    cluster_features_with_bedrock(_RUN_ID, evidence, client)
+
+    prompt = client.calls[-1].messages[0]["content"]
+    # The two marketable items are present; the empty-excerpt item is gone.
+    assert _EV1 in prompt and _EV2 in prompt
+    assert "assets/logo.png" not in prompt
+    # docs_delta is capped (120 supplied, far more than the cap) so it cannot crowd out signals.
+    docs_in_prompt = prompt.count("type=docs_delta")
+    assert docs_in_prompt == 40, docs_in_prompt  # _MAX_DOCS_FOR_CLUSTERING
+
+
 def test_clustering_validates_and_filters_unknown_evidence_ids() -> None:
     """Untrusted model output: a hallucinated evidence id is dropped (AC: >=1 real link)."""
     response = _cluster_response()

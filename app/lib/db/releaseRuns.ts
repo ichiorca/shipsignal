@@ -85,6 +85,8 @@ export interface CreateReleaseRunArgs {
   readonly trigger_type: TriggerType;
   /** T1 (spec 022) — the run's selection; omitted → the DB DEFAULT (all six §8.1 types). */
   readonly artifact_types?: readonly ArtifactType[];
+  /** Optional saved-project association (migration 0030); null/omitted → an ad-hoc run. */
+  readonly project_id?: string;
   readonly run_metadata?: Readonly<Record<string, unknown>>;
 }
 
@@ -103,8 +105,8 @@ export async function insertReleaseRun(
     : [...ALL_ARTIFACT_TYPES];
   const result = await db.query<ReleaseRunRow>(
     `INSERT INTO release_runs
-       (id, repo, base_ref, head_ref, trigger_type, status, artifact_types, run_metadata_json)
-     VALUES ($1, $2, $3, $4, $5, 'created', $6::text[], $7)
+       (id, repo, base_ref, head_ref, trigger_type, status, artifact_types, project_id, run_metadata_json)
+     VALUES ($1, $2, $3, $4, $5, 'created', $6::text[], $7, $8)
      RETURNING ${SELECT_COLUMNS}`,
     [
       id,
@@ -113,6 +115,7 @@ export async function insertReleaseRun(
       args.head_ref,
       args.trigger_type,
       artifactTypes,
+      args.project_id ?? null,
       JSON.stringify(args.run_metadata ?? {}),
     ],
   );

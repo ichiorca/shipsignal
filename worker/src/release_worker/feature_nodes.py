@@ -98,6 +98,30 @@ def _idempotency_key(release_run_id: str, evidence: tuple[EvidenceRecord, ...]) 
     return digest.hexdigest()
 
 
+# Bound how many docs-delta items reach the CLUSTERING PROMPT (not the persisted set). A docs-heavy
+# release emits one docs_delta per added heading/prose line — for a real release that can be hundreds
+# of items, drowning the handful of marketable code/UI/PR signals and inflating the Bedrock token
+# bill (constitution §6). We keep the meatiest docs excerpts and let the rest stay in Aurora for
+# retrieval/grounding; only the prompt is bounded.
+_MAX_DOCS_FOR_CLUSTERING = 40
+_DOCS_EVIDENCE_TYPE = "docs_delta"
+
+
+def _select_for_clustering(
+    evidence: tuple[EvidenceRecord, ...],
+) -> tuple[EvidenceRecord, ...]:
+    """Shape the clustering input: drop empty-excerpt items and cap the docs_delta flood so the
+    marketable signals aren't crowded out. Deterministic; does not affect persisted evidence."""
+    non_empty = [e for e in evidence if e.redacted_excerpt.strip()]
+    docs = [e for e in non_empty if e.evidence_type == _DOCS_EVIDENCE_TYPE]
+    other = [e for e in non_empty if e.evidence_type != _DOCS_EVIDENCE_TYPE]
+    # Prefer substantive docs (longer excerpts) over one-word headings/badges; stable by id.
+    kept_docs = sorted(docs, key=lambda e: (-len(e.redacted_excerpt), e.evidence_id))[
+        :_MAX_DOCS_FOR_CLUSTERING
+    ]
+    return tuple(other) + tuple(kept_docs)
+
+
 def cluster_features_with_bedrock(
     release_run_id: str,
     evidence: tuple[EvidenceRecord, ...],
@@ -107,22 +131,26 @@ def cluster_features_with_bedrock(
 
     The prompt is built only from ``redacted_excerpt`` (the type carries no raw field, so
     "prompts contain only redacted evidence" is enforced by construction, not a check).
-    The response is validated through ``ClusterResponse`` (untrusted model output, AC4)
-    and each feature's ``evidence_ids`` is filtered to the ids actually sent; a feature
-    left with zero real evidence links is dropped (AC: each persisted feature links to
-    >=1 evidence item).
+    The clustering INPUT is shaped by ``_select_for_clustering`` (empty excerpts dropped, docs flood
+    capped) so marketable signals aren't drowned; the persisted evidence set is unchanged. The
+    response is validated through ``ClusterResponse`` (untrusted model output, AC4) and each
+    feature's ``evidence_ids`` is filtered to the ids actually sent; a feature left with zero real
+    evidence links is dropped (AC: each persisted feature links to >=1 evidence item).
     """
     if not evidence:
         return ()
 
-    known_ids = {item.evidence_id for item in evidence}
-    messages = [{"role": "user", "content": _render_evidence(evidence)}]
+    selected = _select_for_clustering(evidence)
+    if not selected:
+        return ()
+    known_ids = {item.evidence_id for item in selected}
+    messages = [{"role": "user", "content": _render_evidence(selected)}]
     raw = model_client.generate_json(
         _CLUSTER_TASK,
         _CLUSTER_SYSTEM,
         messages,
         _CLUSTER_SCHEMA,
-        _idempotency_key(release_run_id, evidence),
+        _idempotency_key(release_run_id, selected),
     )
 
     try:

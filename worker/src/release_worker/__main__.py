@@ -78,11 +78,15 @@ from release_worker.aurora_skill_learning import (
     AuroraSkillCandidateSink,
     AuroraSuppressionStore,
 )
+from release_worker.aurora_capability_skills import AuroraCapabilitySkillSource
+from release_worker.aurora_skill_source import AuroraSkillSource
+from release_worker.aurora_skill_writer import DbBackedRepoSkillWriter
 from release_worker.aurora_voice_context import AuroraVoiceContextSource
 from release_worker.bedrock_client import BedrockEmbeddingClient, BedrockModelClient
 from release_worker.checkpointer import build_checkpointer, wants_durable_checkpointer
 from release_worker.content_graph import build_content_generation_graph
 from release_worker.content_models import ArtifactTypeSelection
+from release_worker.content_nodes import code_default_capability_skills
 from release_worker.content_policy import load_named_entity_policy
 from release_worker.content_state import ContentRunState
 from release_worker.elevenlabs_client import ElevenLabsSynthesizer
@@ -117,6 +121,7 @@ from release_worker.promotion_config import (
 from release_worker.regression import main as regression_main
 from release_worker.repo_skill_source import FilesystemSkillSource
 from release_worker.s3_media_store import S3MediaStore
+from release_worker.secrets_resolver import resolve_github_token
 from release_worker.skill_learning_graph import build_skill_learning_graph
 from release_worker.skill_learning_state import SkillLearningState
 from release_worker.state import ReleaseRunState
@@ -193,6 +198,28 @@ def _repo_for(conn: psycopg.Connection, release_run_id: str) -> str:
     if row is None:
         raise RuntimeError(f"release run {release_run_id} not found")
     return row[0]
+
+
+def _resolve_github_token_for(
+    conn: psycopg.Connection, release_run_id: str
+) -> str | None:
+    """The per-project GitHub token from AWS Secrets Manager, or None for an ad-hoc run.
+
+    Maps release_run_id → project_id → ``projects.github_secret_id`` (migration 0030) and resolves
+    the referenced secret. Returns None when the run has no project or the project has no secret
+    reference — the caller then falls back to the ambient ``GITHUB_TOKEN`` (backward compatible)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT p.github_secret_id "
+            "FROM release_runs r LEFT JOIN projects p ON p.id = r.project_id "
+            "WHERE r.id = %s",
+            (release_run_id,),
+        )
+        row = cur.fetchone()
+    secret_id = row[0] if row else None
+    if not secret_id:
+        return None
+    return resolve_github_token(secret_id)
 
 
 def _artifact_types_for(
@@ -332,7 +359,10 @@ def _run_content_generation(
 
     graph = build_content_generation_graph(
         AuroraApprovedFeatureReader(conn),
-        FilesystemSkillSource.from_env(),
+        # DB-as-SoT (constitution §2 as amended): generation grounds in the Aurora `skills` table's
+        # current version + reconciles the repo SKILL.md cache; the on-disk source is the fallback
+        # when the DB is unreachable/empty. The snapshot sink still records provenance.
+        AuroraSkillSource.from_env(conn, fallback=FilesystemSkillSource.from_env()),
         AuroraSkillSnapshotSink(conn),
         BedrockModelClient.from_env(
             release_run_id=release_run_id,
@@ -357,6 +387,12 @@ def _run_content_generation(
         # (retrieved by similarity to this release), approved messaging, and active ICP. Reuses
         # the same Bedrock embedder as evidence retrieval. Best-effort inside the node.
         voice_source=AuroraVoiceContextSource(conn, embedder),
+        # Capability→skill mapping (migration 0032, peer-parity): resolve the persisted
+        # per-artifact-type skill selection from `capability_skills`, DB-wins-per-type over the
+        # `_ARTIFACT_SPECS` code default. Fail-safe to the code default on any DB read error.
+        capability_source=AuroraCapabilitySkillSource.from_env(
+            conn, code_default_capability_skills()
+        ),
     )
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -527,8 +563,14 @@ def _run_skill_learning(
         # PR mode (branch + PR a human merges) or the hackathon-fast direct write to the
         # checked-out tree. Both reach the graph only on the approved Gate #3 branch, so neither
         # relaxes a §9.4 invariant. Default is direct; SKILL_PROMOTION_MODE=pr opts into PR mode.
-        build_repo_skill_writer(
-            parse_promotion_mode(os.environ.get("SKILL_PROMOTION_MODE"))
+        # DB-as-SoT (constitution §5 as amended): Gate #3 promotion writes the approved version to
+        # the `skills` table (bump current_version) FIRST, then the mode-selected inner writer
+        # reconciles the derived cache (direct file write) or opens the PR.
+        DbBackedRepoSkillWriter(
+            conn,
+            build_repo_skill_writer(
+                parse_promotion_mode(os.environ.get("SKILL_PROMOTION_MODE"))
+            ),
         ),
         # T4 (spec 016) — §18.2 layer-3: the proposed skill body is scanned through the SAME
         # published Bedrock Guardrail as artifacts before any repo SKILL.md is overwritten.
@@ -726,11 +768,19 @@ def main(argv: list[str] | None = None) -> int:
                 webhook_url,
             )
 
+        # Per-project credential (migration 0030): if the run targets a saved project with a
+        # Secrets Manager reference, read the customer's repo with THAT token; otherwise fall back
+        # to the ambient GITHUB_TOKEN (ad-hoc runs, unchanged behavior).
+        github_token = _resolve_github_token_for(conn, release_run_id)
         graph = build_release_intelligence_graph(
             repository,
             AuroraBoundaryReader(conn),
-            GitHubDiffSource.from_env(),
-            GitHubPullRequestSource.from_env(),
+            GitHubDiffSource(github_token)
+            if github_token
+            else GitHubDiffSource.from_env(),
+            GitHubPullRequestSource(github_token)
+            if github_token
+            else GitHubPullRequestSource.from_env(),
             S3AuroraEvidenceSink(
                 conn, s3_client_from_env(), _require_env("EVIDENCE_BUCKET")
             ),

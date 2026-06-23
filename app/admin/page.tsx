@@ -9,9 +9,19 @@ export const dynamic = 'force-dynamic';
 
 const CARDS: readonly HubCard[] = [
   {
-    title: 'Brand voice & audience',
-    description: 'Edit voice exemplars, ICP segments, and approved messaging — the founder voice every draft is grounded in.',
+    title: 'Brand voice',
+    description: 'Author your company voice — the voice guide (tone, reading level, do/don’t rules, vocabulary) and the example posts every draft is written in.',
+    href: '/voice',
+  },
+  {
+    title: 'Audience & messaging',
+    description: 'Define who you market to (ICP segments) and the approved, evidence-backed claims generation may make.',
     href: '/settings',
+  },
+  {
+    title: 'Projects & repositories',
+    description: 'Pre-configure repos and map each to a GitHub credential (AWS Secrets Manager), so runs can target a saved project.',
+    href: '/projects',
   },
   {
     title: 'Connections',

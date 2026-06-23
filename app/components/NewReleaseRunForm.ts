@@ -23,6 +23,12 @@ import {
   typeLabel,
   type ArtifactType,
 } from '../lib/artifactTypes.ts';
+import type { ProjectView } from '../lib/projects.ts';
+
+export interface NewReleaseRunFormProps {
+  /** Active saved projects to offer as a pre-fill picker; empty → no picker (ad-hoc only). */
+  readonly projects?: readonly ProjectView[];
+}
 
 type Result =
   | { readonly kind: 'idle' }
@@ -48,10 +54,13 @@ async function readJson(response: Response): Promise<CreatedResponse> {
   }
 }
 
-export function NewReleaseRunForm(): ReactElement {
+export function NewReleaseRunForm({ projects = [] }: NewReleaseRunFormProps = {}): ReactElement {
   const [repo, setRepo] = useState('');
   const [baseRef, setBaseRef] = useState('');
   const [headRef, setHeadRef] = useState('');
+  // Optional saved-project association: pre-fills repo/refs and links the run so the worker uses
+  // the project's GitHub credential. '' = ad-hoc (type the repo manually).
+  const [projectId, setProjectId] = useState('');
   // T2 (spec 022) — the per-run artifact-type selection; all six checked by default so the
   // pre-selection behaviour (generate everything) stays the path of least resistance.
   const [selectedTypes, setSelectedTypes] = useState<readonly ArtifactType[]>(
@@ -59,6 +68,16 @@ export function NewReleaseRunForm(): ReactElement {
   );
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<Result>({ kind: 'idle' });
+
+  function selectProject(id: string): void {
+    setProjectId(id);
+    const project = projects.find((p) => p.id === id);
+    if (project) {
+      if (project.repos[0]) setRepo(project.repos[0]);
+      setBaseRef(project.default_base_ref);
+      setHeadRef(project.default_head_ref);
+    }
+  }
 
   function toggleType(type: ArtifactType): void {
     setSelectedTypes((current) =>
@@ -95,6 +114,7 @@ export function NewReleaseRunForm(): ReactElement {
           base_ref: baseRef.trim(),
           head_ref: headRef.trim(),
           artifact_types: selectedTypes,
+          ...(projectId ? { project_id: projectId } : {}),
         }),
       });
       const body = await readJson(response);
@@ -105,6 +125,7 @@ export function NewReleaseRunForm(): ReactElement {
         setRepo('');
         setBaseRef('');
         setHeadRef('');
+        setProjectId('');
         setSelectedTypes(ALL_ARTIFACT_TYPES);
       } else if (response.status === 502 && runId !== null) {
         // Soft success: the run row exists; only the Actions dispatch failed.
@@ -112,6 +133,7 @@ export function NewReleaseRunForm(): ReactElement {
         setRepo('');
         setBaseRef('');
         setHeadRef('');
+        setProjectId('');
         setSelectedTypes(ALL_ARTIFACT_TYPES);
       } else if (response.status === 400 && Array.isArray(body.details)) {
         setResult({
@@ -208,6 +230,36 @@ export function NewReleaseRunForm(): ReactElement {
     );
   }
 
+  // Optional project picker (only when saved projects exist). Selecting one pre-fills the repo/refs
+  // below and links the run so the worker resolves the project's GitHub credential. WCAG 2.2 AA:
+  // label[htmlFor] ↔ select[id] + a describing hint.
+  function projectPicker(): ReactElement | null {
+    if (projects.length === 0) return null;
+    return createElement(
+      'p',
+      null,
+      createElement('label', { htmlFor: 'project' }, 'Project (optional)'),
+      createElement(
+        'select',
+        {
+          id: 'project',
+          name: 'project',
+          value: projectId,
+          disabled: pending,
+          'aria-describedby': 'project-hint',
+          onChange: (e: { target: { value: string } }) => selectProject(e.target.value),
+        },
+        createElement('option', { value: '' }, '— Ad-hoc (enter repo manually) —'),
+        ...projects.map((p) => createElement('option', { key: p.id, value: p.id }, p.name)),
+      ),
+      createElement(
+        'span',
+        { id: 'project-hint' },
+        'Pick a saved project to pre-fill its repo and refs and use its GitHub credential.',
+      ),
+    );
+  }
+
   function feedback(): ReactElement | null {
     if (result.kind === 'created') {
       return createElement(
@@ -258,6 +310,7 @@ export function NewReleaseRunForm(): ReactElement {
           void submit();
         },
       },
+      projectPicker(),
       field(
         'repo',
         'Repository',

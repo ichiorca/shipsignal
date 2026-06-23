@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import hashlib
+import logging
 
 from pydantic import ValidationError
 
@@ -38,6 +39,8 @@ from release_worker.evidence_ports import (
 )
 from release_worker.redaction import redact
 from release_worker.signal_extractors import CODE_EXTRACTORS, extract_docs_delta
+
+logger = logging.getLogger("release_worker.evidence")
 
 # PRD §6.3: git-diff evidence is typed as a code-diff change from the git_diff source.
 _EVIDENCE_TYPE = "code_diff"
@@ -81,9 +84,17 @@ def _validated_diff(boundary: ReleaseBoundary, source: DiffSource) -> RawDiffPay
 def _whole_file_evidence(
     diff: RawDiffPayload, source_url: str
 ) -> tuple[CollectedEvidence, ...]:
-    """One untrusted ``code_diff`` evidence item per changed file (spec 002 behavior)."""
+    """One untrusted ``code_diff`` evidence item per changed file with actual patch content.
+
+    Binary / no-patch files (images, screenshots, lockfile blobs) carry no extractable diff text:
+    GitHub returns them with an empty patch. Emitting ``code_diff`` evidence for them only adds empty
+    rows, pointless S3 blobs, and noise to the clustering prompt (a real release can be majority
+    binary), so they are skipped — the signal extractors already no-op on an empty patch.
+    """
     collected: list[CollectedEvidence] = []
     for changed in diff.files:
+        if not changed.patch_text.strip():
+            continue
         line_ranges = ",".join(h.line_range for h in changed.hunks)
         metadata: dict[str, str | int] = {"status": changed.status}
         if line_ranges:
@@ -276,6 +287,15 @@ def collect_prs_and_issues(
     except ValidationError as err:
         raise MalformedPullRequestError() from err
 
+    if prs.truncated:
+        # The PR/issue source hit its quota cap (mirrors the file-diff truncation warning) — surface
+        # that the PR/issue evidence is partial rather than silently using a subset.
+        logger.warning(
+            "PR/issue evidence for %s is TRUNCATED (quota cap hit) — the manifest reflects only a "
+            "partial set of the release's PRs/issues",
+            boundary.repo,
+        )
+
     collected: list[CollectedEvidence] = []
     for pr in prs.pull_requests:
         pr_metadata: dict[str, str | int] = {"pr_number": pr.number}
@@ -398,6 +418,19 @@ def collect_redact_persist_all(
     boundary = load_release_boundary(release_run_id, reader)
     source_url = _compare_url(boundary)
     diff = _validated_diff(boundary, diff_source)
+
+    if diff.truncated:
+        # The diff source could not return every changed file (e.g. GitHub's 300-file compare cap).
+        # Surface it loudly so a large release's content is never silently built from a partial,
+        # path-biased subset (constitution §5: surface a degraded input). Collection still proceeds
+        # over the files we did get.
+        logger.warning(
+            "release_run %s: diff for %s is TRUNCATED (%d files received) — evidence and generated "
+            "content reflect only a partial, path-sorted subset of the release",
+            release_run_id,
+            boundary.repo,
+            len(diff.files),
+        )
 
     collected: tuple[CollectedEvidence, ...] = (
         *_whole_file_evidence(diff, source_url),

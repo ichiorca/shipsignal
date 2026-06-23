@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from pydantic import ValidationError
@@ -248,19 +248,45 @@ _ARTIFACT_SPECS: tuple[_ArtifactSpec, ...] = (
 _MAX_GENERATION_WORKERS = 6
 
 
+def _code_default_skills_for(spec: _ArtifactSpec) -> frozenset[str]:
+    """The code-default skill set for one artifact type: its format skill + the shared brand-voice.
+
+    This is the floor an operator override (the ``capability_skills`` table) builds on — peer-parity
+    with ``_skills_config.SKILLS_BY_AGENT`` (the per-agent code default in hindsight-guild-internal).
+    """
+    return frozenset({spec.format_skill, _BRAND_VOICE_SKILL})
+
+
+def code_default_capability_skills() -> dict[str, frozenset[str]]:
+    """The full code-default capability→skill map (artifact_type → wanted skill names).
+
+    The seed/fallback for the persisted ``capability_skills`` mapping: the worker resolves the DB
+    override over this floor (DB-wins-per-type, code fallback), and the seeder imports these defaults
+    into the table so the Capabilities page reflects the same selection generation actually uses.
+    """
+    return {
+        spec.artifact_type: _code_default_skills_for(spec) for spec in _ARTIFACT_SPECS
+    }
+
+
 def _skills_for_spec(
-    spec: _ArtifactSpec, snapshots: tuple[SkillSnapshot, ...]
+    spec: _ArtifactSpec,
+    snapshots: tuple[SkillSnapshot, ...],
+    wanted: frozenset[str] | None = None,
 ) -> tuple[SkillSnapshot, ...]:
-    """The active skill snapshots that feed one artifact type: its format skill + brand-voice.
+    """The active skill snapshots that feed one artifact type.
 
     T2 (spec 007): selects only the relevant snapshots from the active set so the prompt and
     the recorded ``skill_usage_events`` reflect exactly which skills shaped this artifact —
-    not the whole repo skill list. A format skill absent from the snapshot set is simply
-    skipped (the artifact still generates under brand-voice), so a missing optional skill
+    not the whole repo skill list. A wanted skill absent from the snapshot set is simply
+    skipped (the artifact still generates under whatever remains), so a missing optional skill
     never fails the run. Order follows the snapshot order for a deterministic prompt.
+
+    ``wanted`` is the resolved capability→skill set (DB override, peer-parity ``allowed_for``); when
+    ``None`` it falls back to this type's code default ({format skill, brand-voice}).
     """
-    wanted = {spec.format_skill, _BRAND_VOICE_SKILL}
-    return tuple(s for s in snapshots if s.skill_name in wanted)
+    selected = wanted if wanted is not None else _code_default_skills_for(spec)
+    return tuple(s for s in snapshots if s.skill_name in selected)
 
 
 _GENERATE_SCHEMA: dict[str, object] = {
@@ -389,6 +415,7 @@ def generate_artifacts_parallel(
     prompt_version: str = PROMPT_VERSION,
     selected_types: tuple[str, ...] = ARTIFACT_TYPES,
     voice_context: str = "",
+    capability_skills: Mapping[str, frozenset[str]] | None = None,
 ) -> tuple[tuple[ArtifactDraft, ...], tuple[SkillUsageEvent, ...]]:
     """Generate the run's SELECTED artifact types in parallel via Bedrock Converse
     (T1, PRD §5.3/§8.1; T3 spec 022).
@@ -404,6 +431,10 @@ def generate_artifacts_parallel(
     it incurs zero Bedrock calls, zero ``artifacts`` rows, and zero telemetry/usage events
     (AC: deselected types cost nothing). Default = all six, the pre-selection behaviour.
 
+    ``capability_skills`` is the resolved capability→skill map (the persisted ``capability_skills``
+    override merged over the code default; peer-parity with ``allowed_for``). When ``None`` each
+    type falls back to its code default ({format skill, brand-voice}), the prior behaviour.
+
     Determinism is preserved despite the concurrency: artifact ids are minted up front on the
     calling thread in canonical order (so ``new_artifact_id`` — a generator in tests — is never
     raced), and results are stitched back in that same order via ``executor.map``. Each
@@ -416,7 +447,17 @@ def generate_artifacts_parallel(
     # Deselected types are excluded HERE, before id minting or any model I/O (spec 022 AC:
     # zero spend); canonical _ARTIFACT_SPECS order is kept regardless of selection order.
     planned: list[tuple[_ArtifactSpec, tuple[SkillSnapshot, ...], str]] = [
-        (spec, _skills_for_spec(spec, snapshots), new_artifact_id())
+        (
+            spec,
+            _skills_for_spec(
+                spec,
+                snapshots,
+                capability_skills.get(spec.artifact_type)
+                if capability_skills is not None
+                else None,
+            ),
+            new_artifact_id(),
+        )
         for spec in _ARTIFACT_SPECS
         if spec.artifact_type in selected_types
     ]

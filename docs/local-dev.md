@@ -46,7 +46,8 @@ Copy-Item local/dev-env.sample local/dev-env
 #    only if you'll run the generation graphs locally).
 pip install -r db/requirements.txt
 
-# 3. Bring up Postgres + LocalStack, create buckets, run migrations.
+# 3. Bring up Postgres + LocalStack, create buckets, run migrations, and seed the canonical
+#    skill library (skills/**/SKILL.md -> skill_repo_snapshots, so the Skills page is populated).
 pwsh local/bootstrap.ps1        # bash/WSL: bash local/bootstrap.sh
 
 # 4. If the bootstrap printed a Guardrail id, paste it into local/dev-env
@@ -70,6 +71,16 @@ now work end-to-end against local Postgres.
 > claims/evidence, engagement metrics, and eval/cost rows — without running the worker. Handy for
 > exercising the review / ROI / trends screens. It POSTs to `/api/demo/seed` and links you
 > straight to the seeded run.
+
+> **Reference skills** (not demo data): the bootstrap seeds the canonical `skills/**/SKILL.md`
+> library into `skill_repo_snapshots` so the Skills page reflects the real playbooks on a fresh
+> DB. The repo files remain the source of truth (constitution §2); this is the provenance mirror
+> the worker would otherwise only populate during a content run. Re-run it standalone after editing
+> or adding a skill:
+>
+> ```powershell
+> python scripts/seed_reference_skills.py        # needs DATABASE_URL + psycopg on the path
+> ```
 
 ---
 
