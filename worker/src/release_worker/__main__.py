@@ -39,6 +39,7 @@ from uuid import uuid4
 import psycopg
 from langgraph.types import Command
 
+from release_worker.aurora_capability_skills import AuroraCapabilitySkillSource
 from release_worker.aurora_claims import (
     AuroraArtifactReviewSink,
     AuroraClaimSink,
@@ -65,6 +66,7 @@ from release_worker.aurora_features import (
     AuroraFeatureSink,
     AuroraRedactedEvidenceReader,
 )
+from release_worker.aurora_llm_cache import AuroraLlmResponseCache
 from release_worker.aurora_media import AuroraDemoScriptReader, AuroraMediaAssetSink
 from release_worker.aurora_notifications import AuroraGateNotificationLedger
 from release_worker.aurora_repository import (
@@ -78,7 +80,6 @@ from release_worker.aurora_skill_learning import (
     AuroraSkillCandidateSink,
     AuroraSuppressionStore,
 )
-from release_worker.aurora_capability_skills import AuroraCapabilitySkillSource
 from release_worker.aurora_skill_source import AuroraSkillSource
 from release_worker.aurora_skill_writer import DbBackedRepoSkillWriter
 from release_worker.aurora_voice_context import AuroraVoiceContextSource
@@ -367,6 +368,9 @@ def _run_content_generation(
         BedrockModelClient.from_env(
             release_run_id=release_run_id,
             telemetry_sink=AuroraCostTelemetrySink(conn),
+            # T3 (spec 023): durable L2 dedup so a resume/retry in a separate Actions job
+            # reuses (never re-bills) a paid-for response. Run-scoped key => no cross-run bleed.
+            cache=AuroraLlmResponseCache(conn),
         ),
         AuroraArtifactSink(conn),
         # T3 (spec 017): inject the embedding seam so claim grounding ranks evidence by the
@@ -473,6 +477,9 @@ def _run_media_generation(
         BedrockModelClient.from_env(
             release_run_id=release_run_id,
             telemetry_sink=AuroraCostTelemetrySink(conn),
+            # T3 (spec 023): durable L2 dedup so a resume/retry in a separate Actions job
+            # reuses (never re-bills) a paid-for response. Run-scoped key => no cross-run bleed.
+            cache=AuroraLlmResponseCache(conn),
         ),
         PlaywrightDemoCapturer.from_env(),
         ElevenLabsSynthesizer.from_env(),
@@ -556,6 +563,9 @@ def _run_skill_learning(
         BedrockModelClient.from_env(
             release_run_id=release_run_id,
             telemetry_sink=AuroraCostTelemetrySink(conn),
+            # T3 (spec 023): durable L2 dedup so a resume/retry in a separate Actions job
+            # reuses (never re-bills) a paid-for response. Run-scoped key => no cross-run bleed.
+            cache=AuroraLlmResponseCache(conn),
         ),
         AuroraSuppressionStore(conn),
         AuroraSkillCandidateSink(conn),
@@ -639,6 +649,9 @@ def _run_eval(conn: psycopg.Connection, release_run_id: str) -> int:
         BedrockModelClient.from_env(
             release_run_id=release_run_id,
             telemetry_sink=AuroraCostTelemetrySink(conn),
+            # T3 (spec 023): durable L2 dedup so a resume/retry in a separate Actions job
+            # reuses (never re-bills) a paid-for response. Run-scoped key => no cross-run bleed.
+            cache=AuroraLlmResponseCache(conn),
         ),
         AuroraEvalSink(conn),
         # T1 (spec 021): merge the run's ingested aggregate engagement totals so the
@@ -788,6 +801,9 @@ def main(argv: list[str] | None = None) -> int:
             BedrockModelClient.from_env(
                 release_run_id=release_run_id,
                 telemetry_sink=AuroraCostTelemetrySink(conn),
+                # T3 (spec 023): durable L2 dedup so a resume/retry in a separate Actions job
+                # reuses (never re-bills) a paid-for response. Run-scoped key => no cross-run bleed.
+                cache=AuroraLlmResponseCache(conn),
             ),
             AuroraFeatureSink(conn),
             dashboard_base_url=dashboard_base_url,

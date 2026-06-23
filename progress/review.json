@@ -1,6 +1,6 @@
 {
   "projectRoot": "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal",
-  "generatedAt": "2026-06-10T01:20:03Z",
+  "generatedAt": "2026-06-23T11:34:49Z",
   "specs": [
     {
       "id": "001-release-run-skeleton-trigger-run-lifecycle-dashboard",
@@ -155,6 +155,13 @@
       "tasksMD": "specs/022-per-run-artifact-type-selection/tasks.md",
       "provenanceClass": "repo-versioned",
       "taskCount": 5
+    },
+    {
+      "id": "023-durable-llm-response-cache",
+      "specMD": "specs/023-durable-llm-response-cache/spec.md",
+      "tasksMD": "specs/023-durable-llm-response-cache/tasks.md",
+      "provenanceClass": "repo-unversioned",
+      "taskCount": 5
     }
   ],
   "taskCoverage": [
@@ -179,6 +186,7 @@
         "pass21.log",
         "pass22.log",
         "pass23.log",
+        "pass26.log",
         "pass3.log",
         "pass4.log",
         "pass5.log",
@@ -187,7 +195,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 36
+      "sourceCites": 38
     },
     {
       "taskId": "T2",
@@ -209,6 +217,7 @@
         "pass20.log",
         "pass21.log",
         "pass23.log",
+        "pass26.log",
         "pass3.log",
         "pass4.log",
         "pass5.log",
@@ -239,6 +248,7 @@
         "pass20.log",
         "pass21.log",
         "pass23.log",
+        "pass26.log",
         "pass3.log",
         "pass4.log",
         "pass5.log",
@@ -270,6 +280,7 @@
         "pass21.log",
         "pass22.log",
         "pass23.log",
+        "pass26.log",
         "pass3.log",
         "pass4.log",
         "pass5.log",
@@ -278,7 +289,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 45
+      "sourceCites": 44
     },
     {
       "taskId": "T5",
@@ -299,6 +310,7 @@
         "pass21.log",
         "pass22.log",
         "pass23.log",
+        "pass26.log",
         "pass3.log",
         "pass4.log",
         "pass5.log",
@@ -319,7 +331,7 @@
         "pass8.log",
         "pass9.log"
       ],
-      "sourceCites": 22
+      "sourceCites": 21
     }
   ],
   "unimplemented": null,
@@ -328,6 +340,15 @@
   "untraced": null,
   "constitutionIndex": null,
   "uncitedPrinciples": null,
-  "sourceFilesScanned": 154,
-  "findings": null
+  "sourceFilesScanned": 287,
+  "findings": [
+    {
+      "id": "F001",
+      "stage": 1,
+      "severity": "med",
+      "axis": "spec-provenance",
+      "summary": "1 spec(s) are not cleanly committed: 023-durable-llm-response-cache",
+      "recommendation": "Commit the spec.md(s) so downstream provenance carriers land as repo-versioned (anti-pattern #3)."
+    }
+  ]
 }

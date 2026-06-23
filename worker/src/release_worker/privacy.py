@@ -25,10 +25,12 @@ import argparse
 import logging
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from release_worker.access_export import ExportApproval, export_subject_data
 from release_worker.aurora_evidence import s3_client_from_env
+from release_worker.aurora_llm_cache import AuroraLlmResponseCache
 from release_worker.aurora_privacy import (
     AuroraS3ErasureStore,
     AuroraS3ExpiredEvidenceStore,
@@ -36,6 +38,7 @@ from release_worker.aurora_privacy import (
 )
 from release_worker.aurora_repository import connect_from_env
 from release_worker.erasure import erase_release_run
+from release_worker.llm_cache_maintenance import cache_sweep_cutoff, llm_cache_ttl_days
 from release_worker.log_scrubbing import install_pii_scrubbing
 from release_worker.retention import sweep_expired_evidence
 
@@ -58,6 +61,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Delete PII-bearing evidence past its retention deadline (Art.5(1)(e)).",
     )
     sweep.set_defaults(func=_cmd_retention_sweep)
+
+    llm_cache_sweep = sub.add_parser(
+        "llm-cache-sweep",
+        help=(
+            "Delete durable LLM-cache rows past LLM_CACHE_TTL_DAYS "
+            "(size hygiene, constitution §6)."
+        ),
+    )
+    llm_cache_sweep.set_defaults(func=_cmd_llm_cache_sweep)
 
     erase = sub.add_parser(
         "erase",
@@ -104,6 +116,26 @@ def _cmd_retention_sweep(args: argparse.Namespace) -> int:
             "retention sweep deleted %d row(s), %d S3 object(s)",
             report.rows_deleted,
             report.objects_deleted,
+        )
+    finally:
+        conn.close()
+    return 0
+
+
+def _cmd_llm_cache_sweep(args: argparse.Namespace) -> int:
+    # T4 (spec 023) — size-hygiene sweep of the durable LLM response cache (constitution §6).
+    # GDPR run-erasure is covered separately by the table's release_run_id FK CASCADE; this
+    # only bounds growth by age. The cutoff is computed by the pure policy so the window is
+    # tracked config, not a magic number here.
+    conn = connect_from_env()
+    try:
+        cache = AuroraLlmResponseCache(conn)
+        cutoff = cache_sweep_cutoff(datetime.now(UTC), llm_cache_ttl_days())
+        deleted = cache.delete_older_than(cutoff)
+        logger.info(
+            "llm cache sweep deleted %d row(s) created before %s",
+            deleted,
+            cutoff.isoformat(),
         )
     finally:
         conn.close()

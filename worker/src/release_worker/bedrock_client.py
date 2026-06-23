@@ -48,6 +48,7 @@ from release_worker.cost_telemetry import (
     meter_call,
 )
 from release_worker.embedding_ports import EMBEDDING_DIMS
+from release_worker.model_client import LlmResponseCache
 from release_worker.model_routing import resolve_model
 from release_worker.token_budget import BudgetTracker, TokenBudget
 
@@ -67,6 +68,7 @@ class BedrockModelClient:
         release_run_id: str | None = None,
         telemetry_sink: CostTelemetrySink | None = None,
         budget: BudgetTracker | None = None,
+        cache: LlmResponseCache | None = None,
     ) -> None:
         self._client = client
         self._guardrail_id = guardrail_id
@@ -76,6 +78,11 @@ class BedrockModelClient:
         self._release_run_id = release_run_id
         self._telemetry_sink = telemetry_sink
         self._budget = budget
+        # T3 (spec 023) — durable L2 dedup cache, keyed (release_run_id, idempotency_key).
+        # When present (a run id + a DB-backed adapter), a response paid for in one Actions job
+        # is reused — not re-billed — when a SEPARATE job resumes/retries the run (PRD §5.6).
+        # None on the unit/dev path: the client is L1-only and behaves exactly as before.
+        self._durable_cache = cache
         # idempotency_key -> parsed JSON response (process-local dedupe cache). Guarded by a lock
         # because the content/claim graphs call generate_json concurrently from a ThreadPoolExecutor
         # — an unguarded check-then-write would let two threads both miss and double-charge the
@@ -89,11 +96,18 @@ class BedrockModelClient:
         *,
         release_run_id: str | None = None,
         telemetry_sink: CostTelemetrySink | None = None,
+        cache: LlmResponseCache | None = None,
     ) -> BedrockModelClient:
         """Build from env. ``BEDROCK_GUARDRAIL_ID``/``_VERSION`` are required — refusing to
         run without a Guardrail is the safe default (constitution §5). When a
         ``telemetry_sink`` + ``release_run_id`` are supplied, the client meters every call
-        against an env-configured token budget (spec 011 T2/T3)."""
+        against an env-configured token budget (spec 011 T2/T3).
+
+        T3 (spec 023): an optional durable ``cache`` (the L2 dedup tier) is honored only when a
+        ``release_run_id`` is present (the run id is half the cache key). ``LLM_RESPONSE_CACHE_DISABLED``
+        (any non-empty value) drops to L1-only without a deploy — an ops kill-switch."""
+        if os.environ.get("LLM_RESPONSE_CACHE_DISABLED"):
+            cache = None
         region = os.environ.get("AWS_REGION", "us-east-1")
         guardrail_id = os.environ.get("BEDROCK_GUARDRAIL_ID")
         guardrail_version = os.environ.get("BEDROCK_GUARDRAIL_VERSION")
@@ -118,6 +132,7 @@ class BedrockModelClient:
             release_run_id=release_run_id,
             telemetry_sink=telemetry_sink,
             budget=budget,
+            cache=cache,
         )
 
     def _converse(
@@ -174,6 +189,17 @@ class BedrockModelClient:
         if cached is not None:
             return cached
 
+        # T3 (spec 023) — L2: durable, run-scoped dedup. A hit here means a SEPARATE Actions
+        # job (resume past a gate, or a retry of this phase) already paid for this exact call;
+        # return the stored response with zero Converse calls and zero re-metering — re-charging
+        # the §11 budget for an already-paid call would double-count cost. Promote into L1 so the
+        # rest of this process skips even the DB round-trip.
+        if self._durable_cache is not None and self._release_run_id is not None:
+            durable = self._durable_cache.get(self._release_run_id, idempotency_key)
+            if durable is not None:
+                with self._cache_lock:
+                    return self._cache.setdefault(idempotency_key, durable)
+
         # T1 — pick the model id from the node's configured tier (raises on an unrouted task).
         _tier, model_id = resolve_model(task_name)
 
@@ -205,6 +231,22 @@ class BedrockModelClient:
             raise ValueError(f"Bedrock returned non-JSON for task {task_name}") from err
         if not isinstance(parsed, dict):
             raise ValueError(f"Bedrock returned non-object JSON for task {task_name}")
+
+        # T3 (spec 023) — persist to the durable L2 tier so a later resume/retry in a separate
+        # process reuses this paid-for response. put() is first-writer-wins and returns the
+        # AUTHORITATIVE row (the existing value if a concurrent writer beat us), so one key
+        # resolves to one object across processes — the cross-process ``setdefault``. We carry
+        # that authoritative value into L1 below so both tiers agree.
+        if self._durable_cache is not None and self._release_run_id is not None:
+            parsed = self._durable_cache.put(
+                self._release_run_id,
+                idempotency_key,
+                task_name=task_name,
+                model_id=model_id,
+                response=parsed,
+                input_tokens=in_tokens,
+                output_tokens=out_tokens,
+            )
 
         # setdefault under the lock: if a same-key call raced us, return the value already cached so
         # callers of one idempotency key always see one object.

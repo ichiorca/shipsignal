@@ -1,8 +1,8 @@
 # spec-kit review
 
-_Generated at 2026-06-10T01:20:03Z â€” projectRoot "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal" â€” 154 source file(s) scanned._
+_Generated at 2026-06-23T11:34:49Z â€” projectRoot "C:\\Users\\Ranee Bajaj\\Documents\\auto-gm\\shipsignal" â€” 287 source file(s) scanned._
 
-## Specs (22)
+## Specs (23)
 
 | ID | tasks | provenance |
 |---|---:|---|
@@ -28,13 +28,25 @@ _Generated at 2026-06-10T01:20:03Z â€” projectRoot "C:\\Users\\Ranee Bajaj\
 | 020-gate-ready-reviewer-notifications | 5 | repo-versioned |
 | 021-engagement-outcome-loop-utm-and-roi-view | 5 | repo-versioned |
 | 022-per-run-artifact-type-selection | 5 | repo-versioned |
+| 023-durable-llm-response-cache | 5 | repo-unversioned |
 
 ## Constitution citations (0 principle(s))
 
 | Principle | Citations |
 |---|---:|
 
-## Findings (0)
+## Findings (1)
 
-_None â€” everything resolves._
+### Stage 1 — Spec compliance (1)
+
+_Does what landed match what was asked — nothing missing, nothing extra? Fix these FIRST._
+
+#### F001 â€” 1 spec(s) are not cleanly committed: 023-durable-llm-response-cache  `[med]`
+
+- **Axis**: spec-provenance
+- **Recommendation**: Commit the spec.md(s) so downstream provenance carriers land as repo-versioned (anti-pattern #3).
+
+### Stage 2 — Code quality (0)
+
+_Is what landed well-built? Address only after Stage 1 is clean — spec fixes often reshape this code._
 

@@ -54,3 +54,15 @@ jobs:
           MEDIA_BUCKET: ${{ vars.MEDIA_BUCKET }}
           PYTHONPATH: worker/src
         run: python -m release_worker privacy retention-sweep
+
+      # spec 023 — bound the durable LLM response-cache (migration 0034) by age so it can't
+      # grow without limit. No S3/PII involved (model output + metrics only); the window comes
+      # from LLM_CACHE_TTL_DAYS (unset → 30-day default). GDPR run-erasure is handled by the
+      # table's release_run_id FK CASCADE, not here.
+      - name: Sweep durable LLM response cache
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PGSSLMODE: ${{ vars.PGSSLMODE }}
+          LLM_CACHE_TTL_DAYS: ${{ vars.LLM_CACHE_TTL_DAYS }}
+          PYTHONPATH: worker/src
+        run: python -m release_worker privacy llm-cache-sweep
