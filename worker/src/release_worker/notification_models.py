@@ -84,7 +84,7 @@ def interrupt_payload(result: object) -> Mapping[str, object] | None:
     if not isinstance(result, Mapping):
         return None
     interrupts = result.get("__interrupt__")
-    if not isinstance(interrupts, (list, tuple)) or not interrupts:
+    if not isinstance(interrupts, list | tuple) or not interrupts:
         return None
     value = getattr(interrupts[0], "value", None)
     return value if isinstance(value, Mapping) else None

@@ -27,7 +27,7 @@ from release_worker.content_models import (
 
 def _as_str_tuple(value: object) -> tuple[str, ...]:
     """Coerce a text[]/None column into a tuple of strings (defensive: data at rest)."""
-    if not isinstance(value, (list, tuple)):
+    if not isinstance(value, list | tuple):
         return ()
     return tuple(v for v in value if isinstance(v, str))
 

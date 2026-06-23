@@ -36,6 +36,8 @@ harness-protected path so the autonomous session cannot author one.
 | `PGSSLMODE` | T5 | TLS mode (`require`+). |
 | `RELEASE_RUN_ID` | T5 | The `release_runs.id` this job advances (passed as a workflow input). |
 | `SLACK_WEBHOOK_URL` | spec 020 | Optional Slack incoming-webhook for gate-ready reviewer notifications. Unset = feature fully off (local/dev/CI default). The URL embeds a credential — worker env only, never logged. See `docs/notifications.md`. |
+| `LLM_RESPONSE_CACHE_DISABLED` | spec 023 | Optional kill-switch for the durable LLM response cache (`llm_response_cache`). Any non-empty value drops the worker to the process-local L1 cache only — a resume/retry then re-bills Bedrock. Unset (default) ⇒ the durable cache is on. |
+| `LLM_CACHE_TTL_DAYS` | spec 023 | Optional retention window (days) for the durable LLM response cache, applied by the `llm-cache-sweep` step of `retention-sweep.yml`. Positive integer; unset ⇒ 30. GDPR run-erasure is handled separately by the table's `release_run_id` CASCADE, not this window. |
 
 Local-dev / CI note: the unit-test gate (`npm test && pytest -q`) needs **none** of
 these — the pure modules under test read no secrets, and the Aurora/GitHub/LangGraph

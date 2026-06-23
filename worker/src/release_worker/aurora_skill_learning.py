@@ -398,6 +398,6 @@ class AuroraSkillCandidateSink:
 
 def _as_id_tuple(value: object) -> tuple[str, ...]:
     """Coerce a uuid[]/None column into a tuple of stringified ids (defensive: data at rest)."""
-    if not isinstance(value, (list, tuple)):
+    if not isinstance(value, list | tuple):
         return ()
     return tuple(str(v) for v in value if v is not None)
