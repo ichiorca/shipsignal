@@ -7,7 +7,6 @@ hooks/generated/
 hooks/precommit-gate.cue
 hooks/sessionstart-context.cue
 sagas/
-skills/
 tools/
 workflows/
 harness.cue

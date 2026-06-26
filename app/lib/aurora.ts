@@ -31,6 +31,13 @@ function sslConfig(): SslConfig | false {
   if (mode === 'disable') {
     throw new Error('PGSSLMODE=disable is forbidden: TLS to Aurora is mandatory');
   }
+  // Strongest, and serverless-friendly: the CA bundle PEM passed inline via env (no file to
+  // bundle/trace on Vercel). Same verification guarantee as PGSSLROOTCERT — verify the server
+  // cert against this CA. Set PGSSLROOTCERT_PEM to the Amazon RDS global CA bundle in prod.
+  const caPem = optionalEnv('PGSSLROOTCERT_PEM', '');
+  if (caPem !== '') {
+    return { ca: caPem, rejectUnauthorized: true };
+  }
   const caPath = optionalEnv('PGSSLROOTCERT', '');
   if (caPath !== '') {
     return { ca: readFileSync(caPath, 'utf8'), rejectUnauthorized: true };
