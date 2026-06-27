@@ -25,8 +25,8 @@ const CARDS: readonly HubCard[] = [
   },
   {
     title: 'Connections',
-    description: 'Link your LinkedIn page and X account so approved posts can publish directly.',
-    soon: true,
+    description: 'Link a Google/YouTube account (OAuth) so approved demo videos can publish directly. Tokens are encrypted at rest.',
+    href: '/connections',
   },
   {
     title: 'Skills & learning',

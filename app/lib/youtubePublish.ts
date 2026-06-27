@@ -26,26 +26,20 @@ const WATCH_URL_PREFIX = 'https://youtu.be/';
 const TOKEN_TIMEOUT_MS = 10_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
 
-/** True when the OAuth env needed for a real upload is present. */
-export function youtubeConfigured(): boolean {
+/** True when the app-level OAuth client (id+secret) is configured in env. The per-connection
+ *  refresh token is supplied separately (from the encrypted DB connection, env fallback). */
+export function youtubeClientConfigured(): boolean {
   return (
-    optionalEnv('YOUTUBE_CLIENT_ID', '') !== '' &&
-    optionalEnv('YOUTUBE_CLIENT_SECRET', '') !== '' &&
-    optionalEnv('YOUTUBE_REFRESH_TOKEN', '') !== ''
+    optionalEnv('YOUTUBE_CLIENT_ID', '') !== '' && optionalEnv('YOUTUBE_CLIENT_SECRET', '') !== ''
   );
 }
 
-/** Dry-run when unconfigured or when PUBLISH_DRY_RUN is explicitly set (parity with channels). */
-export function willDryRunYouTube(): boolean {
-  return !youtubeConfigured() || optionalEnv('PUBLISH_DRY_RUN', '') !== '';
-}
-
-/** Exchange the refresh token for a short-lived access token (OAuth2 refresh grant). */
-async function fetchAccessToken(): Promise<string> {
+/** Exchange a refresh token for a short-lived access token (OAuth2 refresh grant). */
+async function fetchAccessToken(refreshToken: string): Promise<string> {
   const params = new URLSearchParams({
     client_id: requireEnv('YOUTUBE_CLIENT_ID'),
     client_secret: requireEnv('YOUTUBE_CLIENT_SECRET'),
-    refresh_token: requireEnv('YOUTUBE_REFRESH_TOKEN'),
+    refresh_token: refreshToken,
     grant_type: 'refresh_token',
   });
   const response = await fetch(TOKEN_URL, {
@@ -87,13 +81,18 @@ function buildMultipartBody(
   ]);
 }
 
-/** Upload one video to YouTube. Returns a dry-run result (no network) when unconfigured. */
-export async function publishToYouTube(input: YouTubeUploadInput): Promise<YouTubePublishResult> {
-  if (willDryRunYouTube()) {
+/** Upload one video to YouTube using the supplied refresh token. Returns a dry-run result (no
+ *  network) when the client isn't configured, no refresh token is available, or PUBLISH_DRY_RUN is
+ *  set — so the loop is safe/demoable without a live connection. */
+export async function publishToYouTube(
+  input: YouTubeUploadInput,
+  refreshToken: string,
+): Promise<YouTubePublishResult> {
+  if (!youtubeClientConfigured() || refreshToken === '' || optionalEnv('PUBLISH_DRY_RUN', '') !== '') {
     return { videoId: null, url: null, dryRun: true };
   }
 
-  const accessToken = await fetchAccessToken();
+  const accessToken = await fetchAccessToken(refreshToken);
   const resource = buildVideoResource(input);
   const boundary = `shipsignal_${Date.now().toString(36)}`;
   const body = buildMultipartBody(resource, input.videoBytes, input.contentType, boundary);
