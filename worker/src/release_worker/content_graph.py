@@ -213,8 +213,14 @@ def build_content_generation_graph(
         # Side-effecting Aurora writes in FK order: artifacts (with their checked status) +
         # usage events first, then claims, then claim_evidence_links. A blocked artifact
         # persists status='blocked'; an unsupported claim persists with no link (§5).
-        persist_reviewable_artifacts(state.artifacts, state.usage_events, artifact_sink)
-        persist_claims(state.claims, state.claim_links, claim_sink)
+        # Atomic: the artifacts and their claims/links commit together (claim_sink shares the
+        # artifact_sink connection), so a job killed mid-persist never strands a draft artifact
+        # with no claim rows — which Gate #2 would otherwise see as zero-provenance (§4/§5).
+        with artifact_sink.transaction():
+            persist_reviewable_artifacts(
+                state.artifacts, state.usage_events, artifact_sink
+            )
+            persist_claims(state.claims, state.claim_links, claim_sink)
         return state
 
     def _approve_artifacts(state: ContentRunState) -> ContentRunState:

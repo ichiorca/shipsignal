@@ -34,7 +34,6 @@ import logging
 import os
 import threading
 import time
-from decimal import Decimal
 
 import boto3
 
@@ -42,6 +41,7 @@ from release_worker.bedrock_retry import (
     bedrock_client_config,
     call_with_throttle_retry,
 )
+from release_worker.cost_model import estimate_embedding_cost_usd
 from release_worker.cost_telemetry import (
     CostTelemetrySink,
     ModelCallTelemetry,
@@ -83,10 +83,14 @@ class BedrockModelClient:
         # is reused — not re-billed — when a SEPARATE job resumes/retries the run (PRD §5.6).
         # None on the unit/dev path: the client is L1-only and behaves exactly as before.
         self._durable_cache = cache
-        # idempotency_key -> parsed JSON response (process-local dedupe cache). Guarded by a lock
-        # because the content/claim graphs call generate_json concurrently from a ThreadPoolExecutor
-        # — an unguarded check-then-write would let two threads both miss and double-charge the
-        # token budget / write duplicate telemetry for one deduped key.
+        # idempotency_key -> parsed JSON response (process-local L1 dedupe cache). The lock guards
+        # only the dict's check (L1 get) and final setdefault, NOT the Converse/meter/put path in
+        # between — so it makes the cache itself thread-safe but does NOT by itself prevent a
+        # double-charge for two CONCURRENT same-key calls (both could miss L1+L2, both invoke
+        # Converse, both charge the budget). That race is avoided upstream instead: each
+        # ThreadPoolExecutor fan-out mints a DISTINCT idempotency_key per artifact/claim/type, so
+        # no two in-flight calls in a batch share a key. (A genuine same-key concurrent call would
+        # need a per-key in-flight guard; today none is issued.)
         self._cache: dict[str, dict[str, object]] = {}
         self._cache_lock = threading.Lock()
 
@@ -340,7 +344,8 @@ class BedrockEmbeddingClient:
         """Record the embedding call's cost/latency (constitution §6) — observability only, never
         the embedded text or the vector (§5). Embeddings have no routed tier, so the row is built
         directly: ``node='embed'``, tier ``'embedding'``, input tokens from the Titan response,
-        no output tokens. Cost is left at 0 (embedding pricing is not in the generation cost model)."""
+        no output tokens. Cost is estimated from the embed-model rate so per-row embedding spend is
+        visible in the §6 dashboard (every evidence row and voice-context lookup embeds)."""
         if self._telemetry_sink is None or self._release_run_id is None:
             return
         input_tokens_raw = payload.get("inputTextTokenCount", 0)
@@ -354,6 +359,8 @@ class BedrockEmbeddingClient:
                 input_tokens=input_tokens,
                 output_tokens=0,
                 latency_ms=latency_ms,
-                cost_usd_estimate=Decimal("0"),
+                cost_usd_estimate=estimate_embedding_cost_usd(
+                    self._model_id, input_tokens
+                ),
             )
         )

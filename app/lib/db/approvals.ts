@@ -109,3 +109,67 @@ export async function recordApprovalIdempotent(
 export async function deleteApproval(id: string, db: Queryable = { query }): Promise<void> {
   await db.query('DELETE FROM approvals WHERE id = $1', [id]);
 }
+
+/** Outcome of acquiring a two-phase dispatch marker (see {@link beginApprovalDispatch}). */
+export type DispatchAcquire =
+  /** We won the insert and hold a 'pending' marker — proceed to dispatch, then complete it. */
+  | { readonly kind: 'acquired'; readonly id: string }
+  /** A prior dispatch for this key already completed — a genuine idempotent replay (claim success). */
+  | { readonly kind: 'completed' }
+  /** A concurrent dispatch holds a 'pending' marker — do NOT claim success; tell the caller to retry. */
+  | { readonly kind: 'in_flight' };
+
+/**
+ * Phase 1 of a two-phase idempotent dispatch (fixes the marker-before-dispatch false-success race):
+ * insert the dedupe marker as 'pending' BEFORE the outward call. Unlike
+ * {@link recordApprovalIdempotent}, a conflict here is resolved by reading the existing marker's
+ * state so a concurrent caller can be answered correctly:
+ *   - we won the insert         → 'acquired' (proceed to dispatch, then {@link completeApprovalDispatch});
+ *   - existing marker completed  → 'completed' (the prior send finished; safe idempotent success);
+ *   - existing marker pending    → 'in_flight' (a send is mid-flight; the caller must NOT report
+ *                                  published, only "retry shortly").
+ * A legacy NULL ``dedupe_state`` (rows written before this column, or by the one-phase path) is
+ * treated as 'completed' for backward compatibility.
+ */
+export async function beginApprovalDispatch(
+  args: RecordApprovalArgs,
+  dedupeKey: string,
+  db: Queryable = { query },
+): Promise<DispatchAcquire> {
+  const inserted = await db.query<{ id: string }>(
+    `INSERT INTO approvals
+       (target_type, target_id, decision, reviewer, notes, edited_payload_json, dedupe_key, dedupe_state)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+     ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+     RETURNING id`,
+    [
+      args.target_type,
+      args.target_id,
+      args.decision,
+      args.reviewer,
+      args.notes ?? null,
+      args.edited_payload ? JSON.stringify(args.edited_payload) : null,
+      dedupeKey,
+    ],
+  );
+  const wonId = inserted.rows[0]?.id;
+  if (wonId !== undefined) {
+    return { kind: 'acquired', id: wonId };
+  }
+  // Lost the insert race (or replay): inspect the existing marker's phase.
+  const existing = await db.query<{ dedupe_state: string | null }>(
+    `SELECT dedupe_state FROM approvals WHERE dedupe_key = $1`,
+    [dedupeKey],
+  );
+  const state = existing.rows[0]?.dedupe_state ?? 'completed'; // legacy NULL ⇒ completed
+  return state === 'pending' ? { kind: 'in_flight' } : { kind: 'completed' };
+}
+
+/** Phase 2: mark a previously-acquired dispatch marker 'completed' after the outward call
+ *  succeeds, so a later replay resolves to an idempotent success rather than 'in_flight'. */
+export async function completeApprovalDispatch(
+  id: string,
+  db: Queryable = { query },
+): Promise<void> {
+  await db.query(`UPDATE approvals SET dedupe_state = 'completed' WHERE id = $1`, [id]);
+}

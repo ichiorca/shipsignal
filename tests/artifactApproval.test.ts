@@ -64,6 +64,8 @@ test('a supported claim with zero evidence links is not approvable', () => {
   assert.equal(isApprovable(noEvidence), false);
 });
 
-test('an artifact with no claims is approvable (nothing unsupported to block it)', () => {
-  assert.equal(isApprovable(artifact({ claims: [] })), true);
+test('an artifact with no claims is NOT approvable (zero claim-level provenance, §8)', () => {
+  // `.every` is vacuously true on an empty array; a zero-claim artifact has nothing linking it
+  // to evidence, so Gate #2 must refuse it rather than publish unprovenanced content.
+  assert.equal(isApprovable(artifact({ claims: [] })), false);
 });

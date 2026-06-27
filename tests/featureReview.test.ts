@@ -51,7 +51,7 @@ test('edit rejects an unknown edit field (strict — only narrative fields)', ()
   assert.equal(result.ok, false);
 });
 
-test('resume requires a reviewer, a known decision, and a thread_id', () => {
+test('resume requires a reviewer and a known decision; thread_id is optional (server-derived)', () => {
   const ok = parseBody(resumeSchema, {
     reviewer: 'alice',
     decision: 'approved',
@@ -66,6 +66,8 @@ test('resume requires a reviewer, a known decision, and a thread_id', () => {
   });
   assert.equal(badDecision.ok, false);
 
+  // thread_id is now IGNORED (the server derives it from the path run id + graph), so omitting
+  // it is valid — a client can no longer point the resume at another run's gate thread.
   const noThread = parseBody(resumeSchema, { reviewer: 'alice', decision: 'approved' });
-  assert.equal(noThread.ok, false);
+  assert.equal(noThread.ok, true);
 });

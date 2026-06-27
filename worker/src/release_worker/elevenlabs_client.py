@@ -25,8 +25,11 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from decimal import Decimal
 from pathlib import Path
 
+from release_worker.cost_model import estimate_tts_cost_usd
+from release_worker.cost_telemetry import CostTelemetrySink, ModelCallTelemetry
 from release_worker.media_models import NarrationConfig, NarrationResult
 
 logger = logging.getLogger("release_worker.elevenlabs")
@@ -57,21 +60,45 @@ class ElevenLabsSynthesizer:
         audio_dir: Path,
         max_concurrency: int = _DEFAULT_MAX_CONCURRENCY,
         sleep: object | None = None,
+        *,
+        release_run_id: str | None = None,
+        telemetry_sink: CostTelemetrySink | None = None,
+        usd_per_1k_chars: Decimal | None = None,
     ) -> None:
         self._audio_dir = audio_dir
         # Bound concurrent TTS calls below the subscription tier's cap (elevenlabs-rules).
         self._semaphore = threading.BoundedSemaphore(max(1, max_concurrency))
         # Injectable sleeper keeps the backoff deterministic in a future integration test.
         self._sleep = sleep if callable(sleep) else time.sleep
+        # When both are wired, every REAL synthesis records a cost/latency telemetry row so
+        # narration (a real per-character ElevenLabs bill) is visible to the §6 dashboard. A
+        # cache hit (audio already on disk) is NOT re-billed, so it records nothing.
+        self._release_run_id = release_run_id
+        self._telemetry_sink = telemetry_sink
+        self._usd_per_1k_chars = usd_per_1k_chars
 
     @classmethod
-    def from_env(cls) -> ElevenLabsSynthesizer:
+    def from_env(
+        cls,
+        *,
+        release_run_id: str | None = None,
+        telemetry_sink: CostTelemetrySink | None = None,
+    ) -> ElevenLabsSynthesizer:
         audio_dir = Path(os.environ.get("MEDIA_WORK_DIR", "/tmp")) / "narration"
         audio_dir.mkdir(parents=True, exist_ok=True)
         max_conc = int(
             os.environ.get("ELEVENLABS_MAX_CONCURRENCY", _DEFAULT_MAX_CONCURRENCY)
         )
-        return cls(audio_dir=audio_dir, max_concurrency=max_conc)
+        # Optional operator override of the plan's USD/1K-character rate (cost estimate only).
+        rate_env = os.environ.get("ELEVENLABS_USD_PER_1K_CHARS")
+        usd_per_1k_chars = Decimal(rate_env) if rate_env else None
+        return cls(
+            audio_dir=audio_dir,
+            max_concurrency=max_conc,
+            release_run_id=release_run_id,
+            telemetry_sink=telemetry_sink,
+            usd_per_1k_chars=usd_per_1k_chars,
+        )
 
     def synthesize(
         self, text: str, content_hash: str, config: NarrationConfig
@@ -92,7 +119,33 @@ class ElevenLabsSynthesizer:
         audio = self._post_tts(text, config, api_key)
         # Materialize fully to disk BEFORE returning (no partial stream reaches ffmpeg).
         out_path.write_bytes(audio)
+        # Only a real synthesis is billed — record its cost/latency (§6). The latency of the
+        # post is not separately threaded out, so we record char volume + USD; the dashboard's
+        # value of TTS observability is the spend driver (characters), not millisecond latency.
+        self._record_telemetry(text, config)
         return self._result(text, content_hash, config, out_path)
+
+    def _record_telemetry(self, text: str, config: NarrationConfig) -> None:
+        """Record one TTS call's character volume + USD estimate (constitution §6) — observability
+        only, never the narration text (§5). Reuses ``ModelCallTelemetry`` with the character count
+        as the cost driver (input field) and ``tier='tts'``; skipped when no sink/run is wired."""
+        if self._telemetry_sink is None or self._release_run_id is None:
+            return
+        char_count = len(text)
+        self._telemetry_sink.record(
+            ModelCallTelemetry(
+                release_run_id=self._release_run_id,
+                node="generate_narration",
+                model_id=config.model_id,
+                model_tier="tts",
+                input_tokens=char_count,
+                output_tokens=0,
+                latency_ms=0,
+                cost_usd_estimate=estimate_tts_cost_usd(
+                    char_count, self._usd_per_1k_chars
+                ),
+            )
+        )
 
     def _result(
         self, text: str, content_hash: str, config: NarrationConfig, path: Path

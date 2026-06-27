@@ -78,10 +78,22 @@ export function channelStatus(): ChannelStatusView {
   };
 }
 
+/** Warn when a publish silently degrades to a dry-run because the channel credential is MISSING
+ *  (not when dry-run is intentionally forced). Otherwise a misconfigured real deployment turns
+ *  every "publish" into a no-op preview that looks like a successful send. No secret is logged. */
+function warnIfDegradedToDryRun(channel: ChannelName): void {
+  if (!dryRunForced()) {
+    console.warn(
+      `publish to ${channel} degraded to a dry-run: no credential configured (PUBLISH_DRY_RUN is not set, so a real send was expected)`,
+    );
+  }
+}
+
 /** Publish one post to X, or dry-run when X is unconfigured / dry-run is forced. The live call
  *  targets the v2 tweets endpoint; status-only errors (a response body may echo headers). */
 export async function publishToX(post: ChannelPost): Promise<ChannelPublishResult> {
   if (dryRunForced() || !xConfigured()) {
+    warnIfDegradedToDryRun('x');
     return { channel: 'x', dryRun: true, url: null };
   }
   const token = requireEnv('X_ACCESS_TOKEN');
@@ -107,6 +119,7 @@ export async function publishToX(post: ChannelPost): Promise<ChannelPublishResul
  *  The live call targets the UGC Posts API as an organization author. */
 export async function publishToLinkedIn(post: ChannelPost): Promise<ChannelPublishResult> {
   if (dryRunForced() || !linkedInConfigured()) {
+    warnIfDegradedToDryRun('linkedin');
     return { channel: 'linkedin', dryRun: true, url: null };
   }
   const token = requireEnv('LINKEDIN_ACCESS_TOKEN');

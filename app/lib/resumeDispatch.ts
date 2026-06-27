@@ -8,18 +8,35 @@ import 'server-only';
 import { requireEnv, optionalEnv } from '@/app/lib/env.ts';
 import { assertRepoSlug, assertGitRef } from '@/app/lib/githubRefs.ts';
 
+export type ResumeGraph =
+  | 'release_intelligence'
+  | 'content_generation'
+  | 'skill_learning';
+
+// release_run_id is a UUID from a trusted internal row, but it is threaded into a checkpoint key,
+// so we validate its shape here (mirrors the worker's loop_orchestration._RUN_ID_RE) before
+// deriving a thread id from it.
+const RUN_ID_RE = /^[0-9a-zA-Z][0-9a-zA-Z._-]{0,127}$/;
+
+/** Derive the SAME LangGraph thread id the worker uses for ``(release_run_id, graph)``
+ *  (``loop_orchestration.thread_id_for`` → ``lg_<run>_<graph>``). Deriving it server-side from
+ *  the path run id + the route's graph means a client cannot point an approval recorded for one
+ *  run at a *different* run's halted gate thread (constitution §5 — gate audit↔action binding). */
+export function resumeThreadId(releaseRunId: string, graph: ResumeGraph): string {
+  if (!RUN_ID_RE.test(releaseRunId)) {
+    throw new Error('release_run_id is empty or has an unexpected shape');
+  }
+  return `lg_${releaseRunId}_${graph}`;
+}
+
 export interface ResumeDispatchArgs {
   readonly releaseRunId: string;
-  readonly threadId: string;
   readonly decision: 'approved' | 'rejected' | 'edited';
   // Which graph to resume. Gate #1 resumes 'release_intelligence' (default); Gate #2 (spec
   // 006) resumes 'content_generation' past the approve_artifacts interrupt; Gate #3 (spec 009)
-  // resumes 'skill_learning' past the approve_skill_candidate interrupt.
-  readonly graph?:
-    | 'release_intelligence'
-    | 'content_generation'
-    | 'skill_learning'
-    | undefined;
+  // resumes 'skill_learning' past the approve_skill_candidate interrupt. The thread id is
+  // DERIVED from (releaseRunId, graph) — never accepted from the client.
+  readonly graph?: ResumeGraph | undefined;
   // Reviewer who resolved the gate. Forwarded to the worker on a Gate #3 resume so the
   // promotion/rejection record names the human who decided (§10.5 reviewed_by); ignored by the
   // other graphs (their reviewer is captured in the approvals audit row).
@@ -31,6 +48,10 @@ export interface ResumeDispatchArgs {
  * with a message that excludes the token and any response secret.
  */
 export async function dispatchResume(args: ResumeDispatchArgs): Promise<void> {
+  const graph: ResumeGraph = args.graph ?? 'release_intelligence';
+  // Derive the thread id server-side from the (trusted, path-supplied) run id + this graph, so a
+  // client-supplied value can never resume a different run's gate thread (constitution §5).
+  const threadId = resumeThreadId(args.releaseRunId, graph);
   const token = requireEnv('GITHUB_TOKEN');
   // Validate the env-supplied repo/ref before they go into the URL/body (no injection).
   const repo = assertRepoSlug(requireEnv('GITHUB_REPO'));
@@ -55,10 +76,10 @@ export async function dispatchResume(args: ResumeDispatchArgs): Promise<void> {
       inputs: {
         release_run_id: args.releaseRunId,
         resume_decision: args.decision,
-        thread_id: args.threadId,
+        thread_id: threadId,
         // Default keeps Gate #1 behaviour; Gate #2 passes 'content_generation', Gate #3
         // 'skill_learning'.
-        graph: args.graph ?? 'release_intelligence',
+        graph,
         // Forwarded so a Gate #3 promotion/rejection record names the reviewer; '' when absent
         // (the other graphs ignore it). Never a secret — just the reviewer login/email.
         reviewer: args.reviewer ?? '',

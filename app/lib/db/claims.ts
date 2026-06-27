@@ -234,9 +234,12 @@ export async function setArtifactStatus(
 }
 
 /** Atomically flip an artifact to 'approved' ONLY while it is still approvable at the DB
- *  level (not blocked, not already approved). Returns true iff this call won the flip — the
- *  Gate #2 concurrency/TOCTOU guard: a double-submit, or an artifact re-blocked by the worker
- *  between the read-time `isApprovable` check and the write, matches no row and returns false.
+ *  level (not blocked, not already approved, and carrying full claim-level provenance).
+ *  Returns true iff this call won the flip — the Gate #2 concurrency/TOCTOU guard: a
+ *  double-submit, or an artifact re-blocked by the worker between the read-time `isApprovable`
+ *  check and the write, matches no row and returns false. This also re-enforces the provenance
+ *  rule in SQL (mirrors `isApprovable`) so a zero-claim or unlinked-claim artifact can never be
+ *  approved even if the read-time predicate were bypassed (constitution §5/§8).
  *  Pass the transaction client so the flip commits atomically with the approval + snapshot. */
 export async function tryApproveArtifact(
   artifactId: string,
@@ -245,8 +248,22 @@ export async function tryApproveArtifact(
   const result = await db.query(
     // 'edited' is excluded too: an edited body must be re-validated by the worker checks
     // (which return it to 'draft' or 'blocked') before it can be approved (constitution §5).
+    // Provenance: require >=1 claim AND no claim that is unsupported or lacks an evidence link.
     `UPDATE artifacts SET status = 'approved', updated_at = now()
-      WHERE id = $1 AND status NOT IN ('blocked', 'approved', 'edited')`,
+      WHERE id = $1 AND status NOT IN ('blocked', 'approved', 'edited')
+        AND EXISTS (
+          SELECT 1 FROM artifact_claims ac WHERE ac.artifact_id = artifacts.id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM artifact_claims ac
+           WHERE ac.artifact_id = artifacts.id
+             AND (
+               ac.support_status <> 'supported'
+               OR NOT EXISTS (
+                 SELECT 1 FROM claim_evidence_links cel WHERE cel.claim_id = ac.id
+               )
+             )
+        )`,
     [artifactId],
   );
   return (result.rowCount ?? 0) > 0;

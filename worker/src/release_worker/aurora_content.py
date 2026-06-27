@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextlib import AbstractContextManager
 
 import psycopg
 
@@ -138,6 +139,12 @@ class AuroraArtifactSink:
 
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
+
+    def transaction(self) -> AbstractContextManager[object]:
+        # One atomic unit spanning the artifact inserts AND the claim/link inserts that follow on
+        # this same (autocommit) connection — psycopg's transaction() issues an explicit BEGIN/COMMIT
+        # so the persist step is all-or-nothing and never strands a draft without its provenance.
+        return self._conn.transaction()
 
     def insert_artifact(self, record: ArtifactDraft) -> None:
         # T1 (spec 016) / §18.3 — persist the tamper-evident content_hash alongside the draft so

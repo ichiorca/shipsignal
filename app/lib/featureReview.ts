@@ -49,12 +49,13 @@ export type EditInput = z.infer<typeof editSchema>;
 
 /** POST /api/releases/{releaseRunId}/resume — submit the manifest review and resume the
  *  worker thread past Gate #1. `decision` is the run-level outcome (approved proceeds to
- *  content generation). `thread_id` resumes the SAME LangGraph thread (PRD §5.6). */
+ *  content generation). `thread_id` is accepted for backward-compat but IGNORED: the server
+ *  derives the thread id from the path run id + graph (constitution §5). */
 export const resumeSchema = z
   .object({
     reviewer,
     decision: z.enum(['approved', 'rejected', 'edited']),
-    thread_id: z.string().trim().min(1).max(200),
+    thread_id: z.string().trim().min(1).max(200).optional(),
     notes,
   })
   .strict();

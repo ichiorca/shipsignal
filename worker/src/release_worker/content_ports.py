@@ -14,6 +14,7 @@ write the §10.3/§10.5 provenance the audit trail depends on.
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager, nullcontext
 from typing import Protocol, runtime_checkable
 
 from release_worker.content_models import (
@@ -97,6 +98,14 @@ class ArtifactSink(Protocol):
     def insert_artifact(self, record: ArtifactDraft) -> None: ...
 
     def record_skill_usage(self, event: SkillUsageEvent) -> None: ...
+
+    def transaction(self) -> AbstractContextManager[object]:
+        """Open one atomic unit for the persist step so artifacts + their claims/links commit
+        together (constitution §4/§5 — a draft must never be persisted without its provenance).
+        The Aurora sink opens a real transaction on its connection (which the claim sink, sharing
+        that connection, joins); the in-memory fake returns a no-op context. The yielded value is
+        unused (covariant ``object`` so both a psycopg Transaction and a nullcontext satisfy it)."""
+        ...
 
 
 class InMemoryApprovedFeatureReader:
@@ -192,3 +201,8 @@ class InMemoryArtifactSink:
 
     def record_skill_usage(self, event: SkillUsageEvent) -> None:
         self.usage_events.append(event)
+
+    def transaction(self) -> AbstractContextManager[object]:
+        # No DB to span — the fake's appends are already in-process; a no-op context keeps the
+        # node code identical between the unit gate and runtime.
+        return nullcontext()

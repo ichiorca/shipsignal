@@ -15,7 +15,7 @@ import { publishGitHubRelease } from '@/app/lib/publishDispatch.ts';
 import { getApprovedSnapshotForArtifact } from '@/app/lib/db/approvedSnapshots.ts';
 import { getArtifactWithClaims } from '@/app/lib/db/claims.ts';
 import { getReleaseRun } from '@/app/lib/db/releaseRuns.ts';
-import { recordApprovalIdempotent, deleteApproval } from '@/app/lib/db/approvals.ts';
+import { beginApprovalDispatch, completeApprovalDispatch, deleteApproval } from '@/app/lib/db/approvals.ts';
 import { parseBody } from '@/app/lib/featureReview.ts';
 
 // Aurora + the authenticated GitHub call require the Node.js runtime (not Edge).
@@ -74,10 +74,11 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
     return NextResponse.json({ error: 'release run not found' }, { status: 404 });
   }
 
-  // Record the accountable human BEFORE the outward call (audit trail, §10.4). Idempotency is
-  // per-destination: a double-click must not record a second publish audit row or push a second
-  // GitHub Release. `null` means this artifact was already published to GitHub Releases.
-  const approvalId = await recordApprovalIdempotent(
+  // Two-phase idempotent dispatch (audit trail, §10.4): acquire a 'pending' marker BEFORE the
+  // outward call. A completed marker → idempotent success; a still-pending one (a concurrent
+  // publish mid-flight) → 409 'in_flight', never a false 'published'. Marked completed only after
+  // GitHub accepts the release; deleted on failure so a retry can re-acquire it.
+  const acquire = await beginApprovalDispatch(
     {
       target_type: 'artifact_publish',
       target_id: artifactId,
@@ -87,18 +88,29 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
     },
     `artifact_publish:${artifactId}:github_release`,
   );
-  if (approvalId === null) {
+  if (acquire.kind === 'completed') {
     return NextResponse.json(
       { published: true, destination: 'github_release', idempotent: true },
       { status: 200 },
     );
   }
+  if (acquire.kind === 'in_flight') {
+    return NextResponse.json(
+      {
+        error: 'a GitHub Release publish for this artifact is already in progress; refresh to see its result before retrying',
+        inFlight: true,
+      },
+      { status: 409 },
+    );
+  }
+  const approvalId = acquire.id;
 
   try {
     const release = await publishGitHubRelease(
       run.repo,
       buildGitHubReleasePayload(snapshot, run.head_ref),
     );
+    await completeApprovalDispatch(approvalId);
     return NextResponse.json(
       { published: true, destination: 'github_release', url: release.html_url, created: release.created },
       { status: 200 },

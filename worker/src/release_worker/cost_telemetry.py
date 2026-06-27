@@ -70,18 +70,19 @@ def meter_call(
     sink: CostTelemetrySink,
     budget: BudgetTracker | None = None,
 ) -> ModelCallTelemetry:
-    """Meter one completed Converse call: enforce budget, estimate cost, persist telemetry.
+    """Meter one COMPLETED Converse call: estimate cost, persist telemetry, then enforce budget.
 
-    Order matters: the budget is charged FIRST (so an overrun fails the call before we bother
-    estimating/persisting), then the cost is estimated and the row recorded. Returns the row.
-    Raises ``TokenBudgetExceededError`` (from the tracker) on a budget breach, and
-    ``UnroutedTaskError`` if the task has no configured tier (constitution §6).
+    Order matters, and it is deliberately telemetry-FIRST: this runs *after* the Converse call
+    has already executed and been billed by Bedrock, so the cost is sunk regardless of the budget
+    verdict. Recording the row before charging the budget guarantees the dashboard (§6) never
+    under-reports a call that actually happened — including the very call that trips the cap, the
+    moment overrun-visibility matters most. The budget is then charged and may raise
+    ``TokenBudgetExceededError`` (a hard run failure); ``UnroutedTaskError`` is raised earlier if
+    the task has no configured tier (constitution §6). Returns the recorded row.
     """
     route = resolve_route(task_name)
     tier: ModelTier = route.tier
     model_id = tier_model_id(tier)
-    if budget is not None:
-        budget.record(route.node, input_tokens, output_tokens)
     telemetry = ModelCallTelemetry(
         release_run_id=release_run_id,
         node=route.node,
@@ -93,4 +94,7 @@ def meter_call(
         cost_usd_estimate=estimate_cost_usd(model_id, input_tokens, output_tokens),
     )
     sink.record(telemetry)
+    # Charge LAST: the call is already billed, so the row above must persist even on a breach.
+    if budget is not None:
+        budget.record(route.node, input_tokens, output_tokens)
     return telemetry

@@ -49,12 +49,14 @@ export type ArtifactEditInput = z.infer<typeof artifactEditSchema>;
 
 /** POST /api/releases/{releaseRunId}/resume-artifacts — submit the Gate #2 review and resume
  *  the content_generation worker thread past the approve_artifacts interrupt. `decision` is
- *  the run-level outcome; `thread_id` resumes the SAME LangGraph thread (PRD §5.6). */
+ *  the run-level outcome. `thread_id` is accepted for backward-compat but IGNORED: the server
+ *  derives the thread id from the path run id + graph so a client cannot resume another run's
+ *  gate thread (constitution §5). */
 export const artifactResumeSchema = z
   .object({
     reviewer,
     decision: z.enum(['approved', 'rejected', 'edited']),
-    thread_id: z.string().trim().min(1).max(200),
+    thread_id: z.string().trim().min(1).max(200).optional(),
     notes,
   })
   .strict();

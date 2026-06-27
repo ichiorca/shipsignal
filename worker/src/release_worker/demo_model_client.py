@@ -1,10 +1,14 @@
-"""Offline ``ModelClient`` for DEMO_MODE — runs the full pipeline without Amazon Bedrock.
+"""Offline ``ModelClient`` for the demo seed script — runs the pipeline without Amazon Bedrock.
 
 The product's Bedrock access is account-held, so this stand-in lets the whole release→content loop
 run end-to-end (clustering → generation → claim extraction) and produce real, persisted artifacts a
-judge can see in the dashboard. It implements the SAME ``ModelClient`` port the Bedrock client does,
-so swapping it is a single env flag (``DEMO_MODE=1``) — flip it off and the live Bedrock client takes
-over with zero code change.
+judge can see in the dashboard. It implements the SAME ``ModelClient`` port the Bedrock client does.
+
+Wiring (be precise — there is NO ``DEMO_MODE`` flag in the production worker): the real entrypoint
+``release_worker.__main__`` always constructs ``BedrockModelClient.from_env()``. This offline client
+is selected ONLY by ``scripts/seed_demo_run.py`` (and unit tests), which build the graphs with it
+explicitly. To run the loop offline, invoke that seed script — do not expect an env flag on the
+worker to swap it in.
 
 It is honest about being a demo: content is representative, hand-authored per artifact type and
 grounded in the REAL evidence it is handed (it cites the actual ``evidence_id``s from the clustering

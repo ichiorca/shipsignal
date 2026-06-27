@@ -493,7 +493,10 @@ def _run_media_generation(
             cache=AuroraLlmResponseCache(conn),
         ),
         PlaywrightDemoCapturer.from_env(),
-        ElevenLabsSynthesizer.from_env(),
+        ElevenLabsSynthesizer.from_env(
+            release_run_id=release_run_id,
+            telemetry_sink=AuroraCostTelemetrySink(conn),
+        ),
         FfmpegVideoAssembler.from_env(),
         S3MediaStore(s3_client_from_env(), _require_env("MEDIA_BUCKET")),
         AuroraMediaAssetSink(conn),

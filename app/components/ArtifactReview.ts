@@ -53,8 +53,9 @@ function failureMessage(status: number): string {
  *  truth, this just drives the disabled state). */
 function approvable(artifact: ArtifactWithClaims): boolean {
   // Mirrors the server-side isApprovable: a blocked or not-yet-re-validated edited artifact
-  // is never directly approvable (constitution §5).
+  // is never directly approvable (constitution §5), and a zero-claim artifact has no provenance.
   if (artifact.status === 'blocked' || artifact.status === 'edited') return false;
+  if (artifact.claims.length === 0) return false;
   return artifact.claims.every(
     (c) => c.support_status === 'supported' && c.evidence.length > 0,
   );

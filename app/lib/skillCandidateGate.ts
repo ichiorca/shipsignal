@@ -87,11 +87,9 @@ export async function decideSkillCandidate(
     };
   }
 
-  const threadId = `lg_${target.releaseRunId}_skill_learning`;
   try {
     await dispatchResume({
       releaseRunId: target.releaseRunId,
-      threadId,
       decision,
       graph: 'skill_learning',
       reviewer: parsed.value.reviewer,

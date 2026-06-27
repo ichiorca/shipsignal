@@ -19,12 +19,13 @@ const notes = z.string().trim().max(4000).optional();
 
 /** POST /api/releases/{releaseRunId}/resume-skill — submit the Gate #3 review and resume the
  *  skill_learning worker thread past the approve_skill_candidate interrupt. `decision` is the
- *  run-level outcome; `thread_id` resumes the SAME LangGraph thread (PRD §5.6). */
+ *  run-level outcome. `thread_id` is accepted for backward-compat but IGNORED: the server
+ *  derives the thread id from the path run id + graph (constitution §5). */
 export const skillResumeSchema = z
   .object({
     reviewer,
     decision: z.enum(['approved', 'rejected', 'edited']),
-    thread_id: z.string().trim().min(1).max(200),
+    thread_id: z.string().trim().min(1).max(200).optional(),
     notes,
   })
   .strict();

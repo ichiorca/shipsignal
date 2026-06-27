@@ -16,7 +16,7 @@ import { publishRequestSchema } from '@/app/lib/publish.ts';
 import { parseBody } from '@/app/lib/featureReview.ts';
 import { getApprovedSnapshotForArtifact } from '@/app/lib/db/approvedSnapshots.ts';
 import { getArtifactWithClaims } from '@/app/lib/db/claims.ts';
-import { recordApprovalIdempotent, deleteApproval } from '@/app/lib/db/approvals.ts';
+import { beginApprovalDispatch, completeApprovalDispatch, deleteApproval } from '@/app/lib/db/approvals.ts';
 import { willDryRun, type ChannelName, type ChannelPublishResult } from '@/app/lib/channelDispatch.ts';
 import { decideChannelPublish, type ChannelPublishDeps } from '@/app/lib/channelPublishLogic.ts';
 import type { ChannelPost } from '@/app/lib/channelPublish.ts';
@@ -53,7 +53,8 @@ export async function handleChannelPublish(
   const deps: ChannelPublishDeps = {
     getSnapshot: getApprovedSnapshotForArtifact,
     getArtifactStatus: async (id) => (await getArtifactWithClaims(id))?.status ?? null,
-    recordApproval: recordApprovalIdempotent,
+    beginDispatch: beginApprovalDispatch,
+    completeDispatch: completeApprovalDispatch,
     deleteApproval,
     willDryRun,
     isPublishable: opts.isPublishable,

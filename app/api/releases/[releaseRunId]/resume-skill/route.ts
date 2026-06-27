@@ -65,7 +65,6 @@ export async function POST(request: Request, context: RouteContext): Promise<Nex
   try {
     await dispatchResume({
       releaseRunId,
-      threadId: parsed.value.thread_id,
       decision: parsed.value.decision,
       graph: 'skill_learning',
       reviewer: parsed.value.reviewer,

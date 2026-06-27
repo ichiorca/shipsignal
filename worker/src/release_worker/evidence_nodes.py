@@ -155,6 +155,28 @@ def redact_evidence(
     return tuple(out)
 
 
+def log_redaction_summary(
+    release_run_id: str, redacted: tuple[RedactedEvidence, ...]
+) -> None:
+    """Emit one observability line for the §5 redact-before-persist gate (the one safety rail
+    that was otherwise silent). Logs ONLY counts + the policy ``risk_flags`` that fired, scoped
+    by ``release_run_id`` — never any excerpt text or PII (the flags are policy labels)."""
+    flag_counts: dict[str, int] = {}
+    flagged_items = 0
+    for item in redacted:
+        if item.risk_flags:
+            flagged_items += 1
+        for flag in item.risk_flags:
+            flag_counts[flag] = flag_counts.get(flag, 0) + 1
+    logger.info(
+        "redacted %d evidence item(s) for run %s; %d flagged; flags=%s",
+        len(redacted),
+        release_run_id,
+        flagged_items,
+        flag_counts,
+    )
+
+
 def persist_evidence(
     release_run_id: str,
     redacted: tuple[RedactedEvidence, ...],
@@ -257,6 +279,7 @@ def collect_redact_persist(
     boundary = load_release_boundary(release_run_id, reader)
     collected = collect_git_diff(boundary, source)
     redacted = redact_evidence(collected)
+    log_redaction_summary(release_run_id, redacted)
     return persist_evidence(release_run_id, redacted, sink, embedder)
 
 
@@ -439,4 +462,5 @@ def collect_redact_persist_all(
         *extract_code_signals(diff, source_url),
     )
     redacted = redact_evidence(collected)
+    log_redaction_summary(release_run_id, redacted)
     return persist_evidence(release_run_id, redacted, sink, embedder)

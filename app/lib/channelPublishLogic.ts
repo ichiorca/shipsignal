@@ -8,6 +8,7 @@
 import type { ApprovedSnapshotView } from './artifactExport.ts';
 import type { ChannelPost } from './channelPublish.ts';
 import type { ChannelName, ChannelPublishResult } from './channelDispatch.ts';
+import type { DispatchAcquire } from './db/approvals.ts';
 
 export interface ApprovalRecordInput {
   readonly target_type: 'artifact_publish';
@@ -22,7 +23,11 @@ export interface ChannelPublishDeps {
   readonly getSnapshot: (artifactId: string) => Promise<ApprovedSnapshotView | null>;
   /** The artifact's current status, or null when the artifact does not exist (drives 404 vs 409). */
   readonly getArtifactStatus: (artifactId: string) => Promise<string | null>;
-  readonly recordApproval: (input: ApprovalRecordInput, idempotencyKey: string) => Promise<string | null>;
+  /** Phase 1: acquire a 'pending' dispatch marker (two-phase, so a concurrent caller mid-dispatch
+   *  is told 'in_flight' instead of a false 'published'). */
+  readonly beginDispatch: (input: ApprovalRecordInput, idempotencyKey: string) => Promise<DispatchAcquire>;
+  /** Phase 2: mark the acquired marker completed after a successful outward send. */
+  readonly completeDispatch: (approvalId: string) => Promise<void>;
   readonly deleteApproval: (approvalId: string) => Promise<void>;
   readonly willDryRun: (channel: ChannelName) => boolean;
   readonly isPublishable: (artifactType: string) => boolean;
@@ -44,7 +49,8 @@ export interface RouteResult {
 
 /** Decide the outcome of a channel publish. Mirrors the Slack route's contract:
  *  404 unknown · 409 not-approved · 409 wrong-channel · 200 dry-run preview (no audit/idempotency)
- *  · 200 idempotent · 200 published · 502 (and the approval is rolled back). */
+ *  · 200 idempotent (a prior send completed) · 409 in-flight (a concurrent send is mid-dispatch)
+ *  · 200 published · 502 (and the pending marker is rolled back). */
 export async function decideChannelPublish(
   cmd: ChannelPublishCommand,
   deps: ChannelPublishDeps,
@@ -78,8 +84,11 @@ export async function decideChannelPublish(
     };
   }
 
-  // Real send: record the accountable human first; per-destination idempotent.
-  const approvalId = await deps.recordApproval(
+  // Real send: acquire a two-phase dispatch marker (records the accountable human) BEFORE the
+  // outward call. The marker is 'pending' until the send succeeds, so a concurrent double-click
+  // is told 'in_flight' rather than a false 'published' — and if this send then fails and rolls
+  // the marker back, no other caller has already been told it succeeded.
+  const acquire = await deps.beginDispatch(
     {
       target_type: 'artifact_publish',
       target_id: cmd.artifactId,
@@ -89,21 +98,34 @@ export async function decideChannelPublish(
     },
     `artifact_publish:${cmd.artifactId}:${cmd.channel}`,
   );
-  if (approvalId === null) {
+  if (acquire.kind === 'completed') {
     return { status: 200, body: { published: true, destination: cmd.channel, idempotent: true } };
   }
+  if (acquire.kind === 'in_flight') {
+    // A concurrent request is mid-dispatch — never claim success on its behalf.
+    return {
+      status: 409,
+      body: {
+        error: `a publish to ${cmd.channel} for this artifact is already in progress; refresh to see its result before retrying`,
+        inFlight: true,
+      },
+    };
+  }
+  const approvalId = acquire.id;
 
   try {
     const result = await deps.dispatch(post);
+    // Phase 2: only now is the send real — mark the marker completed so a later replay is idempotent.
+    await deps.completeDispatch(approvalId);
     return { status: 200, body: { published: true, dryRun: false, destination: cmd.channel, url: result.url } };
   } catch {
-    // The outward call failed — clear the dedupe marker so a retry can proceed, then report 502.
+    // The outward call failed — clear the pending marker so a retry can proceed, then report 502.
     let dedupeCleared = true;
     await deps.deleteApproval(approvalId).catch((e: unknown) => {
-      // The clear ALSO failed: the dedupe key is now stuck, so a naive retry would short-circuit to
-      // a false "already published" (the idempotent 200 above). Surface this distinctly (500 +
-      // retryBlocked) instead of a 502 "retry me", so the UI does not invite a retry that silently
-      // no-ops, and alerting can fire — an operator must delete the approvals row by hand.
+      // The clear ALSO failed: the marker is stuck 'pending', so every retry now resolves to a
+      // permanent 'in_flight' 409 (never a false success, but never progressing either). Surface
+      // this distinctly (500 + retryBlocked) instead of a 502 "retry me", so the UI does not invite
+      // a retry that can never complete, and alerting can fire — an operator must delete the row.
       dedupeCleared = false;
       console.error('failed to clear publish dedupe marker; retry will be blocked', {
         channel: cmd.channel,

@@ -33,6 +33,7 @@ function snapshot(type: string): ApprovedSnapshotView {
 
 interface Spy {
   recordCalls: number;
+  completeCalls: string[];
   deleteCalls: string[];
   dispatchCalls: number;
 }
@@ -41,9 +42,12 @@ function deps(overrides: Partial<ChannelPublishDeps>, spy: Spy): ChannelPublishD
   return {
     getSnapshot: async () => snapshot('x_post'),
     getArtifactStatus: async () => 'approved',
-    recordApproval: async () => {
+    beginDispatch: async () => {
       spy.recordCalls += 1;
-      return 'approval-1';
+      return { kind: 'acquired', id: 'approval-1' };
+    },
+    completeDispatch: async (id) => {
+      spy.completeCalls.push(id);
     },
     deleteApproval: async (id) => {
       spy.deleteCalls.push(id);
@@ -60,7 +64,7 @@ function deps(overrides: Partial<ChannelPublishDeps>, spy: Spy): ChannelPublishD
 }
 
 function newSpy(): Spy {
-  return { recordCalls: 0, deleteCalls: [], dispatchCalls: 0 };
+  return { recordCalls: 0, completeCalls: [], deleteCalls: [], dispatchCalls: 0 };
 }
 
 const cmd = { artifactId: 'art-1', channel: 'x' as const, reviewer: 'Dana' };
@@ -96,30 +100,41 @@ test('dry-run → 200 preview, and NO approval/idempotency recorded', async () =
   assert.equal(spy.recordCalls, 0, 'a dry-run must not record an approval (re-runnable)');
 });
 
-test('real send success → 200 published, approval recorded, not rolled back', async () => {
+test('real send success → 200 published, marker completed (phase 2), not rolled back', async () => {
   const spy = newSpy();
   const r = await decideChannelPublish(cmd, deps({}, spy));
   assert.equal(r.status, 200);
   assert.equal(r.body.published, true);
   assert.equal(r.body.url, 'https://x.com/i/web/status/1');
   assert.equal(spy.recordCalls, 1);
+  assert.deepEqual(spy.completeCalls, ['approval-1'], 'a successful send marks the marker completed');
   assert.deepEqual(spy.deleteCalls, []);
 });
 
-test('already published (idempotent) → 200 idempotent, dispatch NOT called', async () => {
+test('already completed (idempotent replay) → 200 idempotent, dispatch NOT called', async () => {
   const spy = newSpy();
-  const r = await decideChannelPublish(cmd, deps({ recordApproval: async () => null }, spy));
+  const r = await decideChannelPublish(cmd, deps({ beginDispatch: async () => ({ kind: 'completed' }) }, spy));
   assert.equal(r.status, 200);
   assert.equal(r.body.idempotent, true);
   assert.equal(spy.dispatchCalls, 0, 'an already-delivered artifact must not re-dispatch');
 });
 
-test('dispatch failure → 502 and the approval is rolled back', async () => {
+test('concurrent send in flight → 409 inFlight, never a false published', async () => {
+  const spy = newSpy();
+  const r = await decideChannelPublish(cmd, deps({ beginDispatch: async () => ({ kind: 'in_flight' }) }, spy));
+  assert.equal(r.status, 409);
+  assert.equal(r.body.inFlight, true);
+  assert.notEqual(r.body.published, true, 'a mid-flight concurrent publish must not be reported as success');
+  assert.equal(spy.dispatchCalls, 0, 'the concurrent caller must not dispatch a second send');
+});
+
+test('dispatch failure → 502 and the pending marker is rolled back', async () => {
   const spy = newSpy();
   const r = await decideChannelPublish(
     cmd,
     deps({ dispatch: async () => { throw new Error('upstream 500'); } }, spy),
   );
   assert.equal(r.status, 502);
+  assert.deepEqual(spy.completeCalls, [], 'a failed send must not mark the marker completed');
   assert.deepEqual(spy.deleteCalls, ['approval-1'], 'the dedupe marker is cleared so a retry can proceed');
 });

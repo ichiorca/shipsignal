@@ -14,7 +14,11 @@ from decimal import Decimal
 
 import pytest
 
-from release_worker.cost_model import estimate_cost_usd
+from release_worker.cost_model import (
+    estimate_cost_usd,
+    estimate_embedding_cost_usd,
+    estimate_tts_cost_usd,
+)
 from release_worker.cost_telemetry import (
     ModelCallTelemetry,
     RecordingTelemetrySink,
@@ -49,6 +53,31 @@ def test_negative_tokens_rejected() -> None:
         estimate_cost_usd("anthropic.claude-3-haiku-20240307-v1:0", -1, 0)
 
 
+def test_embedding_cost_uses_input_rate_and_is_never_zero() -> None:
+    # Titan v2: 1000 in * 0.00002/1k = 0.00002.
+    assert estimate_embedding_cost_usd("amazon.titan-embed-text-v2:0", 1000) == Decimal(
+        "0.000020"
+    )
+    # An unknown embed model bills the fallback rate — never silently $0 (was the bug).
+    assert estimate_embedding_cost_usd("some.unknown-embed", 1000) > Decimal("0")
+
+
+def test_tts_cost_scales_with_characters_and_respects_override() -> None:
+    # Default rate (0.30/1k chars): 500 chars => 0.15.
+    assert estimate_tts_cost_usd(500) == Decimal("0.150000")
+    # Operator plan-rate override is honored.
+    assert estimate_tts_cost_usd(1000, Decimal("0.10")) == Decimal("0.100000")
+    # A real call always has a non-zero estimate (was invisible / $0 before).
+    assert estimate_tts_cost_usd(1) > Decimal("0")
+
+
+def test_tts_and_embedding_reject_negative_counts() -> None:
+    with pytest.raises(ValueError):
+        estimate_tts_cost_usd(-1)
+    with pytest.raises(ValueError):
+        estimate_embedding_cost_usd("amazon.titan-embed-text-v2:0", -1)
+
+
 def test_meter_call_records_a_run_scoped_row_with_resolved_tier_and_cost() -> None:
     sink = RecordingTelemetrySink()
     row = meter_call(
@@ -68,7 +97,7 @@ def test_meter_call_records_a_run_scoped_row_with_resolved_tier_and_cost() -> No
     assert row.cost_usd_estimate == Decimal("0.001500")
 
 
-def test_meter_call_charges_the_budget_and_breach_aborts_before_persist() -> None:
+def test_meter_call_records_the_billed_call_then_raises_on_budget_breach() -> None:
     sink = RecordingTelemetrySink()
     budget = BudgetTracker(TokenBudget(per_call_max=100, per_run_max=1000))
     with pytest.raises(TokenBudgetExceededError):
@@ -81,8 +110,12 @@ def test_meter_call_charges_the_budget_and_breach_aborts_before_persist() -> Non
             sink=sink,
             budget=budget,
         )
-    # Budget enforced FIRST: nothing was persisted for the over-budget call.
-    assert sink.records == []
+    # Telemetry-FIRST: the Converse call already executed and was billed, so the breaching call
+    # MUST still be recorded (the dashboard would otherwise under-report real spend exactly when
+    # the run blows its budget). The breach is then raised as a hard failure.
+    assert len(sink.records) == 1
+    assert sink.records[0].release_run_id == "run-123"
+    assert sink.records[0].input_tokens == 200
 
 
 def test_telemetry_schema_carries_no_prompt_or_pii_field() -> None:
