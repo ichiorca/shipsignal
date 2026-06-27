@@ -18,6 +18,7 @@ import { createElement } from 'react';
 import type { ReactElement } from 'react';
 import type { MediaAsset } from '@/app/lib/db/mediaAssets.ts';
 import { humanizeKey, humanizeStatus } from '../lib/displayFormat.ts';
+import { MediaPublishActions } from './MediaPublishActions.ts';
 
 export interface MediaPreviewProps {
   readonly assets: readonly MediaAsset[];
@@ -149,6 +150,19 @@ function transcriptLink(asset: MediaAsset): ReactElement | null {
   );
 }
 
+/** Publish-to-YouTube action for a finished demo video (or a link if already published). Only a
+ *  ready demo_video is publishable; anything else returns null. constitution §2: human-gated. */
+function publishAction(asset: MediaAsset): ReactElement | null {
+  if (asset.media_type !== 'demo_video') return null;
+  if (asset.external_url === null && asset.status !== 'ready') return null;
+  return createElement(
+    'div',
+    { 'data-publish-for': asset.id },
+    createElement('h3', null, 'Publish'),
+    createElement(MediaPublishActions, { mediaId: asset.id, publishedUrl: asset.external_url }),
+  );
+}
+
 function durationText(asset: MediaAsset): string {
   if (asset.duration_seconds === null) return 'Duration unknown';
   return `Duration: ${Math.round(asset.duration_seconds)}s`;
@@ -180,6 +194,7 @@ function assetSection(asset: MediaAsset, index: number, total: number): ReactEle
     ...body,
     transcriptText(asset),
     transcriptLink(asset),
+    publishAction(asset),
     createElement('h3', null, 'Provenance'),
     provenanceList(asset),
   );

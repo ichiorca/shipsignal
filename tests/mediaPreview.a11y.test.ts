@@ -36,6 +36,9 @@ const ASSETS: readonly MediaAsset[] = [
       voice_id: 'voice-abc',
     },
     created_at: '2026-06-08T10:00:00.000Z',
+    external_platform: null,
+    external_url: null,
+    published_at: null,
   },
   {
     id: 'bbbbbbbb-1111-2222-3333-444444444444',
@@ -49,6 +52,9 @@ const ASSETS: readonly MediaAsset[] = [
     status: 'ready',
     provenance: {},
     created_at: '2026-06-08T10:01:00.000Z',
+    external_platform: null,
+    external_url: null,
+    published_at: null,
   },
   // spec 014 T3/T4 — a §16.3 broken-step asset: no final media, names the broken step.
   {
@@ -67,6 +73,9 @@ const ASSETS: readonly MediaAsset[] = [
       source_artifact_id: 'dddddddd-1111-2222-3333-444444444444',
     },
     created_at: '2026-06-08T10:02:00.000Z',
+    external_platform: null,
+    external_url: null,
+    published_at: null,
   },
 ];
 

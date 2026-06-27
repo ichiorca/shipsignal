@@ -28,7 +28,10 @@ export type ApprovalTargetType =
   // operator feedback 2026-06-09 — records the reviewer who published an approved artifact
   // to a real destination (GitHub Release / Slack). Same rationale as media_trigger: not a
   // gate, but every outward-facing action names an accountable human.
-  | 'artifact_publish';
+  | 'artifact_publish'
+  // records the reviewer who published a rendered demo VIDEO to an external platform
+  // (e.g. YouTube). Outward-facing action → accountable human, same audit table.
+  | 'media_publish';
 
 export interface RecordApprovalArgs {
   readonly target_type: ApprovalTargetType;
