@@ -41,6 +41,8 @@ class DemoModelClient:
             return self._artifact(task_name[len("generate_") :])
         if task_name.startswith("extract_claims_"):
             return self._claims(content)
+        if task_name.startswith("draft_skill_revision_"):
+            return self._skill_draft(content)
         # Unknown task — return an empty-but-valid shape so validation never crashes the demo.
         if "features" in schema.get("required", []):  # type: ignore[operator]
             return {"features": []}
@@ -130,6 +132,39 @@ class DemoModelClient:
 
     # --- claim extraction: a few defensible claims from the artifact text -----------------------
 
+    # --- skill evolution: a representative SKILL.md body revision from reviewer feedback ----------
+
+    def _skill_draft(self, prompt: str) -> dict[str, object]:
+        """Draft a revised skill BODY (no frontmatter) from the current body + feedback themes in
+        the prompt, mimicking a Bedrock revision offline. Deterministic: softens superlatives, drops
+        unsupported-metric phrasing, preserves the original guidance, and appends a short
+        reviewer-informed section so the proposal is a real, reviewable diff of the current body."""
+        body = prompt
+        if "CURRENT SKILL BODY:" in prompt:
+            body = prompt.split("CURRENT SKILL BODY:", 1)[1]
+            body = body.split("REVIEWER FEEDBACK THEMES:", 1)[0].strip()
+        # The current body is the full SKILL.md (frontmatter + body); strip the leading frontmatter
+        # block so the proposal is body-only (the node re-renders frontmatter with the bumped version).
+        if body.startswith("---"):
+            parts = body.split("---", 2)
+            if len(parts) == 3:
+                body = parts[2].strip()
+        revised = _soften_hype(body)
+        addendum = (
+            "## Reviewer-informed revisions\n"
+            "- Prefer concrete, evidence-backed statements over superlatives.\n"
+            "- Do not assert metrics (percentages, multipliers) unless tied to release evidence.\n"
+            "- Keep wording tight and on-brand; cut filler."
+        )
+        proposed_body = f"{revised}\n\n{addendum}\n" if revised else f"{addendum}\n"
+        return {
+            "proposed_body": proposed_body,
+            "proposal_reason": (
+                "Address reviewer edits: reduce hype and remove unsupported metric claims "
+                "while preserving the skill's original intent."
+            ),
+        }
+
     def _claims(self, artifact_text: str) -> dict[str, object]:
         claims = [
             {
@@ -150,6 +185,32 @@ class DemoModelClient:
 
 def _md(title: str, body: str) -> dict[str, object]:
     return {"title": title, "body_markdown": body.strip()}
+
+
+# Superlatives the skill-revision draft softens (case-insensitive whole-word), mapped to a measured
+# replacement — the offline stand-in for "reduce hype" reviewer feedback.
+_HYPE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("revolutionary", "notable"),
+    ("seamless", "smooth"),
+    ("blazing", "fast"),
+    ("world-class", "strong"),
+    ("game-changing", "meaningful"),
+    ("best ever", "useful"),
+    ("the best", "a strong"),
+    ("incredible", "solid"),
+    ("amazing", "useful"),
+    ("unbeatable", "competitive"),
+)
+
+
+def _soften_hype(body: str) -> str:
+    """Deterministically tone down superlatives in a skill body (the offline 'reduce hype' edit)."""
+    revised = body
+    for hype, measured in _HYPE_REPLACEMENTS:
+        revised = re.sub(
+            rf"\b{re.escape(hype)}\b", measured, revised, flags=re.IGNORECASE
+        )
+    return revised.strip()
 
 
 # Hand-authored, on-brand artifacts for the Hermes Agent v0.17.0 demo run. Representative content
