@@ -269,6 +269,44 @@ def code_default_capability_skills() -> dict[str, frozenset[str]]:
     }
 
 
+# The pipeline stage ("agent") that produces artifact-type capabilities. The other stages
+# (release-intelligence, eval, media-generation, skill-learning) emit pipeline outputs — evidence,
+# scores, the demo video, skill candidates — not artifact types, so they have no entry in the
+# agent→capability allowlist. KEEP IN SYNC with the Agents-page stage id.
+CONTENT_GENERATION_AGENT_ID = "content-generation"
+
+
+def code_default_agent_capabilities() -> dict[str, frozenset[str]]:
+    """The full code-default agent→capability map (agent_id → producible artifact types).
+
+    The seed/fallback for the persisted ``agent_capabilities`` mapping (migration 0035): the worker
+    resolves the DB override over this floor (DB-wins-per-agent, code fallback), and the seeder
+    imports these defaults so the Agents page reflects exactly which artifact types content
+    generation is allowed to produce. content-generation defaults to every artifact type in
+    ``_ARTIFACT_SPECS``; removing the last override row reverts it to this set.
+    """
+    return {
+        CONTENT_GENERATION_AGENT_ID: frozenset(
+            spec.artifact_type for spec in _ARTIFACT_SPECS
+        )
+    }
+
+
+def gate_artifact_types(
+    selected_types: tuple[str, ...], allowed: frozenset[str] | None
+) -> tuple[str, ...]:
+    """Restrict a run's selected artifact types to what an agent is allowed to produce.
+
+    The agent→capability allowlist (migration 0035) gates generation: a type the agent isn't
+    allowed to produce is dropped even if the run selected it. ``allowed=None`` means no allowlist
+    was resolved (no source wired, unit gate) → no gating, the selection passes through unchanged.
+    Selection order is preserved. Pure, so the gating is unit-testable without building the graph.
+    """
+    if allowed is None:
+        return selected_types
+    return tuple(t for t in selected_types if t in allowed)
+
+
 def _skills_for_spec(
     spec: _ArtifactSpec,
     snapshots: tuple[SkillSnapshot, ...],

@@ -61,6 +61,22 @@ class CapabilitySkillSource(Protocol):
 
 
 @runtime_checkable
+class AgentCapabilitySource(Protocol):
+    """Resolve the per-agent (pipeline stage) capability allowlist — which artifact types each agent
+    is allowed to produce.
+
+    Returns ``{agent_id: frozenset(artifact_type, ...)}``. Sibling of ``CapabilitySkillSource`` one
+    level up the chain (agent → capability → skill): a persisted operator override (the
+    ``agent_capabilities`` table) wins per agent over the code default (content-generation → every
+    artifact type); a DB error or an unmapped agent falls back to the code default so generation
+    never fails closed and the content stage can never be stranded with zero capabilities.
+    ``AuroraAgentCapabilitySource`` satisfies it at runtime; ``InMemoryAgentCapabilitySource`` is the
+    unit-gate fake."""
+
+    def resolve(self) -> dict[str, frozenset[str]]: ...
+
+
+@runtime_checkable
 class SkillSnapshotSink(Protocol):
     """Upsert a ``skill_repo_snapshots`` row and return its effective id (PRD §10.5).
 
@@ -110,6 +126,18 @@ class InMemoryCapabilitySkillSource:
     """In-process ``CapabilitySkillSource`` returning a preset capability→skill map, so a test can
     drive both the code-default path (seed it with the defaults) and an override path (seed a type
     with a different skill set) without a DB."""
+
+    def __init__(self, mapping: dict[str, frozenset[str]]) -> None:
+        self._mapping = dict(mapping)
+
+    def resolve(self) -> dict[str, frozenset[str]]:
+        return dict(self._mapping)
+
+
+class InMemoryAgentCapabilitySource:
+    """In-process ``AgentCapabilitySource`` returning a preset agent→capability map, so a test can
+    drive both the code-default path (seed it with the defaults) and an override path (seed an agent
+    with a narrower artifact-type set) without a DB."""
 
     def __init__(self, mapping: dict[str, frozenset[str]]) -> None:
         self._mapping = dict(mapping)

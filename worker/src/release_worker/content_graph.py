@@ -51,6 +51,8 @@ from release_worker.claim_ports import (
     GuardrailScanner,
 )
 from release_worker.content_nodes import (
+    CONTENT_GENERATION_AGENT_ID,
+    gate_artifact_types,
     generate_artifacts_parallel,
     load_approved_features,
     persist_reviewable_artifacts,
@@ -58,6 +60,7 @@ from release_worker.content_nodes import (
 )
 from release_worker.content_policy import NamedEntityPolicy
 from release_worker.content_ports import (
+    AgentCapabilitySource,
     ApprovedFeatureReader,
     ArtifactSink,
     CapabilitySkillSource,
@@ -89,6 +92,7 @@ def build_content_generation_graph(
     checkpointer: object | None = None,
     voice_source: VoiceContextSource | None = None,
     capability_source: CapabilitySkillSource | None = None,
+    agent_capability_source: AgentCapabilitySource | None = None,
 ):
     """Compile the content-generation graph through Gate #2.
 
@@ -149,6 +153,17 @@ def build_content_generation_graph(
             return None
         return capability_source.resolve()
 
+    def _enabled_artifact_types(state: ContentRunState) -> tuple[str, ...]:
+        # Resolve the agent→capability allowlist (migration 0035) and gate the run's selected types
+        # by what the content-generation agent is allowed to produce. DB-wins-per-agent over the
+        # code default (content-generation → every type); a type disabled at the agent level is
+        # never produced even if a run selected it. The source's own resolve() is fail-safe to the
+        # code default, so None here only means "no source wired" (unit gate) → no extra gating.
+        if agent_capability_source is None:
+            return state.artifact_types
+        allowed = agent_capability_source.resolve().get(CONTENT_GENERATION_AGENT_ID)
+        return gate_artifact_types(state.artifact_types, allowed)
+
     def _generate_artifacts_parallel(state: ContentRunState) -> ContentRunState:
         # T1 (spec 007): fans out the initial artifact set (PRD §8.1) concurrently,
         # each on its per-type skill selection (T2). uuid4 is thread-safe, so the parallel
@@ -161,7 +176,7 @@ def build_content_generation_graph(
             model_client,
             lambda: uuid4().hex,
             model_id,
-            selected_types=state.artifact_types,
+            selected_types=_enabled_artifact_types(state),
             voice_context=_voice_context(state),
             capability_skills=_capability_skills(state),
         )

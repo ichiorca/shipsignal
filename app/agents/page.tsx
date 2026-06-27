@@ -1,103 +1,32 @@
 // Reskin (peer parity with hindsight-guild/web Agents.tsx) — the "Agents" view. ShipSignal has no
 // human agent roster: its "agents" are the LangGraph graphs/nodes that turn a release into launch
-// content. This page presents an honest, static roster of those pipeline stages, accurate to the
-// four graphs in worker/src/release_worker (graph.py, content_graph.py, media_graph.py,
-// skill_learning_graph.py) plus the eval stage (eval_orchestration / eval_rubric). It is framed as
-// the automated team, not fake humans. Server Component, no data reads. P6 (WCAG 2.2 AA): one
-// <main> landmark, sections render as cards (global CSS), each starts with an <h2>; the roster is a
-// semantic list with real links to each stage's existing surface.
+// content. This page presents an honest roster of those pipeline stages (the four graphs in
+// worker/src/release_worker plus the eval stage), AND lets operators edit the agent→capability
+// mapping (migration 0035): which artifact types each agent is allowed to produce. Only content-
+// generation produces artifact-type capabilities; the other stages emit pipeline outputs (evidence,
+// scores, the demo video, skill candidates), so they have no editable capabilities. The worker gates
+// generation by this allowlist (DB-wins-per-agent over the code default). Server Component: reads
+// Aurora server-side (no secret/DB handle reaches the client) and renders the client editor. P6
+// (WCAG 2.2 AA): one <main> landmark, headed sections, labelled controls, polite status.
 
 import { PageHeader } from '@/app/components/PageHeader.ts';
+import { AgentCapabilitiesEditor } from '@/app/components/AgentCapabilitiesEditor.ts';
+import { AGENT_STAGES } from '@/app/lib/agentStages.ts';
+import { listAgentCapabilities } from '@/app/lib/db/agentCapabilities.ts';
+import { ALL_ARTIFACT_TYPES } from '@/app/lib/artifactTypes.ts';
 
 export const dynamic = 'force-dynamic';
 
-interface AgentStage {
-  readonly id: string;
-  readonly name: string;
-  readonly role: string;
-  readonly graph: string;
-  /** What this stage does, in order. */
-  readonly does: readonly string[];
-  /** The gate (or lack of one) this stage feeds. */
-  readonly gate: string;
-  readonly link?: { readonly href: string; readonly label: string };
-}
+export default async function AgentsPage() {
+  const agents = await listAgentCapabilities();
+  const availableTypes = [...ALL_ARTIFACT_TYPES];
 
-const STAGES: readonly AgentStage[] = [
-  {
-    id: 'release-intelligence',
-    name: 'Release Intelligence',
-    role: 'Evidence → feature manifest',
-    graph: 'graph.py (release-intelligence graph)',
-    does: [
-      'Collects release evidence from GitHub (diffs, PRs, issues, docs) and redacts it before persist.',
-      'Runs deterministic signal extraction, then clusters and scores the signals into candidate features.',
-      'Persists the feature manifest and halts for human review.',
-    ],
-    gate: 'Feeds Gate #1 — the feature manifest is human-approved before any content is generated.',
-    link: { href: '/', label: 'Review launches' },
-  },
-  {
-    id: 'content-generation',
-    name: 'Content Generation',
-    role: 'Approved features → drafts + provenance',
-    graph: 'content_graph.py (content-generation graph)',
-    does: [
-      'Loads the approved features and snapshots the active repo skills that will ground generation.',
-      'Generates the selected artifacts in parallel (blog/changelog, one-pager, social, demo script, audio digest).',
-      'Extracts each claim, links it to concrete evidence, then runs deterministic policy checks and Bedrock Guardrails.',
-      'Persists the reviewable artifacts and halts for human review.',
-    ],
-    gate: 'Feeds Gate #2 — artifacts are human-approved (a blocking check marks an artifact "blocked") before publish.',
-    link: { href: '/distribute', label: 'Review artifacts' },
-  },
-  {
-    id: 'eval',
-    name: 'Eval',
-    role: 'Quality scoring of generated artifacts',
-    graph: 'eval_orchestration.py / eval_rubric.py',
-    does: [
-      'Scores generated artifacts against the rubric with an LLM-as-judge, dimension by dimension.',
-      'Applies regression gates so quality and cost/latency stay within budget across launches.',
-    ],
-    gate: 'Advises Gate #2 — the scores and rubric breakdown inform the reviewer; they do not auto-approve.',
-    link: { href: '/telemetry', label: 'See quality signals' },
-  },
-  {
-    id: 'media-generation',
-    name: 'Media Generation',
-    role: 'Approved demo script → demo video',
-    graph: 'media_graph.py (media graph)',
-    does: [
-      'Validates the click-path JSON, then drives a Playwright capture of the demo.',
-      'Stores the raw recording, generates ElevenLabs narration from the approved script, and assembles the video with ffmpeg.',
-      'Stores the finished media in S3 and records the media asset.',
-    ],
-    gate: 'No human gate — it runs only on an already Gate #2-approved demo script; safety is structural (schema-validated click-path, materialized-audio guard).',
-    link: { href: '/', label: 'Open a launch' },
-  },
-  {
-    id: 'skill-learning',
-    name: 'Skill Learning',
-    role: 'Reviewer signals → skill revision candidate',
-    graph: 'skill_learning_graph.py (skill-learning graph)',
-    does: [
-      'Collects learning signals from reviewer edits and rejections across launches.',
-      'Clusters the edit and rejection patterns and selects the impacted skills.',
-      'Drafts a candidate revision to a repo SKILL.md and halts for human review.',
-    ],
-    gate: 'Feeds Gate #3 — a human must approve before any repo SKILL.md is overwritten and its commit SHA recorded.',
-    link: { href: '/skills', label: 'Review skill candidates' },
-  },
-];
-
-export default function AgentsPage() {
   return (
     <main id="main">
       <PageHeader
         eyebrow="Skill library"
         title="Agents"
-        description="The team that turns a release into launch content."
+        description="The team that turns a release into launch content — and which capabilities each agent owns."
       />
 
       <section aria-labelledby="roster-intro-heading">
@@ -110,7 +39,29 @@ export default function AgentsPage() {
         </p>
       </section>
 
-      {STAGES.map((stage) => (
+      <section aria-labelledby="agent-mapping-heading">
+        <h2 id="agent-mapping-heading">Agent → capability mapping</h2>
+        <p>
+          {agents.length === 0
+            ? 'No agent mapping is seeded yet — run the reference seeder (it loads the code-default ' +
+              'mapping) and each agent and the artifact types it produces appear here.'
+            : 'Which artifact-type capabilities each agent is allowed to produce. The worker gates ' +
+              'generation by this exact allowlist — an operator edit wins per agent, otherwise the ' +
+              'seeded code default applies; a type removed here is never produced even if a run ' +
+              'selects it. Removing every capability from an agent reverts it to the code default. ' +
+              'Only content generation produces artifact types — the other stages emit pipeline ' +
+              'outputs (evidence, scores, the demo video, skill candidates), so they have no ' +
+              'editable capabilities. The artifact types themselves and the skills that ground ' +
+              'them live in '}
+          {agents.length === 0 ? null : <a href="/capabilities">Capabilities</a>}
+          {agents.length === 0 ? null : '.'}
+        </p>
+        {agents.length > 0 ? (
+          <AgentCapabilitiesEditor agents={agents} availableTypes={availableTypes} />
+        ) : null}
+      </section>
+
+      {AGENT_STAGES.map((stage) => (
         <section key={stage.id} aria-labelledby={`${stage.id}-heading`}>
           <h2 id={`${stage.id}-heading`}>{stage.name}</h2>
           <p>

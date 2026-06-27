@@ -163,6 +163,33 @@ def _seed_capability_skills(conn: psycopg.Connection) -> int:
     return seeded
 
 
+# Agent→capability mapping (migration 0035). KEEP IN SYNC with
+# release_worker.content_nodes.code_default_agent_capabilities (content-generation → every artifact
+# type). Only the content-generation stage produces artifact-type capabilities; the other stages
+# emit pipeline outputs, not artifact types, so they have no rows. Re-seeding is ON CONFLICT DO
+# NOTHING so it never reverts an operator's edit; it only re-establishes a missing default.
+_CONTENT_GENERATION_AGENT_ID = "content-generation"
+
+_UPSERT_AGENT_CAPABILITY_SQL = """
+    INSERT INTO agent_capabilities (agent_id, artifact_type, source)
+    VALUES (%s, %s, 'code-default')
+    ON CONFLICT (agent_id, artifact_type) DO NOTHING
+"""
+
+
+def _seed_agent_capabilities(conn: psycopg.Connection) -> int:
+    """Seed the code-default agent→capability rows (idempotent, never clobbers an override)."""
+    seeded = 0
+    with conn.transaction(), conn.cursor() as cur:
+        for artifact_type in _ARTIFACT_FORMAT_SKILLS:
+            cur.execute(
+                _UPSERT_AGENT_CAPABILITY_SQL,
+                (_CONTENT_GENERATION_AGENT_ID, artifact_type),
+            )
+            seeded += cur.rowcount
+    return seeded
+
+
 def main() -> int:
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
@@ -230,12 +257,20 @@ def main() -> int:
         # selection so the Capabilities page reflects exactly what generation grounds in.
         capability_rows = _seed_capability_skills(conn)
 
+        # Agent→capability mapping (migration 0035): seed the code-default per-agent producible
+        # artifact types so the Agents page reflects exactly what each agent is allowed to produce.
+        agent_capability_rows = _seed_agent_capabilities(conn)
+
     print(f"seeded {len(seeded)} reference skills for repo {repo}:")
     for label in sorted(seeded):
         print(f"  - {label}")
     print(
         f"seeded {capability_rows} new capability->skill mapping rows "
         f"({len(_ARTIFACT_FORMAT_SKILLS)} capabilities)"
+    )
+    print(
+        f"seeded {agent_capability_rows} new agent->capability mapping rows "
+        f"(content-generation -> {len(_ARTIFACT_FORMAT_SKILLS)} artifact types)"
     )
     return 0
 

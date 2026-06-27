@@ -39,6 +39,7 @@ from uuid import uuid4
 import psycopg
 from langgraph.types import Command
 
+from release_worker.aurora_agent_capabilities import AuroraAgentCapabilitySource
 from release_worker.aurora_capability_skills import AuroraCapabilitySkillSource
 from release_worker.aurora_claims import (
     AuroraArtifactReviewSink,
@@ -87,7 +88,10 @@ from release_worker.bedrock_client import BedrockEmbeddingClient, BedrockModelCl
 from release_worker.checkpointer import build_checkpointer, wants_durable_checkpointer
 from release_worker.content_graph import build_content_generation_graph
 from release_worker.content_models import ArtifactTypeSelection
-from release_worker.content_nodes import code_default_capability_skills
+from release_worker.content_nodes import (
+    code_default_agent_capabilities,
+    code_default_capability_skills,
+)
 from release_worker.content_policy import load_named_entity_policy
 from release_worker.content_state import ContentRunState
 from release_worker.elevenlabs_client import ElevenLabsSynthesizer
@@ -396,6 +400,13 @@ def _run_content_generation(
         # `_ARTIFACT_SPECS` code default. Fail-safe to the code default on any DB read error.
         capability_source=AuroraCapabilitySkillSource.from_env(
             conn, code_default_capability_skills()
+        ),
+        # Agent→capability allowlist (migration 0035, peer-parity): gate the run's selected
+        # artifact types by what the content-generation agent is allowed to produce, DB-wins-per-
+        # agent over the code default (content-generation → every type). Fail-safe to the code
+        # default on any DB read error, so generation never fails closed.
+        agent_capability_source=AuroraAgentCapabilitySource.from_env(
+            conn, code_default_agent_capabilities()
         ),
     )
     config = {"configurable": {"thread_id": thread_id}}
