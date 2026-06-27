@@ -5,7 +5,7 @@
 // (DB-wins-per-type over the `_ARTIFACT_SPECS` code default; peer-parity with hindsight-guild-
 // internal's allowed_for). Server-only read; all queries parameterised; bodies carry no PII.
 
-import { query } from '@/app/lib/aurora.ts';
+import { query, type Queryable } from '@/app/lib/aurora.ts';
 
 /** One (capability, skill) edge as persisted. */
 export interface CapabilitySkill {
@@ -42,4 +42,35 @@ export async function listCapabilitySkills(): Promise<readonly CapabilityMapping
     byType.set(row.artifact_type, skills);
   }
   return [...byType.entries()].map(([artifact_type, skills]) => ({ artifact_type, skills }));
+}
+
+/** Add or update one capability→skill edge as an OPERATOR OVERRIDE (the worker's resolver treats a
+ *  type with any rows as authoritative). Idempotent on (artifact_type, skill_name). */
+export async function upsertCapabilitySkill(
+  artifactType: string,
+  skillName: string,
+  required: boolean,
+  db: Queryable = { query },
+): Promise<void> {
+  await db.query(
+    `INSERT INTO capability_skills (artifact_type, skill_name, required, source)
+     VALUES ($1, $2, $3, 'operator-override')
+     ON CONFLICT (artifact_type, skill_name) DO UPDATE
+        SET required = EXCLUDED.required, source = 'operator-override', updated_at = now()`,
+    [artifactType, skillName, required],
+  );
+}
+
+/** Remove one capability→skill edge. If a capability ends up with zero rows the worker falls back
+ *  to its code default (skill = format skill + brand-voice), so removal can't leave it ungrounded. */
+export async function deleteCapabilitySkill(
+  artifactType: string,
+  skillName: string,
+  db: Queryable = { query },
+): Promise<boolean> {
+  const result = await db.query(
+    `DELETE FROM capability_skills WHERE artifact_type = $1 AND skill_name = $2`,
+    [artifactType, skillName],
+  );
+  return (result.rowCount ?? 0) > 0;
 }
