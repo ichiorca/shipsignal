@@ -54,7 +54,11 @@ from release_worker.claim_ports import InMemoryGuardrailScanner
 from release_worker.content_policy import load_named_entity_policy
 from release_worker.demo_model_client import DemoModelClient
 from release_worker.repo_skill_writer import FilesystemRepoSkillWriter
-from release_worker.skill_learning_models import RawReviewSignal, SkillGateResolution
+from release_worker.skill_learning_models import (
+    RawReviewSignal,
+    SkillGateResolution,
+    SkillRevisionCandidate,
+)
 from release_worker.skill_learning_nodes import (
     cluster_edit_patterns,
     cluster_rejection_patterns,
@@ -137,6 +141,78 @@ def _reviewer_signals(snapshot_id: str) -> tuple[RawReviewSignal, ...]:
     )
 
 
+def _load_latest_draft(
+    conn: psycopg.Connection, skill_name: str
+) -> SkillRevisionCandidate | None:
+    """Reconstruct the most recent DRAFT candidate for a skill from Aurora, so an already-staged
+    suggestion (the one a reviewer sees on screen) can be promoted without re-drafting a duplicate."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, repo, skill_name, skill_path, base_skill_snapshot_id, proposed_version,
+                   proposed_body, proposed_frontmatter_json, proposal_reason, miner_type,
+                   supporting_signal_ids, confidence, pattern_hash, old_content_hash, status
+              FROM skill_revision_candidates
+             WHERE skill_name = %s AND status = 'draft'
+             ORDER BY created_at DESC
+             LIMIT 1
+            """,
+            (skill_name,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return SkillRevisionCandidate(
+        candidate_id=str(row[0]),
+        repo=row[1],
+        skill_name=row[2],
+        skill_path=row[3],
+        base_skill_snapshot_id=str(row[4]) if row[4] else None,
+        proposed_version=row[5],
+        proposed_body=row[6],
+        proposed_frontmatter=row[7] or {},
+        proposal_reason=row[8],
+        miner_type=row[9],
+        supporting_signal_ids=tuple(str(s) for s in (row[10] or ())),
+        confidence=float(row[11]) if row[11] is not None else 0.0,
+        pattern_hash=row[12],
+        old_content_hash=row[13],
+        status=row[14],
+    )
+
+
+def _promote(
+    conn: psycopg.Connection,
+    candidates: tuple[SkillRevisionCandidate, ...],
+    candidate_sink: AuroraSkillCandidateSink,
+    reviewer: str,
+    dashboard: str,
+) -> None:
+    """Human-gated promotion (offline): layer-3 safety scan -> publish next version (skills table) +
+    overwrite the repo SKILL.md + record provenance. Permissive guardrail stand-in; the deterministic
+    named-entity policy still runs."""
+    safe = prevent_unsafe_promotion(
+        candidates, InMemoryGuardrailScanner(), load_named_entity_policy()
+    )
+    commit_sha = os.environ.get("GITHUB_SHA") or f"demo-{uuid4().hex[:12]}"
+    writer = DbBackedRepoSkillWriter(
+        conn, FilesystemRepoSkillWriter(_REPO_ROOT / "skills", commit_sha)
+    )
+    records = update_repo_skill_file(
+        safe, SkillGateResolution(decision="approved", reviewer=reviewer), writer
+    )
+    mark_candidate_promoted(records, candidate_sink)
+    for r, c in zip(records, safe, strict=False):
+        print(
+            f"\npromoted {c.skill_name} -> v{c.proposed_version}\n"
+            f"  candidate {c.candidate_id}\n"
+            f"  commit {r.promoted_commit_sha}\n"
+            f"  old hash {r.old_content_hash}\n  new hash {r.new_content_hash}\n"
+            f"  file {c.skill_path} overwritten (revert with: git checkout -- {c.skill_path})"
+        )
+    print(f"\npublished — see {dashboard}/skills and {dashboard}/learning")
+
+
 def main() -> int:
     # Windows consoles default to cp1252; force UTF-8 so help text/output never crash on encode.
     if hasattr(sys.stdout, "reconfigure"):
@@ -150,7 +226,12 @@ def main() -> int:
     parser.add_argument(
         "--promote",
         action="store_true",
-        help="also promote the drafted suggestion (publish the next version)",
+        help="also promote the freshly-drafted suggestion (publish the next version)",
+    )
+    parser.add_argument(
+        "--promote-existing",
+        action="store_true",
+        help="promote the latest existing DRAFT candidate for --skill (no new draft)",
     )
     args = parser.parse_args()
 
@@ -174,6 +255,24 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    candidate_sink = AuroraSkillCandidateSink(conn)
+
+    # Promote an already-staged suggestion (the one a reviewer sees) without re-drafting.
+    if args.promote_existing:
+        existing = _load_latest_draft(conn, args.skill)
+        if existing is None:
+            print(
+                f"no draft candidate for '{args.skill}' to promote — generate one first "
+                f"(run without --promote-existing)",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"promoting existing draft {existing.candidate_id} ({existing.skill_name})"
+        )
+        _promote(conn, (existing,), candidate_sink, args.reviewer, dashboard)
+        return 0
+
     snapshot_id, skill_path = snapshot
     run_id = _resolve_run(conn, args.release_run_id)
     print(f"run {run_id}  skill '{args.skill}' ({skill_path}) snapshot {snapshot_id}")
@@ -195,7 +294,6 @@ def main() -> int:
     if not impacted:
         print("  no impacted skill resolved (snapshot/file mismatch); nothing to draft")
         return 1
-    candidate_sink = AuroraSkillCandidateSink(conn)
     candidates = draft_skill_revision_candidate(
         impacted,
         DemoModelClient(),
@@ -221,27 +319,8 @@ def main() -> int:
         print("\n(run again with --promote to publish the next version)")
         return 0
 
-    # 3) Promote: layer-3 safety scan -> publish next version (skills table) + overwrite SKILL.md +
-    # record provenance. Offline: a permissive guardrail stand-in; the named-entity policy is real.
-    safe = prevent_unsafe_promotion(
-        candidates, InMemoryGuardrailScanner(), load_named_entity_policy()
-    )
-    commit_sha = os.environ.get("GITHUB_SHA") or f"demo-{uuid4().hex[:12]}"
-    writer = DbBackedRepoSkillWriter(
-        conn, FilesystemRepoSkillWriter(_REPO_ROOT / "skills", commit_sha)
-    )
-    records = update_repo_skill_file(
-        safe, SkillGateResolution(decision="approved", reviewer=args.reviewer), writer
-    )
-    mark_candidate_promoted(records, candidate_sink)
-    for r, c in zip(records, safe, strict=False):
-        print(
-            f"\npromoted {c.skill_name} -> v{c.proposed_version}\n"
-            f"  commit {r.promoted_commit_sha}\n"
-            f"  old hash {r.old_content_hash}\n  new hash {r.new_content_hash}\n"
-            f"  file {c.skill_path} overwritten (revert with: git checkout -- {c.skill_path})"
-        )
-    print(f"\npublished — see {dashboard}/skills")
+    # 3) Promote the freshly-drafted suggestion.
+    _promote(conn, candidates, candidate_sink, args.reviewer, dashboard)
     return 0
 
 
