@@ -7,22 +7,12 @@
 
 import { NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
-import { buildConsentUrl, GOOGLE_YOUTUBE_PROVIDER } from '@/app/lib/googleOAuth.ts';
+import { buildConsentUrl, GOOGLE_YOUTUBE_PROVIDER, OAUTH_STATE_COOKIE } from '@/app/lib/googleOAuth.ts';
+import { callbackRedirectUri } from '@/app/lib/oauthRedirect.ts';
 import { disconnectConnection } from '@/app/lib/db/connections.ts';
-import { requireEnv, optionalEnv } from '@/app/lib/env.ts';
+import { requireEnv } from '@/app/lib/env.ts';
 
 export const runtime = 'nodejs';
-
-export const OAUTH_STATE_COOKIE = 'g_oauth_state';
-
-/** The callback URL Google redirects to — must EXACTLY match an authorized redirect URI on the
- *  OAuth client. Overridable via env for a fixed canonical domain; defaults to this request's
- *  origin so dev (localhost) and prod work without config. */
-export function callbackRedirectUri(request: Request): string {
-  const override = optionalEnv('GOOGLE_OAUTH_REDIRECT_URI', '');
-  if (override !== '') return override;
-  return `${new URL(request.url).origin}/api/connections/google/callback`;
-}
 
 export function GET(request: Request): NextResponse {
   let clientId: string;

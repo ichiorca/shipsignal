@@ -8,11 +8,12 @@ import {
   GOOGLE_CHANNELS_ENDPOINT,
   GOOGLE_TOKEN_ENDPOINT,
   GOOGLE_YOUTUBE_PROVIDER,
+  OAUTH_STATE_COOKIE,
   YOUTUBE_UPLOAD_SCOPE,
 } from '@/app/lib/googleOAuth.ts';
 import { upsertConnection } from '@/app/lib/db/connections.ts';
 import { requireEnv } from '@/app/lib/env.ts';
-import { callbackRedirectUri, OAUTH_STATE_COOKIE } from '@/app/api/connections/google/route.ts';
+import { callbackRedirectUri } from '@/app/lib/oauthRedirect.ts';
 
 export const runtime = 'nodejs';
 

@@ -12,6 +12,9 @@ export const YOUTUBE_UPLOAD_SCOPE = 'https://www.googleapis.com/auth/youtube.upl
 /** The provider key for the YouTube connection row. */
 export const GOOGLE_YOUTUBE_PROVIDER = 'google_youtube';
 
+/** The httpOnly cookie that carries the CSRF `state` across the consent round-trip. */
+export const OAUTH_STATE_COOKIE = 'g_oauth_state';
+
 /** Build the consent URL. access_type=offline + prompt=consent force Google to return a refresh
  *  token (not just an access token) every time, so a re-connect always refreshes the stored token. */
 export function buildConsentUrl(input: {
