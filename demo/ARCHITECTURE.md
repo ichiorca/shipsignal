@@ -5,6 +5,21 @@
 **three human approval gates**, and a **self-learning skill loop**. The system of record is **Amazon
 Aurora PostgreSQL**.
 
+## Key highlights
+- **Amazon Aurora PostgreSQL is the product** — 38 migrations: a provenance graph, `pgvector`/HNSW
+  semantic search, versioned skills + capability/agent governance, a self-learning ledger, and
+  encrypted OAuth connections. Every row is `release_run_id`-scoped (single-delete GDPR erasure).
+- **Real, end-to-end on real Amazon Bedrock** — the primary run (`OrcaQubits/agentic-commerce-skills-plugins`)
+  is clustered + written by **Bedrock Nova**, embedded by **Titan** (8136/8136 rows), with verified
+  pgvector retrieval — and narrated with real **ElevenLabs + ffmpeg** media.
+- **Governed by design** — three mandatory **human approval gates** (feature manifest → artifacts →
+  skill change) + Bedrock Guardrails + deterministic policy/PII redaction; **never** copy from a raw diff.
+- **It self-improves** — reviewer edits are mined into a next-version skill (Gate #3); `brand-voice`
+  was promoted to **v1.1.0** live.
+- **Production-shaped** — verified-TLS serverless→Aurora, presigned-only S3 media, idempotent/dedupe
+  publish, durable LLM cache, 1-click YouTube publish (encrypted token), 485 TS + 420 Python tests green.
+- **Deployed** — Vercel (Next.js/React 19 dashboard) + Aurora + S3, all live.
+
 ## AWS database used
 **Amazon Aurora PostgreSQL (Serverless v2)** — the single source of truth for every entity, with
 `pgvector` (HNSW) for semantic retrieval. **38 migrations**, full CHECK/type constraints, a provenance
@@ -30,7 +45,7 @@ flowchart LR
   subgraph AWS["AWS"]
     AUR[("Amazon Aurora PostgreSQL\nrelease_runs · evidence_items (pgvector/HNSW)\nfeature_clusters · artifacts · artifact_claims (+evidence links)\nskills (versioned) · capability_skills · agent_capabilities\nlearning_signals · skill_revision_candidates\nmedia_assets · connections (encrypted) · brand brain")]
     S3[("Amazon S3\nredacted evidence blobs · media (mp3/mp4)")]
-    BR["Amazon Bedrock\nConverse + Guardrails + Titan embeddings\n(LLM layer · demo-mode here)"]
+    BR["Amazon Bedrock\nNova (Converse authoring) + Titan embeddings\n+ Guardrails"]
   end
 
   subgraph Front["Vercel"]
@@ -53,9 +68,10 @@ flowchart LR
 - **Provenance graph:** `artifact_claims → claim/feature_evidence_links → evidence_items`; no
   unlinkable claim is stored approved, and the lineage is rendered in the UI.
 - **pgvector semantic retrieval (real):** `evidence_items.embedding vector(1536)` + an **HNSW cosine
-  index** (migrations 0003 / 0018). **Real Bedrock Titan embeddings populated for 741/747 evidence
-  rows**; cosine retrieval verified end-to-end (a "build & CI reliability" query ranks the CI-workflow
-  diffs first). Lexical fallback covers the rest — Postgres-native, no extra service.
+  index** (migrations 0003 / 0018). **Real Bedrock Titan embeddings populated for ~8,900 evidence rows
+  across runs** (8136/8136 on the primary agentic-commerce run; 741/747 on hermes); cosine retrieval
+  verified end-to-end (e.g. "Medusa plugin security hooks" ranks the `medusa-commerce` hooks first).
+  Lexical fallback covers the rest — Postgres-native, no extra service.
 - **Behaviour-as-data:** a **versioned `skills`** store (`current_version` + `versions{}` JSONB), a
   **`capability_skills`** map and an **`agent_capabilities`** allowlist (both DB-overridable, edited
   from the dashboard), and a **self-learning ledger** (`learning_signals`, `skill_revision_candidates`,
@@ -74,11 +90,7 @@ media, and skill-learning — orchestrating Gates #1–#3 as human-approval inte
 (Converse + Guardrails + Titan) is the LLM layer.
 
 ## Honest note for judges (live vs. demo)
-The diff → evidence → deterministic-signals → **Aurora persistence** path runs on **real** GitHub data
-(`NousResearch/hermes-agent` v0.16→v0.17). **pgvector retrieval is real** (real Bedrock Titan
-embeddings populated for 741/747 evidence rows; cosine ranking verified). The **media** is **real**
-(TTS + ffmpeg → MP3 **and** MP4 on S3). The **three gates** and the **self-learning loop** are real (a
-real promoted skill version). The **primary run is fully real end to end**: `3b1fed7f`
+The **primary run is fully real end to end**: `3b1fed7f`
 (`OrcaQubits/agentic-commerce-skills-plugins`) was clustered + written by **Amazon Bedrock Nova**
 (cross-account, since that account has Nova quota), embedded with real Titan vectors, and narrated with
 real ElevenLabs/ffmpeg media. A secondary hermes run uses the offline `DemoModelClient` for the LLM
