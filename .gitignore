@@ -59,3 +59,9 @@ Thumbs.db
 
 # --- Internal planning / future-enhancement docs (not part of the submission) ---
 docs/future/
+
+# --- Recorded demo video (large; not part of the repo) ---
+shipsignal_demo*.mp4
+
+# --- generated Aurora proof (screenshot artifact) ---
+aurora_proof.txt
