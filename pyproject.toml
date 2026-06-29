@@ -19,3 +19,8 @@ select = ["E4", "E7", "E9", "F", "I", "B", "UP", "SIM"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["release_worker"]
+
+[tool.ruff.lint.per-file-ignores]
+# Seed/ops scripts prepend worker/src to sys.path before importing release_worker, so their
+# module-level imports legitimately follow that statement (E402 does not apply to this pattern).
+"scripts/**" = ["E402"]

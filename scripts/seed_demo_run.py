@@ -164,7 +164,6 @@ def main() -> int:
         selected_types=ARTIFACT_TYPES,
     )
     persist_reviewable_artifacts(artifacts, events, AuroraArtifactSink(conn))
-    audio_artifact_id = uuid4().hex  # the digest text artifact backing the media
     with conn.cursor() as cur:
         for a in artifacts:  # human-approve the artifacts (Gate #2) for the demo run
             cur.execute(
