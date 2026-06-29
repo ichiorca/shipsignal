@@ -26,15 +26,54 @@ _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _IPV4 = re.compile(
     r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b"
 )
+# IPv6 — also personal data under GDPR. The comprehensive form covers full, compressed
+# (``::``), and leading/trailing-``::`` shapes. Every alternative needs either 7 colon
+# groups or a ``::`` run, so single-colon prose like ``db:5432`` or ``12:34:56`` clocks
+# are NOT matched (bias is to redact addresses, not over-match host:port / timestamps).
+_IPV6 = re.compile(
+    r"(?<![\w:.])(?:"
+    r"(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}"
+    r"|(?:[0-9A-Fa-f]{1,4}:){1,7}:"
+    r"|(?:[0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}"
+    r"|(?:[0-9A-Fa-f]{1,4}:){1,5}(?::[0-9A-Fa-f]{1,4}){1,2}"
+    r"|(?:[0-9A-Fa-f]{1,4}:){1,4}(?::[0-9A-Fa-f]{1,4}){1,3}"
+    r"|(?:[0-9A-Fa-f]{1,4}:){1,3}(?::[0-9A-Fa-f]{1,4}){1,4}"
+    r"|(?:[0-9A-Fa-f]{1,4}:){1,2}(?::[0-9A-Fa-f]{1,4}){1,5}"
+    r"|[0-9A-Fa-f]{1,4}:(?::[0-9A-Fa-f]{1,4}){1,6}"
+    r"|:(?:(?::[0-9A-Fa-f]{1,4}){1,7}|:)"
+    r")(?![\w:.])"
+)
+# Phone numbers — personal data. Grouped digits (optional ``+`` prefix, optional parens,
+# then space/dot/dash-separated chunks). The regex only proposes candidates; a callback
+# enforces 7–15 total digits AND a real phone separator (``+``/space/dash/paren) so plain
+# version numbers and dot-only quads (``3.2.3.0``) and bare commit counts never match.
+_PHONE = re.compile(
+    r"(?<![\w.])\+?(?:\(\d{1,4}\)|\d{1,4})(?:[\s.\-]\d{1,4}){1,6}"
+)
+_PHONE_SEPARATOR = re.compile(r"[()\s\-]")
 _PRIVATE_KEY_BLOCK = re.compile(
     r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----",
     re.DOTALL,
+)
+# Truncated PRIVATE KEY: a BEGIN line followed by base64-looking lines but WITHOUT the
+# closing ``-----END-----`` (common when a key spills across split diff hunks). Runs AFTER
+# the full-block rule, so a complete block is already redacted and only orphaned BEGINs
+# reach here. Base64 lines tolerate a leading diff marker (``+``) since ``+`` is base64.
+_PRIVATE_KEY_TRUNCATED = re.compile(
+    r"(?m)^.*-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----.*$"
+    r"(?:\n[ \t]*[A-Za-z0-9+/=]{8,}[ \t]*)*"
 )
 _AWS_ACCESS_KEY = re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")
 _GITHUB_TOKEN = re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b")
 _GITHUB_PAT = re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")
 _SLACK_TOKEN = re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b")
 _BEARER = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._\-]{8,}")
+# Unlabeled provider secrets — caught by shape, before the generic kv catch-all so they
+# get a specific flag rather than merely "secret:credential" (and so a bare token with no
+# ``key=`` prefix is still stripped).
+_STRIPE_LIVE_KEY = re.compile(r"\bsk_live_[A-Za-z0-9]{16,}\b")
+_GOOGLE_API_KEY = re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+")
 # Generic "key = secret" assignments (api_key, secret, token, password, xi-api-key).
 # Captures the key name (group 1) so the placeholder keeps the field readable.
 _KV_SECRET = re.compile(
@@ -46,14 +85,16 @@ _KV_SECRET = re.compile(
 # rules that preserve a captured field name.
 _PLACEHOLDER_EMAIL = "[redacted-email]"
 _PLACEHOLDER_IP = "[redacted-ip]"
+_PLACEHOLDER_PHONE = "[redacted-phone]"
 
 # A 4-part dotted number is ambiguous: a real IPv4 vs a 4-segment version (e.g. 3.2.3.0, all-valid
-# octets). When the dotted-quad is the value of a version-style assignment we keep it: redacting
+# octets). When the dotted-quad is the value of a version-style ASSIGNMENT we keep it: redacting
 # build metadata like `S6_OVERLAY_VERSION=3.2.3.0` is lossy and a personal IP is implausible in that
-# context. The check is intentionally narrow (an explicit version keyword immediately before the
-# value) so the redact-before-leak bias holds for every other context.
+# context. The check is intentionally narrow — an explicit `version`/`revision`/`ver` keyword
+# FOLLOWED BY `:` or `=` immediately before the value. Bare prose keywords (`release`, `build`,
+# `tag`) no longer exempt a dotted-quad, so a real IP in `release 10.0.0.5` is still redacted.
 _VERSION_CONTEXT = re.compile(
-    r"(?i)(?:version|_ver\b|\bver\b|release|revision|build|tag)\s*[:=]?\s*[\"']?$"
+    r"(?i)(?:version|revision|_ver\b|\bver\b)\s*[:=]\s*[\"']?$"
 )
 
 
@@ -100,9 +141,17 @@ def redact(text: str) -> RedactionResult:
         return out
 
     redacted = text
-    # Most-specific secret shapes first, then generic kv, then PII.
+    # Most-specific secret shapes first, then generic kv, then PII. The full private-key
+    # block runs before the truncated fallback so a complete block is matched whole and
+    # only an orphaned BEGIN (split across diff hunks) falls through to the fallback.
     redacted = sub(
         "secret:private_key", _PRIVATE_KEY_BLOCK, "[redacted-private-key]", redacted
+    )
+    redacted = sub(
+        "secret:private_key",
+        _PRIVATE_KEY_TRUNCATED,
+        "[redacted-private-key]",
+        redacted,
     )
     redacted = sub(
         "secret:aws_access_key", _AWS_ACCESS_KEY, "[redacted-secret]", redacted
@@ -111,6 +160,13 @@ def redact(text: str) -> RedactionResult:
     redacted = sub("secret:github_token", _GITHUB_PAT, "[redacted-secret]", redacted)
     redacted = sub("secret:slack_token", _SLACK_TOKEN, "[redacted-secret]", redacted)
     redacted = sub("secret:bearer", _BEARER, "Bearer [redacted-secret]", redacted)
+    redacted = sub(
+        "secret:stripe_key", _STRIPE_LIVE_KEY, "[redacted-secret]", redacted
+    )
+    redacted = sub(
+        "secret:google_api_key", _GOOGLE_API_KEY, "[redacted-secret]", redacted
+    )
+    redacted = sub("secret:jwt", _JWT, "[redacted-secret]", redacted)
 
     out, n = _KV_SECRET.subn(_kv_replacement, redacted)
     if n:
@@ -135,7 +191,30 @@ def redact(text: str) -> RedactionResult:
         return _PLACEHOLDER_IP
 
     redacted = _IPV4.sub(_ip_sub, redacted)
-    if ip_hits:
+    # IPv6 shares the "ip" flag + placeholder; no version-context exemption applies (a
+    # version string is never colon-grouped hex). Run after IPv4 so a dotted-quad is
+    # already gone before phone grouping sees the digits.
+    redacted, ipv6_hits = _IPV6.subn(_PLACEHOLDER_IP, redacted)
+    if ip_hits or ipv6_hits:
         flags.add("ip")
+
+    phone_hits = 0
+
+    def _phone_sub(match: re.Match[str]) -> str:
+        nonlocal phone_hits
+        raw = match.group(0)
+        digit_count = sum(c.isdigit() for c in raw)
+        # Require phone-like length and a real separator: a dot-only run with no `+` is a
+        # version/quad, not a phone, so leave it for the IP rule (or as-is).
+        if not (7 <= digit_count <= 15):
+            return raw
+        if "+" not in raw and not _PHONE_SEPARATOR.search(raw):
+            return raw
+        phone_hits += 1
+        return _PLACEHOLDER_PHONE
+
+    redacted = _PHONE.sub(_phone_sub, redacted)
+    if phone_hits:
+        flags.add("phone")
 
     return RedactionResult(text=_normalize(redacted), risk_flags=tuple(sorted(flags)))

@@ -32,6 +32,7 @@ from release_worker.skill_learning_models import (
     PromotionMode,
     RawReviewSignal,
     SkillGateResolution,
+    SkillGateScopeError,
     SkillRevisionCandidate,
 )
 from release_worker.skill_learning_nodes import (
@@ -382,6 +383,71 @@ def test_approve_direct_mode_records_no_pr_url() -> None:
 
     assert records[0].promotion_mode is PromotionMode.DIRECT
     assert records[0].pr_url is None
+
+
+def _two_distinct_candidates() -> tuple[SkillRevisionCandidate, SkillRevisionCandidate]:
+    """Two drafted candidates with distinct ids + skill paths, to exercise per-candidate scoping."""
+    base = _drafted()[0]
+    first = base.model_copy(update={"candidate_id": "cand-A", "skill_path": "skills/a/SKILL.md"})
+    second = base.model_copy(update={"candidate_id": "cand-B", "skill_path": "skills/b/SKILL.md"})
+    return first, second
+
+
+def test_approve_scoped_to_candidate_id_promotes_only_that_candidate() -> None:
+    # PRD §14.4 — a per-candidate Gate #3 approve must NOT promote sibling candidates that no human
+    # individually approved (constitution §5, blast radius). Only the scoped candidate is written.
+    first, second = _two_distinct_candidates()
+    writer = InMemoryRepoSkillWriter(commit_sha="abc123sha")
+    resolution = SkillGateResolution(
+        decision="approved", reviewer="carol", candidate_id="cand-B"
+    )
+
+    records = update_repo_skill_file((first, second), resolution, writer)
+
+    assert len(writer.written) == 1
+    assert writer.written[0][0] == second.skill_path
+    assert [r.candidate_id for r in records] == ["cand-B"]
+
+
+def test_approve_unscoped_resolution_promotes_every_candidate() -> None:
+    # The dashboard's run-level resume omits candidate_id → decide every draft, as before.
+    first, second = _two_distinct_candidates()
+    writer = InMemoryRepoSkillWriter(commit_sha="abc123sha")
+    resolution = SkillGateResolution(decision="approved", reviewer="carol")
+
+    records = update_repo_skill_file((first, second), resolution, writer)
+
+    assert {p for p, _ in writer.written} == {first.skill_path, second.skill_path}
+    assert {r.candidate_id for r in records} == {"cand-A", "cand-B"}
+
+
+def test_scoped_resolution_for_absent_candidate_fails_closed() -> None:
+    # Fail closed: a scoped id matching no drafted candidate must abort, never fall back to "all".
+    first, second = _two_distinct_candidates()
+    writer = InMemoryRepoSkillWriter(commit_sha="abc123sha")
+    resolution = SkillGateResolution(
+        decision="approved", reviewer="carol", candidate_id="cand-MISSING"
+    )
+
+    with pytest.raises(SkillGateScopeError):
+        update_repo_skill_file((first, second), resolution, writer)
+    assert writer.written == []
+
+
+def test_reject_scoped_to_candidate_id_suppresses_only_that_candidate() -> None:
+    # Symmetric to approve: a per-candidate reject only records/suppresses the named candidate.
+    first, second = _two_distinct_candidates()
+    sink = InMemorySkillCandidateSink()
+    suppressions = InMemorySuppressionStore()
+    resolution = SkillGateResolution(
+        decision="rejected", reviewer="dave", candidate_id="cand-A"
+    )
+
+    affected = record_rejection_and_suppression(
+        (first, second), resolution, sink, suppressions
+    )
+
+    assert affected == ("cand-A",)
 
 
 def test_reject_records_rejection_and_opens_cooldown_but_writes_no_file() -> None:

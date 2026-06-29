@@ -92,12 +92,19 @@ export interface ReleaseTagDelivery {
  * Extract the compare range from a `release` webhook payload. Returns null when the
  * payload is not a usable published-release event (caller responds 2xx + ignores, so
  * GitHub doesn't redeliver). All field access treats the payload as untrusted.
+ *
+ * GitHub's `release` event fires for several actions — published, created (on a draft),
+ * edited, deleted, prereleased, unpublished, released — each its own delivery GUID. We
+ * only spin up a release_run for `action === 'published'`; every other action (incl. an
+ * edit or delete that would otherwise re-trigger the whole pipeline) is ignored.
  */
 export function extractReleaseTagDelivery(payload: unknown): ReleaseTagDelivery | null {
   if (typeof payload !== 'object' || payload === null) {
     return null;
   }
   const root = payload as Record<string, unknown>;
+  // Untrusted: a missing/non-string/non-published action is not a published release.
+  if (root['action'] !== 'published') return null;
   const repository = root['repository'];
   const release = root['release'];
   if (typeof repository !== 'object' || repository === null) return null;

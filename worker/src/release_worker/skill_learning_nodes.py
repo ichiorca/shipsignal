@@ -46,6 +46,7 @@ from release_worker.skill_learning_models import (
     SignalCluster,
     SkillCandidatePromotionBlockedError,
     SkillGateResolution,
+    SkillGateScopeError,
     SkillRevisionCandidate,
     SkillRevisionDraft,
 )
@@ -578,6 +579,26 @@ def prevent_unsafe_promotion(
 # --- T6 — promote (approved) | reject + suppress (rejected) ------------------------
 
 
+def _candidates_in_scope(
+    candidates: tuple[SkillRevisionCandidate, ...],
+    resolution: SkillGateResolution,
+) -> tuple[SkillRevisionCandidate, ...]:
+    """Narrow the run's drafted candidates to the one Gate #3 actually decided.
+
+    A run-level resolution (``candidate_id is None``, the dashboard resume-skill flow) decides every
+    drafted candidate, as before. A per-candidate resolution (PRD §14.4) decides exactly one — so
+    approving candidate A can never promote sibling B/C that no human approved (constitution §5,
+    blast radius). Fails CLOSED: if the scoped id matches no drafted candidate, raise rather than
+    silently fall back to "all", which would re-introduce the over-broad write.
+    """
+    if resolution.candidate_id is None:
+        return candidates
+    scoped = tuple(c for c in candidates if c.candidate_id == resolution.candidate_id)
+    if not scoped:
+        raise SkillGateScopeError(resolution.candidate_id)
+    return scoped
+
+
 def update_repo_skill_file(
     candidates: tuple[SkillRevisionCandidate, ...],
     resolution: SkillGateResolution,
@@ -599,7 +620,7 @@ def update_repo_skill_file(
     the record so the audit trail records HOW the skill was promoted (PR vs direct, §15.3).
     """
     records: list[PromotionRecord] = []
-    for candidate in candidates:
+    for candidate in _candidates_in_scope(candidates, resolution):
         stamped_frontmatter: dict[str, str | bool] = {
             **candidate.proposed_frontmatter,
             "last_promoted_candidate_id": candidate.candidate_id,
@@ -656,7 +677,7 @@ def record_rejection_and_suppression(
     decision = GateDecision(resolution.decision)
     reason = f"Gate #3 {decision.value}"
     affected: list[str] = []
-    for candidate in candidates:
+    for candidate in _candidates_in_scope(candidates, resolution):
         sink.record_rejection(
             candidate.candidate_id, decision.value, resolution.reviewer, reason
         )

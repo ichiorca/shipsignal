@@ -21,10 +21,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
 
@@ -39,6 +41,13 @@ _API_BASE = "https://api.elevenlabs.io/v1/text-to-speech"
 _DEFAULT_MAX_CONCURRENCY = 2
 _MAX_BACKOFF_SECONDS = 32.0
 _MAX_ATTEMPTS = 5
+# Base of the exponential backoff ceiling: ceiling = _BASE_BACKOFF * 2**(attempt-1), capped.
+_BASE_BACKOFF_SECONDS = 1.0
+# A concurrent-limit just needs in-flight calls to drain (the bounded semaphore already caps
+# us), so it waits a short bounded jittered window rather than the full exponential climb a
+# rate-limit (clock-bound) needs (elevenlabs-rules: branch on the 429 code, don't blanket-retry).
+_CONCURRENT_LIMIT_BACKOFF_SECONDS = 1.0
+_CONCURRENT_LIMIT_CODE = "concurrent_limit_exceeded"
 _OUTPUT_EXTENSIONS = {
     "mp3_44100_128": "mp3",
     "mp3_22050_32": "mp3",
@@ -61,6 +70,7 @@ class ElevenLabsSynthesizer:
         max_concurrency: int = _DEFAULT_MAX_CONCURRENCY,
         sleep: object | None = None,
         *,
+        rand: Callable[[], float] | None = None,
         release_run_id: str | None = None,
         telemetry_sink: CostTelemetrySink | None = None,
         usd_per_1k_chars: Decimal | None = None,
@@ -70,6 +80,9 @@ class ElevenLabsSynthesizer:
         self._semaphore = threading.BoundedSemaphore(max(1, max_concurrency))
         # Injectable sleeper keeps the backoff deterministic in a future integration test.
         self._sleep = sleep if callable(sleep) else time.sleep
+        # Injectable [0,1) source for the backoff jitter — random in production (so retries
+        # don't synchronize into a thundering herd), pinned in tests for determinism.
+        self._rand: Callable[[], float] = rand if callable(rand) else random.random
         # When both are wired, every REAL synthesis records a cost/latency telemetry row so
         # narration (a real per-character ElevenLabs bill) is visible to the §6 dashboard. A
         # cache hit (audio already on disk) is NOT re-billed, so it records nothing.
@@ -165,8 +178,8 @@ class ElevenLabsSynthesizer:
         payload = json.dumps({"text": text, "model_id": config.model_id}).encode(
             "utf-8"
         )
-        backoff = 1.0
         for attempt in range(1, _MAX_ATTEMPTS + 1):
+            delay: float
             with self._semaphore:
                 try:
                     request = urllib.request.Request(  # noqa: S310 - fixed https host
@@ -188,19 +201,24 @@ class ElevenLabsSynthesizer:
                         raise NarrationSynthesisError(
                             f"narration synthesis failed (status {err.code})"
                         ) from err
-                    # Branch on the 429 code, not a blanket retry (elevenlabs-rules):
-                    # a concurrent-limit needs in-flight calls to drain (the bounded
-                    # semaphore already caps us), a rate-limit needs the clock to advance —
-                    # both honored by exponential backoff + jitter capped at _MAX_BACKOFF.
+                    # Really branch on the 429 code (elevenlabs-rules), don't blanket-retry:
+                    # a concurrent-limit just needs in-flight calls to drain (the bounded
+                    # semaphore already caps us), so it waits a short bounded jittered window;
+                    # a rate-limit needs the clock to advance, so it climbs the exponential
+                    # backoff. Both are jittered and capped at _MAX_BACKOFF_SECONDS.
                     code = self._error_code(err)
+                    if code == _CONCURRENT_LIMIT_CODE:
+                        delay = self._concurrent_limit_delay()
+                    else:
+                        delay = self._backoff_delay(attempt)
                     logger.warning(
-                        "ElevenLabs 429 (%s); backing off %.1fs", code, backoff
+                        "ElevenLabs 429 (%s); backing off %.2fs", code, delay
                     )
                 except (urllib.error.URLError, TimeoutError) as err:
                     # Transient network failure (socket timeout, connection reset, DNS): retry with
-                    # the same backoff rather than aborting synthesis. HTTPError is handled above, so
-                    # this only catches non-HTTP transport errors (elevenlabs-rules: retry transient
-                    # network errors, not only 429s).
+                    # exponential backoff + jitter rather than aborting synthesis. HTTPError is
+                    # handled above, so this only catches non-HTTP transport errors (elevenlabs-rules:
+                    # retry transient network errors, not only 429s).
                     if attempt == _MAX_ATTEMPTS:
                         logger.error(
                             "ElevenLabs TTS network error after %d attempts", attempt
@@ -208,12 +226,26 @@ class ElevenLabsSynthesizer:
                         raise NarrationSynthesisError(
                             "narration synthesis failed (network error)"
                         ) from err
+                    delay = self._backoff_delay(attempt)
                     logger.warning(
-                        "ElevenLabs network error; backing off %.1fs", backoff
+                        "ElevenLabs network error; backing off %.2fs", delay
                     )
-            self._sleep(min(backoff, _MAX_BACKOFF_SECONDS))
-            backoff = min(backoff * 2, _MAX_BACKOFF_SECONDS)
+            # Sleep OUTSIDE the semaphore so a concurrent-limit wait actually lets peers drain.
+            self._sleep(delay)
         raise NarrationSynthesisError("narration synthesis exhausted retries")
+
+    def _backoff_delay(self, attempt: int) -> float:
+        """Exponential backoff with full jitter, capped (elevenlabs-rules ~32s cap).
+
+        ``ceiling = _BASE_BACKOFF * 2**(attempt-1)`` capped at ``_MAX_BACKOFF_SECONDS``; the
+        actual wait is a jittered fraction of it so retrying clients don't synchronize.
+        """
+        ceiling = min(_MAX_BACKOFF_SECONDS, _BASE_BACKOFF_SECONDS * 2 ** (attempt - 1))
+        return ceiling * self._rand()
+
+    def _concurrent_limit_delay(self) -> float:
+        """Short bounded jittered wait for a concurrent-limit 429 (just drain in-flight calls)."""
+        return _CONCURRENT_LIMIT_BACKOFF_SECONDS * self._rand()
 
     @staticmethod
     def _error_code(err: urllib.error.HTTPError) -> str:

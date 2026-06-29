@@ -111,7 +111,17 @@ class PlaywrightDemoCapturer:
             page.click(step.selector)  # type: ignore[attr-defined]
         elif action is ClickAction.FILL:
             page.fill(step.selector, step.target or "")  # type: ignore[attr-defined]
-        elif (
-            action is ClickAction.WAIT_FOR_SELECTOR or action is ClickAction.EXPECT_TEXT
-        ):
+        elif action is ClickAction.WAIT_FOR_SELECTOR:
             page.wait_for_selector(step.selector)  # type: ignore[attr-defined]
+        elif action is ClickAction.EXPECT_TEXT:
+            # Real assertion (not a bare wait): the element must exist AND contain the expected
+            # text. ``step.target`` carries the expected substring; ignoring it (the old bug)
+            # made EXPECT_TEXT a silent no-op that could never fail a broken demo.
+            element = page.wait_for_selector(step.selector)  # type: ignore[attr-defined]
+            expected = step.target or ""  # type: ignore[attr-defined]
+            actual = element.text_content() if element is not None else None
+            if expected and (actual is None or expected not in actual):
+                raise AssertionError(
+                    f"expect_text failed: {step.selector!r} did not contain "  # type: ignore[attr-defined]
+                    f"the expected text"
+                )

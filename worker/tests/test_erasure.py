@@ -15,6 +15,7 @@ from release_worker.erasure import (
     InMemoryErasureStore,
     InvalidReleaseRunIdError,
     OrphanedObjectsError,
+    OrphanedRowsError,
     erase_release_run,
 )
 
@@ -95,6 +96,23 @@ def test_erase_fails_closed_if_an_object_is_orphaned() -> None:
     store.seed_object(f"evidence/{_RUN}/b.txt")
 
     with pytest.raises(OrphanedObjectsError):
+        erase_release_run(store, _RUN, requested_by="dpo", reason="x")
+    # A false 'erased' audit must NOT be recorded when verification fails.
+    assert store.audits == []
+
+
+def test_erase_fails_closed_if_aurora_rows_survive() -> None:
+    """If a run-scoped row survives the delete, verification raises (Art.17 unmet)."""
+
+    class StaleRowStore(InMemoryErasureStore):
+        def delete_run_rows(self, release_run_id: str) -> int:
+            # Simulate a partial CASCADE: report success but leave the run row behind.
+            return 1
+
+    store = StaleRowStore()
+    store.seed_run(_RUN)
+
+    with pytest.raises(OrphanedRowsError):
         erase_release_run(store, _RUN, requested_by="dpo", reason="x")
     # A false 'erased' audit must NOT be recorded when verification fails.
     assert store.audits == []

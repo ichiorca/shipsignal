@@ -41,6 +41,12 @@ export interface ResumeDispatchArgs {
   // promotion/rejection record names the human who decided (§10.5 reviewed_by); ignored by the
   // other graphs (their reviewer is captured in the approvals audit row).
   readonly reviewer?: string | undefined;
+  // PRD §14.4 — when this Gate #3 resume is for a SINGLE skill candidate (the per-candidate
+  // programmatic surface), the candidate id is forwarded so the worker promotes/rejects only that
+  // draft. Omitted by the dashboard's run-level resume (→ the worker decides every draft, as
+  // before). Scopes the single repo write so approving one candidate never overwrites a sibling's
+  // SKILL.md that no human approved (constitution §5).
+  readonly candidateId?: string | undefined;
 }
 
 /**
@@ -83,6 +89,9 @@ export async function dispatchResume(args: ResumeDispatchArgs): Promise<void> {
         // Forwarded so a Gate #3 promotion/rejection record names the reviewer; '' when absent
         // (the other graphs ignore it). Never a secret — just the reviewer login/email.
         reviewer: args.reviewer ?? '',
+        // PRD §14.4 — scopes a Gate #3 resume to one skill candidate; '' (run-level resume) lets
+        // the worker decide every draft, as before. Ignored by the other graphs.
+        candidate_id: args.candidateId ?? '',
       },
     }),
   });

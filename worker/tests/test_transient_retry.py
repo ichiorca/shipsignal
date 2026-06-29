@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from release_worker import transient_retry
 from release_worker.transient_retry import is_transient_error, with_retries
 
 
@@ -103,3 +104,50 @@ def test_idempotent_success_returns_without_sleeping() -> None:
     result = with_retries(lambda: 42, sleep=slept.append)
     assert result == 42
     assert slept == []  # no transient error → no backoff
+
+
+def test_injected_rand_fraction_scales_the_delay() -> None:
+    """A pinned rand_fraction makes the backoff deterministic: delay == ceiling * fraction."""
+    slept: list[float] = []
+    calls = {"n": 0}
+
+    def always_throttled() -> str:
+        calls["n"] += 1
+        raise _ClientError(code="ThrottlingException")
+
+    with pytest.raises(_ClientError):
+        with_retries(
+            always_throttled,
+            attempts=3,
+            base_delay=1.0,
+            cap=100.0,
+            sleep=slept.append,
+            rand_fraction=0.5,
+        )
+    # ceilings = 1*2**0, 1*2**1 → [1.0, 2.0]; scaled by 0.5 → [0.5, 1.0].
+    assert slept == [0.5, 1.0]
+
+
+def test_default_jitter_is_non_constant_across_attempts(monkeypatch) -> None:
+    """Default path (rand_fraction=None) draws fresh randomness per attempt, so two retries at
+    the SAME ceiling do not produce identical waits — the thundering-herd fix."""
+    draws = iter([0.1, 0.9, 0.3, 0.7])
+    monkeypatch.setattr(transient_retry.random, "random", lambda: next(draws))
+    slept: list[float] = []
+    calls = {"n": 0}
+
+    def always_throttled() -> str:
+        calls["n"] += 1
+        raise _ClientError(code="ThrottlingException")
+
+    # base_delay large + cap pins every ceiling to the SAME value, isolating the jitter source.
+    with pytest.raises(_ClientError):
+        with_retries(
+            always_throttled,
+            attempts=3,
+            base_delay=10.0,
+            cap=10.0,
+            sleep=slept.append,
+        )
+    assert slept == [1.0, 9.0]  # 10*0.1, 10*0.9 — varies despite an identical ceiling
+    assert slept[0] != slept[1]

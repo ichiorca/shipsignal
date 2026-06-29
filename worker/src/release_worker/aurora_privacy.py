@@ -94,7 +94,13 @@ class AuroraS3ErasureStore(ErasureStore):
     def delete_run_rows(self, release_run_id: str) -> int:
         # Deleting the release_runs row CASCADEs to evidence/features/claims/artifacts/media/
         # learning_signals (FK chain, migrations 0003-0008). rowcount is 1, or 0 if already gone.
-        with self._conn.cursor() as cur:
+        #
+        # connect_from_env opens an AUTOCOMMIT connection, so without an explicit transaction the
+        # two DELETEs below would commit separately — a crash between them would leave a partial
+        # Art.17 erasure (the run's approvals gone but its evidence/media still reachable) that
+        # the audit would still report as 'erased'. Wrap both in ONE transaction so the erasure
+        # is all-or-nothing (matches aurora_content / aurora_skill_writer).
+        with self._conn.transaction(), self._conn.cursor() as cur:
             # `approvals` is gate-agnostic (no FK to release_runs), so the CASCADE does NOT reach
             # it — yet its rows carry `reviewer` (a person's name) + `edited_payload_json`
             # (reviewer-authored content), both personal data (GDPR Art.17). Delete the run's
@@ -119,6 +125,32 @@ class AuroraS3ErasureStore(ErasureStore):
             )
             cur.execute("DELETE FROM release_runs WHERE id = %s", (release_run_id,))
             return cur.rowcount
+
+    def count_run_rows(self, release_run_id: str) -> int:
+        # Post-erasure verification: total run-scoped rows that must be gone. Sums the
+        # release_runs row, every table that CASCADEs from it (evidence/features/artifacts/
+        # media/learning_signals, migrations 0003-0008), and the run-keyed approvals row.
+        # Non-zero means the CASCADE/transaction did not fully clear the run (Art.17 unmet).
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT (SELECT count(*) FROM release_runs WHERE id = %(run)s)
+                     + (SELECT count(*) FROM evidence_items
+                            WHERE release_run_id = %(run)s)
+                     + (SELECT count(*) FROM feature_clusters
+                            WHERE release_run_id = %(run)s)
+                     + (SELECT count(*) FROM artifacts
+                            WHERE release_run_id = %(run)s)
+                     + (SELECT count(*) FROM media_assets
+                            WHERE release_run_id = %(run)s)
+                     + (SELECT count(*) FROM learning_signals
+                            WHERE release_run_id = %(run)s)
+                     + (SELECT count(*) FROM approvals WHERE target_id = %(run)s)
+                """,
+                {"run": release_run_id},
+            )
+            row = cur.fetchone()
+        return int(row[0]) if row is not None else 0
 
     def list_objects(self, prefix: str) -> tuple[str, ...]:
         bucket = self._bucket_for(prefix)
@@ -200,8 +232,15 @@ def _coerce_flags(value: object) -> list[str]:
     if value is None:
         return []
     if isinstance(value, str):
-        parsed = json.loads(value)
-        return [str(flag) for flag in parsed]
+        # A malformed jsonb text value must not crash a GDPR Art.15 access export — fall back
+        # to "no flags" rather than raising on the whole subject record.
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            return []
+        if isinstance(parsed, list):
+            return [str(flag) for flag in parsed]
+        return []
     if isinstance(value, list):
         return [str(flag) for flag in value]
     return []

@@ -81,3 +81,36 @@ test('extractReleaseTagDelivery returns null for non-release / malformed payload
     null,
   );
 });
+
+test('extractReleaseTagDelivery ignores non-published release actions (edited/deleted/created)', () => {
+  for (const action of ['edited', 'deleted', 'created', 'prereleased', 'unpublished', 'released']) {
+    assert.equal(
+      extractReleaseTagDelivery({
+        action,
+        repository: { full_name: 'org/product' },
+        release: { tag_name: 'v1.13.0' },
+      }),
+      null,
+      `action=${action} must be ignored (only 'published' creates a run)`,
+    );
+  }
+});
+
+test('extractReleaseTagDelivery ignores a release event with a missing/non-string action', () => {
+  // Untrusted payload: absent or wrong-typed action is not a published release.
+  assert.equal(
+    extractReleaseTagDelivery({
+      repository: { full_name: 'org/product' },
+      release: { tag_name: 'v1.13.0' },
+    }),
+    null,
+  );
+  assert.equal(
+    extractReleaseTagDelivery({
+      action: 1,
+      repository: { full_name: 'org/product' },
+      release: { tag_name: 'v1.13.0' },
+    }),
+    null,
+  );
+});

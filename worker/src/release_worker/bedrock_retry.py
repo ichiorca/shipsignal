@@ -14,6 +14,7 @@ disabled in the client config) so there is a single source of retry truth and no
 from __future__ import annotations
 
 import logging
+import random
 import time
 from collections.abc import Callable
 from typing import TypeVar
@@ -63,11 +64,17 @@ def bedrock_client_config() -> Config:
     )
 
 
-def jittered_backoff(attempt: int, rand_fraction: float) -> float:
+def jittered_backoff(attempt: int, rand_fraction: float | None = None) -> float:
     """Exponential backoff with full jitter, capped (aws-bedrock-rules).
 
-    ``rand_fraction`` (0..1) is injected so the delay is deterministic under test.
+    The delay is ``ceiling * rand_fraction`` where ``ceiling`` is the capped exponential.
+    ``rand_fraction`` (0..1) defaults to a fresh ``random.random()`` draw so production gets
+    REAL per-attempt jitter (no thundering herd under ThrottlingException); tests inject a
+    fixed value to keep the delay deterministic. A function-call default would be evaluated
+    once at import and freeze the jitter, so the draw happens here on every call instead.
     """
+    if rand_fraction is None:
+        rand_fraction = random.random()
     ceiling = min(_BACKOFF_CAP_SECONDS, _BASE_BACKOFF_SECONDS * (2**attempt))
     return ceiling * rand_fraction
 
@@ -90,14 +97,14 @@ def call_with_throttle_retry(operation: Callable[[], _T], *, what: str) -> _T:
             if not _is_throttling(err) or attempt == _MAX_ATTEMPTS - 1:
                 raise
             last_error = err
-            delay = jittered_backoff(attempt, 0.5)
+            delay = jittered_backoff(attempt)
             logger.warning("%s throttled; backing off %.2fs", what, delay)
             time.sleep(delay)
         except _RETRYABLE_NETWORK_ERRORS as err:
             if attempt == _MAX_ATTEMPTS - 1:
                 raise
             last_error = err
-            delay = jittered_backoff(attempt, 0.5)
+            delay = jittered_backoff(attempt)
             logger.warning("%s connection error; backing off %.2fs", what, delay)
             time.sleep(delay)
     # Unreachable: the loop either returns or raises, but keep type-checkers happy.

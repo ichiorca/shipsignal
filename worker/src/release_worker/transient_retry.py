@@ -20,6 +20,7 @@ auto-satisfied gate).
 from __future__ import annotations
 
 import logging
+import random
 import time
 from collections.abc import Callable
 from typing import TypeVar
@@ -94,9 +95,15 @@ def is_transient_error(exc: BaseException) -> bool:
 
 
 def _jittered_delay(
-    attempt: int, base: float, cap: float, rand_fraction: float
+    attempt: int, base: float, cap: float, rand_fraction: float | None
 ) -> float:
-    """Exponential backoff with full jitter, capped (matches bedrock_client)."""
+    """Exponential backoff with full jitter, capped (matches bedrock_client).
+
+    ``rand_fraction`` defaults to a fresh ``random.random()`` draw so production gets REAL
+    per-attempt jitter (no thundering herd); tests inject a fixed value for determinism.
+    """
+    if rand_fraction is None:
+        rand_fraction = random.random()
     ceiling = min(cap, base * (2**attempt))
     return ceiling * rand_fraction
 
@@ -109,13 +116,14 @@ def with_retries(
     cap: float = _DEFAULT_CAP,
     is_transient: Callable[[BaseException], bool] = is_transient_error,
     sleep: Callable[[float], None] = time.sleep,
-    rand_fraction: float = 0.5,
+    rand_fraction: float | None = None,
     label: str = "operation",
 ) -> T:
     """Call ``fn`` retrying only on transient errors with capped jittered backoff.
 
     Re-raises immediately on a non-transient error or once ``attempts`` is exhausted. The
-    ``sleep`` and ``rand_fraction`` are injected so the backoff is deterministic under test.
+    ``sleep`` is injected and ``rand_fraction`` may be pinned so the backoff is deterministic
+    under test; left unset (``None``) each retry draws fresh jitter from ``random.random()``.
     ``fn`` must be idempotent — at the call site it is a checkpointed ``graph.invoke``, so
     re-entry replays from the last committed checkpoint (spec 012 T2).
     """

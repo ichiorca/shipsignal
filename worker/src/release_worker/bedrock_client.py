@@ -283,6 +283,7 @@ class BedrockEmbeddingClient:
         *,
         release_run_id: str | None = None,
         telemetry_sink: CostTelemetrySink | None = None,
+        budget: BudgetTracker | None = None,
     ) -> None:
         self._client = client
         self._model_id = model_id
@@ -291,6 +292,11 @@ class BedrockEmbeddingClient:
         # embeddings (a real per-row Bedrock cost) are no longer invisible to the §6 dashboard.
         self._release_run_id = release_run_id
         self._telemetry_sink = telemetry_sink
+        # T2 — embeddings now also charge the SAME per-run token budget as generation, so an
+        # embedding runaway (every evidence row + voice-context lookup embeds) can trip the §6 cap
+        # instead of accumulating untracked. Shares the BedrockModelClient budget wiring posture:
+        # present only when a run id + telemetry sink are too.
+        self._budget = budget
 
     @classmethod
     def from_env(
@@ -301,17 +307,24 @@ class BedrockEmbeddingClient:
     ) -> BedrockEmbeddingClient:
         """Build from the ambient IAM-role credentials. ``BEDROCK_EMBED_MODEL_ID`` overrides
         the default embedding model; ``AWS_REGION`` selects the region (default us-east-1).
-        A ``release_run_id`` + ``telemetry_sink`` enable per-call cost/latency telemetry."""
+        A ``release_run_id`` + ``telemetry_sink`` enable per-call cost/latency telemetry and
+        charge the env-configured token budget (T2), mirroring ``BedrockModelClient.from_env``."""
         region = os.environ.get("AWS_REGION", "us-east-1")
         model_id = os.environ.get("BEDROCK_EMBED_MODEL_ID", cls._DEFAULT_EMBED_MODEL)
         client = boto3.client(
             "bedrock-runtime", region_name=region, config=bedrock_client_config()
+        )
+        budget = (
+            BudgetTracker(TokenBudget.from_env())
+            if telemetry_sink is not None
+            else None
         )
         return cls(
             client,
             model_id,
             release_run_id=release_run_id,
             telemetry_sink=telemetry_sink,
+            budget=budget,
         )
 
     def embed(self, text: str) -> list[float]:
@@ -364,3 +377,8 @@ class BedrockEmbeddingClient:
                 ),
             )
         )
+        # Charge LAST (telemetry-first, like meter_call): the embed call is already billed by
+        # Bedrock, so the row above must persist even when this trips the per-run cap. record()
+        # raises TokenBudgetExceededError on breach — a hard run failure (constitution §6).
+        if self._budget is not None:
+            self._budget.record("embed", input_tokens, 0)

@@ -240,12 +240,19 @@ class SkillGateResolution(BaseModel):
     The resume value may be a bare decision string (parity with Gate #1/#2) or an object that also
     carries the reviewer so the promotion/rejection record names the human who decided (§10.5
     reviewed_by). Built by ``parse_skill_gate`` from the untrusted resume value.
+
+    ``candidate_id`` scopes the decision to ONE drafted candidate (the PRD §14.4 per-candidate
+    programmatic surface): when set, only that candidate is promoted/rejected, so approving one
+    candidate can never silently overwrite the ``SKILL.md`` of a sibling that was never individually
+    approved (constitution §5 — each replacement is its own Gate #3). When ``None`` (the dashboard's
+    run-level resume-skill flow) the decision applies to every drafted candidate, as before.
     """
 
     model_config = _StrictModel
 
     decision: str = Field(min_length=1)
     reviewer: str | None = None
+    candidate_id: str | None = None
 
 
 class MalformedSkillDraftError(ValueError):
@@ -275,4 +282,19 @@ class SkillCandidatePromotionBlockedError(ValueError):
         self.codes = codes
         super().__init__(
             "skill candidate blocked by pre-promotion content scan; promotion refused"
+        )
+
+
+class SkillGateScopeError(ValueError):
+    """Raised when a per-candidate Gate #3 resume names a candidate absent from the run's drafts.
+
+    Fails closed: rather than fall back to promoting/rejecting EVERY drafted candidate (the bug this
+    guards against), a scoped decision whose ``candidate_id`` matches no drafted candidate aborts the
+    resume so no ``SKILL.md`` is written for a candidate no human decided (constitution §5).
+    """
+
+    def __init__(self, candidate_id: str) -> None:
+        self.candidate_id = candidate_id
+        super().__init__(
+            "Gate #3 decision scoped to a candidate not present in this run's drafts"
         )

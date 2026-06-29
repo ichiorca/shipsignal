@@ -21,13 +21,20 @@ import logging
 
 from release_worker.redaction import redact
 
+# A bare formatter reused only to render exc_info → text (no format string needed). The
+# render is deterministic and stateless, so a module-level instance is safe to share.
+_EXC_FORMATTER = logging.Formatter()
+
 
 class PiiScrubbingFilter(logging.Filter):
     """A ``logging.Filter`` that redacts PII/secrets from every record before it is emitted.
 
     Returns ``True`` always (it scrubs, never drops). It interpolates the record's args itself
     and clears them so the downstream handler emits the already-scrubbed text verbatim — the
-    raw email/IP/secret never reaches a handler, a file, or a telemetry sink.
+    raw email/IP/secret never reaches a handler, a file, or a telemetry sink. The same scrub is
+    applied to the rendered exception traceback and stack info, which routinely embed the raw
+    offending value (an email/IP/secret in a repr or message) on ``logger.exception(...)`` /
+    ``exc_info=True``.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -36,6 +43,18 @@ class PiiScrubbingFilter(logging.Filter):
         rendered = record.getMessage()
         record.msg = redact(rendered).text
         record.args = ()
+        # Tracebacks bypass the message scrub entirely: render exc_info once into exc_text and
+        # clear exc_info so the handler emits the scrubbed text instead of re-formatting the live
+        # exception. Idempotent — a second pass finds exc_info already cleared and exc_text holds
+        # only placeholders. Guarded so a record with no exception/stack never crashes.
+        if record.exc_info:
+            if record.exc_text is None:
+                record.exc_text = _EXC_FORMATTER.formatException(record.exc_info)
+            record.exc_info = None
+        if record.exc_text is not None:
+            record.exc_text = redact(record.exc_text).text
+        if record.stack_info is not None:
+            record.stack_info = redact(record.stack_info).text
         return True
 
 

@@ -47,7 +47,12 @@ class FfmpegVideoAssembler:
         # Per-media output name: two media runs sharing this work dir (a reused/self-hosted runner)
         # must not clobber each other's demo.mp4 mid-upload. media_id is unique per generation.
         out_path = self._work_dir / f"{media_id}.mp4"
-        # -shortest stops at the shorter stream; re-encode audio to AAC for MP4 compatibility.
+        # The captured video is a FIXED len(steps)*2s clip, independent of narration length, so a
+        # longer narration used to be cut mid-sentence by the old "-shortest" (which stopped at the
+        # shorter stream — the video). Instead pad the video by cloning its last frame indefinitely
+        # (tpad stop=-1:stop_mode=clone). That makes the (finite) AUDIO the only terminating stream,
+        # so the output runs for the FULL narration with the last frame held — audio is never
+        # truncated. Re-encode video (libx264, required by -vf) + audio to AAC for MP4 compatibility.
         args = [
             self._ffmpeg,
             "-y",
@@ -55,10 +60,14 @@ class FfmpegVideoAssembler:
             capture.video_local_path,
             "-i",
             narration.audio_local_path,
+            "-vf",
+            "tpad=stop=-1:stop_mode=clone",
             "-c:v",
             "libx264",
             "-c:a",
             "aac",
+            # Bounds the now-infinitely-padded video against the finite audio: output length
+            # == audio length. (Without the tpad pad above, this would truncate to the video.)
             "-shortest",
             str(out_path),
         ]

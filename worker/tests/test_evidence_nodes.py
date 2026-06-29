@@ -172,6 +172,42 @@ def test_empty_diff_persists_nothing() -> None:
     assert sink.blobs == {}
 
 
+def test_metadata_values_are_redacted_before_persist() -> None:
+    """Metadata values (PR reviewer handles/emails, labels) are untrusted GitHub data and must
+    pass the redact gate before landing in the Aurora row — keys are safe field names, values
+    are not. Ints (pr_number) survive; raised flags merge into the item's risk_flags (§5)."""
+    sink = InMemoryEvidenceSink()
+    collected = (
+        CollectedEvidence(
+            evidence_type="pr_metadata",
+            source="pr_metadata",
+            repo="org/product",
+            source_url="https://github.com/org/product/pull/7",
+            raw_excerpt="Adds the onboarding checklist",
+            metadata={
+                "pr_number": 7,
+                "reviewers": "alice@example.com,bob@example.com",
+                "labels": "from-10.20.30.40",
+            },
+        ),
+    )
+
+    records = persist_evidence(_RUN_ID, redact_evidence(collected), sink)
+
+    row = records[0]
+    # The reviewer emails and the IP-bearing label never reach the persisted row.
+    assert "alice@example.com" not in row.metadata["reviewers"]
+    assert "bob@example.com" not in row.metadata["reviewers"]
+    assert "10.20.30.40" not in row.metadata["labels"]
+    assert "[redacted-email]" in row.metadata["reviewers"]
+    assert "[redacted-ip]" in row.metadata["labels"]
+    # The int field is preserved verbatim.
+    assert row.metadata["pr_number"] == 7
+    # The reviewer sees WHY the item changed: metadata flags merged into risk_flags.
+    assert "email" in row.risk_flags
+    assert "ip" in row.risk_flags
+
+
 def test_persist_stores_the_redacted_excerpt_in_the_blob() -> None:
     """The S3 object holds the redacted full excerpt and matches the inline column."""
     sink = InMemoryEvidenceSink()

@@ -126,18 +126,47 @@ def collect_git_diff(
     return _whole_file_evidence(diff, _compare_url(boundary))
 
 
+def _redact_metadata(
+    metadata: dict[str, str | int],
+) -> tuple[dict[str, str | int], set[str]]:
+    """Run every metadata VALUE through the redactor before it can reach Aurora (§5).
+
+    Metadata KEYS are our own safe field names (``reviewers``, ``labels``, ``issue_key``,
+    ``status`` …) so they pass through unchanged, but VALUES carry untrusted GitHub text —
+    PR reviewer handles/emails, labels, issue keys — that would otherwise land un-redacted
+    in the persisted row. String values are redacted; non-string values (e.g. ``pr_number``
+    ints) are preserved as-is. Returns the redacted metadata plus the union of risk flags
+    raised, so the item's ``risk_flags`` show reviewers why it changed. Deterministic and
+    idempotent (redacting placeholders is a no-op).
+    """
+    redacted: dict[str, str | int] = {}
+    flags: set[str] = set()
+    for key, value in metadata.items():
+        if isinstance(value, str):
+            result = redact(value)
+            redacted[key] = result.text
+            flags.update(result.risk_flags)
+        else:
+            redacted[key] = value
+    return redacted, flags
+
+
 def redact_evidence(
     collected: tuple[CollectedEvidence, ...],
 ) -> tuple[RedactedEvidence, ...]:
-    """Redact/normalize every excerpt BEFORE persist (constitution §5).
+    """Redact/normalize every excerpt AND metadata value BEFORE persist (constitution §5).
 
     Maps each ``CollectedEvidence`` (which carries the raw excerpt) to a
     ``RedactedEvidence`` (which has no raw field), attaching the risk flags the
-    redactor raised.
+    redactor raised. Metadata values are untrusted GitHub data too, so they pass through
+    the same gate; flags raised by metadata redaction are merged into the item's
+    ``risk_flags``.
     """
     out: list[RedactedEvidence] = []
     for item in collected:
         result = redact(item.raw_excerpt)
+        metadata, metadata_flags = _redact_metadata(item.metadata)
+        risk_flags = tuple(sorted(set(result.risk_flags) | metadata_flags))
         out.append(
             RedactedEvidence(
                 evidence_type=item.evidence_type,
@@ -147,9 +176,9 @@ def redact_evidence(
                 file_path=item.file_path,
                 symbol_name=item.symbol_name,
                 redacted_excerpt=result.text,
-                risk_flags=result.risk_flags,
+                risk_flags=risk_flags,
                 confidence=item.confidence,
-                metadata=item.metadata,
+                metadata=metadata,
             )
         )
     return tuple(out)

@@ -34,6 +34,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Protocol
 from uuid import uuid4
 
 import psycopg
@@ -149,6 +150,39 @@ def _require_env(name: str) -> str:
     return value
 
 
+class _ResumableGraph(Protocol):
+    """The slice of a compiled LangGraph used to check a thread is actually halted at a gate."""
+
+    def get_state(self, config: dict[str, object]) -> object: ...
+
+
+def _assert_pending_interrupt(
+    graph: _ResumableGraph,
+    config: dict[str, object],
+    gate_label: str,
+) -> None:
+    """Refuse a ``--resume-decision`` unless the thread is genuinely halted at a gate interrupt.
+
+    LangGraph's ``Command(resume=...)`` against a thread with NO pending interrupt does not
+    "resume" — it executes the graph from START and the resume value is consumed by the FIRST
+    ``interrupt()`` reached. For a Gate #3 thread that never checkpointed (never run, checkpoint
+    lost/rolled back, or an out-of-order dispatch) that would draft AND promote candidates in a
+    single invocation — overwriting ``SKILL.md`` with a "decision" chosen before any candidate
+    existed and the gate content was never shown. The same shape would let a Gate #1/#2 resume skip
+    the halt. So we read the checkpoint first and fail closed when nothing is waiting on a human
+    (constitution §5: a gate may not be auto-satisfied). ``snapshot.next`` is non-empty only when a
+    durable checkpoint has pending work — i.e. the graph stopped at the interrupt awaiting resume.
+    """
+    snapshot = graph.get_state(config)
+    pending = tuple(getattr(snapshot, "next", ()) or ())
+    if not pending:
+        raise RuntimeError(
+            f"refusing to resume {gate_label}: no gate interrupt is pending on this thread "
+            "(it never reached the gate, or its checkpoint is missing) — a resume here would run "
+            "the graph from the start and auto-consume the gate"
+        )
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="release_worker")
     parser.add_argument(
@@ -171,6 +205,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--reviewer",
         default=None,
         help="Reviewer who resolved a gate (recorded on a skill_learning Gate #3 resume).",
+    )
+    parser.add_argument(
+        "--candidate-id",
+        default=None,
+        help=(
+            "Scope a skill_learning Gate #3 resume to ONE drafted candidate (PRD §14.4 "
+            "per-candidate surface). Omitted = the run-level decision applies to every draft."
+        ),
     )
     parser.add_argument(
         "--feature-id",
@@ -412,6 +454,9 @@ def _run_content_generation(
     config = {"configurable": {"thread_id": thread_id}}
 
     if resume_decision is not None:
+        # Fail closed unless the thread is genuinely halted at Gate #2 (else the resume would run
+        # from START and auto-consume the gate — see _assert_pending_interrupt).
+        _assert_pending_interrupt(graph, config, f"content run {release_run_id} at Gate #2")
         # Continue the halted graph past Gate #2 with the recorded human decision. Wrapped
         # in with_retries (spec 012 T2): a transient Bedrock/S3 blip during the post-gate
         # nodes retries the SAME checkpointed thread (idempotent re-entry), never a fork.
@@ -550,6 +595,7 @@ def _run_skill_learning(
     reviewer: str | None,
     checkpointer: object,
     webhook_url: str | None,
+    candidate_id: str | None = None,
 ) -> int:
     """Run skill_learning_graph for one run through Gate #3 (spec 009, PRD §5.5).
 
@@ -611,11 +657,21 @@ def _run_skill_learning(
         # Continue the halted graph past Gate #3 with the recorded human decision + reviewer.
         # with_retries (spec 012 T2) makes the post-gate repo-write path resilient to a
         # transient Bedrock/GitHub blip; the single SKILL.md write is idempotent on re-entry.
+        # A per-candidate resume (PRD §14.4) carries candidate_id so the promotion/rejection is
+        # scoped to that ONE draft; omitting it (the dashboard run-level resume) decides every
+        # draft, as before. Only include the key when set so the run-level resume value is unchanged.
+        resume_value: dict[str, str | None] = {
+            "decision": resume_decision,
+            "reviewer": reviewer,
+        }
+        if candidate_id is not None:
+            resume_value["candidate_id"] = candidate_id
+        # Fail closed unless the thread is genuinely halted at Gate #3: a resume against a
+        # never-checkpointed thread would run from START and draft+promote in one shot, overwriting
+        # SKILL.md with a decision made before any candidate existed (see _assert_pending_interrupt).
+        _assert_pending_interrupt(graph, config, f"skill run {release_run_id} at Gate #3")
         with_retries(
-            lambda: graph.invoke(
-                Command(resume={"decision": resume_decision, "reviewer": reviewer}),
-                config,
-            ),
+            lambda: graph.invoke(Command(resume=resume_value), config),
             label=f"skill resume {release_run_id}",
         )
         logger.info(
@@ -793,6 +849,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.reviewer,
                 checkpointer,
                 webhook_url,
+                args.candidate_id,
             )
 
         # Per-project credential (migration 0030): if the run targets a saved project with a
@@ -830,6 +887,11 @@ def main(argv: list[str] | None = None) -> int:
         config = {"configurable": {"thread_id": thread_id}}
 
         if args.resume_decision is not None:
+            # Fail closed unless the thread is genuinely halted at Gate #1 (else the resume runs
+            # from START and auto-consumes the gate — see _assert_pending_interrupt).
+            _assert_pending_interrupt(
+                graph, config, f"release run {release_run_id} at Gate #1"
+            )
             # Continue the halted graph past Gate #1 with the recorded human decision.
             # with_retries (spec 012 T2): a transient Bedrock/GitHub/S3 error retries the
             # same checkpointed thread (idempotent re-entry), never a fork.

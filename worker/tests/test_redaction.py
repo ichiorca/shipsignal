@@ -134,3 +134,112 @@ def test_multiple_findings_produce_sorted_deduped_flags() -> None:
 
     # Two emails collapse to one "email" flag; flags are sorted + de-duplicated.
     assert result.risk_flags == ("email", "ip")
+
+
+def test_phone_number_is_redacted_and_flagged() -> None:
+    for line in (
+        "call +1 (555) 123-4567 for support",
+        "ring 555-123-4567 today",
+        "intl +44 20 7946 0958",
+    ):
+        result = redact(line)
+        assert "[redacted-phone]" in result.text, line
+        assert "phone" in result.risk_flags, line
+
+
+def test_phone_rule_does_not_eat_version_or_commit_counts() -> None:
+    # A 4-segment version (few digits) and a bare separator-less count must survive.
+    result = redact("ARG S6_OVERLAY_VERSION=3.2.3.0 over 1234567 commits")
+    assert "3.2.3.0" in result.text
+    assert "1234567" in result.text
+    assert "phone" not in result.risk_flags
+    assert "[redacted-phone]" not in result.text
+
+
+def test_ipv6_is_redacted_and_flagged() -> None:
+    for line in (
+        "client 2001:0db8:85a3:0000:0000:8a2e:0370:7334 connected",
+        "from fe80::1ff:fe23:4567:890a",
+        "loopback ::1 hit",
+    ):
+        result = redact(line)
+        assert "[redacted-ip]" in result.text, line
+        assert "ip" in result.risk_flags, line
+
+
+def test_ipv6_rule_does_not_match_host_port_or_clock() -> None:
+    # Single-colon prose (host:port, HH:MM:SS) is not an address — must survive.
+    result = redact("db:5432 deployed at 12:34:56")
+    assert "db:5432" in result.text
+    assert "12:34:56" in result.text
+    assert "ip" not in result.risk_flags
+
+
+def test_bare_keyword_no_longer_exempts_a_real_ip() -> None:
+    # The version exemption requires an explicit `version`/`revision`/`ver` + `:`/`=`.
+    # Bare prose words like "release" must NOT exempt a dotted-quad address.
+    for line in ("release 10.0.0.5", "build 10.0.0.5", "tag 10.0.0.5"):
+        result = redact(line)
+        assert "10.0.0.5" not in result.text, line
+        assert "[redacted-ip]" in result.text
+        assert "ip" in result.risk_flags
+
+
+def test_truncated_private_key_block_without_end_is_redacted() -> None:
+    # A diff hunk can split a key so the `-----END-----` line is absent — the BEGIN line
+    # plus the base64 body must still be stripped (with a leading diff `+` marker).
+    truncated = (
+        "+-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        "+b3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n"
+        "+AAAAAAAAABAAAAMwAAAAtzc2gtZWQyNTUx\n"
+        "+OQAAACDtruncatedhere1234567890abcd\n"
+    )
+    result = redact(f"leaked key in diff:\n{truncated}context after")
+
+    assert "b3BlbnNzaC1rZXktdjEAAAAABG5vbmU" not in result.text
+    assert "[redacted-private-key]" in result.text
+    assert "secret:private_key" in result.risk_flags
+    # Non-key context survives.
+    assert "context after" in result.text
+
+
+def test_stripe_live_key_is_redacted() -> None:
+    # Build the fixture at runtime so the literal token never sits in source
+    # (keeps GitHub push-protection / secret scanners from flagging this test).
+    stripe_key = "sk_live_" + "4eC39HqLyjWDarjtT1zdp7dc"
+    result = redact(f"STRIPE_KEY={stripe_key}")
+
+    assert stripe_key not in result.text
+    assert "[redacted-secret]" in result.text
+    assert "secret:stripe_key" in result.risk_flags
+
+
+def test_google_api_key_is_redacted() -> None:
+    key = "AIza" + "B" * 35
+    result = redact(f"maps key {key}")
+
+    assert key not in result.text
+    assert "[redacted-secret]" in result.text
+    assert "secret:google_api_key" in result.risk_flags
+
+
+def test_jwt_is_redacted() -> None:
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dQw4w9WgXcQ_signature"
+    result = redact(f"session={jwt}")
+
+    assert jwt not in result.text
+    assert "[redacted-secret]" in result.text
+    assert "secret:jwt" in result.risk_flags
+
+
+def test_new_patterns_remain_idempotent() -> None:
+    stripe_key = "sk_live_" + "4eC39HqLyjWDarjtT1zdp7dc"
+    dirty = (
+        "call +1 (555) 123-4567 from 2001:db8::1; "
+        f"key {stripe_key}"
+    )
+    once = redact(dirty)
+    twice = redact(once.text)
+
+    assert twice.text == once.text
+    assert twice.risk_flags == ()

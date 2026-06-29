@@ -9,14 +9,16 @@
 // the per-card Gate #1/#2 routes, which the manifest resume reads), so "no UI caller" here is by
 // design, not a broken flow. Both paths converge on the same worker resume + single repo write.
 //
-// These are thin aliases over the run-level resume-skill flow: the decision is fixed by the
+// Unlike the run-level resume-skill flow (one decision decides every drafted candidate), these
+// SCOPE the decision to the single candidate named in the path: the decision is fixed by the
 // route, the body carries only reviewer + optional notes. We resolve the candidate's owning
 // release run (via its supporting learning_signals) and derive the SAME deterministic
 // skill_learning thread id the worker uses (worker loop_orchestration.thread_id_for =
 // `lg_<run>_skill_learning`), record the per-candidate decision in the immutable approvals
-// audit log, then resume that thread past the approve_skill_candidate interrupt. The repo
-// SKILL.md is replaced by the WORKER on the runner (the single repo write), never here
-// (constitution §1); reviewer identity is required (no anonymous self-approval).
+// audit log, then resume that thread past the approve_skill_candidate interrupt — forwarding the
+// candidate id so the worker promotes/rejects ONLY this candidate, never a sibling that no human
+// approved (constitution §5, blast radius). The repo SKILL.md is replaced by the WORKER on the
+// runner (the single repo write), never here (constitution §1); reviewer identity is required.
 
 import 'server-only';
 import { z } from 'zod';
@@ -93,6 +95,10 @@ export async function decideSkillCandidate(
       decision,
       graph: 'skill_learning',
       reviewer: parsed.value.reviewer,
+      // Scope the resume to THIS candidate so the worker promotes/rejects only it — approving one
+      // candidate must never overwrite a sibling's SKILL.md that no human approved (constitution
+      // §5). The run-level resume-skill route omits this and keeps the decide-every-draft behaviour.
+      candidateId,
     });
   } catch (err) {
     // Clear the dedupe marker so a retry can proceed, then report 502.

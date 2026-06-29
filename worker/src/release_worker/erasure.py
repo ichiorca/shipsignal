@@ -47,6 +47,16 @@ class OrphanedObjectsError(RuntimeError):
     """
 
 
+class OrphanedRowsError(RuntimeError):
+    """Raised when post-erasure verification still finds run-scoped rows in Aurora.
+
+    The Aurora counterpart of ``OrphanedObjectsError``: deleting the ``release_runs`` row
+    should CASCADE-clear every run-scoped table (and the run's ``approvals`` are deleted
+    explicitly), so any surviving row means the erasure is incomplete (Art.17 not satisfied)
+    and the operator must investigate rather than record a false 'erased' result.
+    """
+
+
 class ErasureReport(BaseModel):
     """The audited outcome of one data-subject erasure (returned and persisted)."""
 
@@ -83,6 +93,14 @@ class ErasureStore(Protocol):
         """Delete the ``release_runs`` row; CASCADE drops all run-scoped child rows.
 
         Returns the number of rows deleted (0 if the run was already erased — idempotent).
+        """
+        ...
+
+    def count_run_rows(self, release_run_id: str) -> int:
+        """Count run-scoped rows still in Aurora (for post-erasure verification).
+
+        Sums the ``release_runs`` row, every table that CASCADEs from it, and the run's
+        ``approvals`` rows; ``0`` proves the run was fully erased.
         """
         ...
 
@@ -128,7 +146,18 @@ def erase_release_run(
 
     rows_deleted = store.delete_run_rows(release_run_id)
 
-    # Verify: no S3 object may survive under the run's prefixes (no presigned-reachable
+    # Verify Aurora: no run-scoped row may survive. The CASCADE from release_runs (plus the
+    # explicit approvals delete) should clear every run-scoped table, so a non-zero count means
+    # the deletion was partial — catch it before recording a (false) 'erased' result. (Mirrors
+    # the S3 check below; delete_run_rows' rowcount alone does not prove the CASCADE completed.)
+    remaining_rows = store.count_run_rows(release_run_id)
+    if remaining_rows:
+        raise OrphanedRowsError(
+            f"{remaining_rows} run-scoped row(s) remain in Aurora "
+            f"after erasure of run {release_run_id}"
+        )
+
+    # Verify S3: no object may survive under the run's prefixes (no presigned-reachable
     # remnant). This catches a partial delete before we record a (false) 'erased' result.
     remaining = tuple(key for prefix in prefixes for key in store.list_objects(prefix))
     if remaining:
@@ -172,6 +201,9 @@ class InMemoryErasureStore:
             self.run_rows.discard(release_run_id)
             return 1
         return 0
+
+    def count_run_rows(self, release_run_id: str) -> int:
+        return 1 if release_run_id in self.run_rows else 0
 
     def list_objects(self, prefix: str) -> tuple[str, ...]:
         return tuple(sorted(k for k in self.objects if k.startswith(prefix)))
