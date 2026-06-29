@@ -18,12 +18,13 @@
 
 'use client';
 
-import { createElement, useRef, useState } from 'react';
+import { createElement, useEffect, useRef, useState } from 'react';
 import type { ReactElement } from 'react';
 import { clientFetch } from '../lib/clientFetch.ts';
 import type { ArtifactWithClaims, ArtifactClaimView } from '@/app/lib/db/claims.ts';
 import type { ScheduledPublishView } from '../lib/scheduledPublish.ts';
 import { typeLabel, groupByType } from '../lib/artifactTypes.ts';
+import { provenanceSummary } from '../lib/artifactApproval.ts';
 import { ArtifactExportActions } from './ArtifactExportActions.ts';
 import { SchedulePublish } from './SchedulePublish.ts';
 import { ConfirmButton } from './ConfirmButton.ts';
@@ -122,9 +123,42 @@ export function ArtifactReview({
   const [edits, setEdits] = useState<Readonly<Record<string, string>>>({});
   const [status, setStatus] = useState('');
   const [pending, setPending] = useState(false);
+  // R8 — track which artifacts the reviewer has acted on this session, to show batch progress.
+  const [decidedIds, setDecidedIds] = useState<ReadonlySet<string>>(() => new Set());
   const reviewerRef = useRef<HTMLInputElement | null>(null);
 
   const noReviewer = reviewer.trim() === '';
+
+  // R8 — keyboard triage: A approve / R reject / E save-edits act on the artifact whose section
+  // currently holds keyboard focus (focus IS the cursor — unambiguous and screen-reader safe).
+  // Ignored while typing in a field or with a modifier held; the on-screen buttons remain the
+  // primary, always-available path, so this is a power-user accelerator, not the only way.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      const id = el?.closest('[data-artifact-id]')?.getAttribute('data-artifact-id');
+      if (!id) return;
+      const artifact = artifacts.find((a) => a.id === id);
+      if (!artifact) return;
+      const key = e.key.toLowerCase();
+      if (key === 'a' && approvable(artifact)) {
+        e.preventDefault();
+        void decide(artifact, 'approved');
+      } else if (key === 'r') {
+        e.preventDefault();
+        void decide(artifact, 'rejected');
+      } else if (key === 'e') {
+        e.preventDefault();
+        void decide(artifact, 'edited');
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // decide is a stable closure over reviewer/edits; re-bind when those change.
+  }, [artifacts, reviewer, edits]);
 
   function requireReviewer(): boolean {
     if (noReviewer) {
@@ -155,6 +189,10 @@ export function ArtifactReview({
             : { reviewer },
         ),
       });
+      if (response.ok) {
+        // R8 — count this artifact as reviewed so the batch-progress meter advances.
+        setDecidedIds((prev) => new Set(prev).add(artifact.id));
+      }
       setStatus(
         response.ok
           ? `Recorded ${decision} for "${name}".`
@@ -204,6 +242,8 @@ export function ArtifactReview({
         'aria-labelledby': headingId,
         'data-artifact-id': artifact.id,
         'data-artifact-status': artifact.status,
+        // R8 — a session-decided artifact is visually checked off so batch progress is obvious.
+        ...(decidedIds.has(artifact.id) ? { 'data-decided': '' } : {}),
       },
       createElement(
         'h3',
@@ -220,6 +260,17 @@ export function ArtifactReview({
           )
         : null,
       createElement('h4', null, 'Claims'),
+      // R5 — a scannable provenance summary so the trust state (every claim tied to evidence) is
+      // visible at a glance, not buried in the per-claim list. Conveyed as TEXT + data-tone
+      // (never colour alone, WCAG 2.2 AA).
+      (() => {
+        const prov = provenanceSummary(artifact);
+        return createElement(
+          'p',
+          { 'data-provenance-summary': '', 'data-tone': prov.tone },
+          prov.text,
+        );
+      })(),
       artifact.claims.length === 0
         ? createElement('p', null, 'No claims were extracted for this artifact.')
         : createElement('ul', null, ...artifact.claims.map(claimItem)),
@@ -343,6 +394,29 @@ export function ArtifactReview({
       ? createElement('p', { id: 'reviewer-error', role: 'alert' }, 'Enter your reviewer name to record a decision.')
       : null,
     createElement('p', { role: 'status', 'aria-live': 'polite' }, status),
+    // R8 — batch-review toolbar: keyboard shortcut help + a live progress meter so reviewing many
+    // artifacts feels like clearing an inbox. The progress count reflects decisions made this
+    // session; it is announced politely as it changes.
+    createElement(
+      'div',
+      { 'data-review-toolbar': '' },
+      createElement(
+        'p',
+        { 'data-review-shortcuts': '' },
+        'Shortcuts: ',
+        createElement('kbd', null, 'A'),
+        ' approve · ',
+        createElement('kbd', null, 'R'),
+        ' reject · ',
+        createElement('kbd', null, 'E'),
+        ' save edits — acting on the artifact you have focused.',
+      ),
+      createElement(
+        'p',
+        { 'data-review-progress': '', role: 'status', 'aria-live': 'polite' },
+        `${decidedIds.size} of ${artifacts.length} reviewed this session`,
+      ),
+    ),
     ...groups.map(typeGroupSection),
     createElement(
       'div',

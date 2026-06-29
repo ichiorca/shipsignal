@@ -37,7 +37,7 @@ const PLANNED: readonly PlannedExperiment[] = [
 export default function ExperimentsPage() {
   return (
     <main id="main">
-      <PageHeader eyebrow="Signals & Trends" title="Experiments" description="Hypotheses in flight." />
+      <PageHeader eyebrow="Intelligence" title="Experiments" description="Hypotheses in flight." />
 
       <section aria-labelledby="experiments-status-heading">
         <h2 id="experiments-status-heading">Not yet available</h2>

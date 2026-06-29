@@ -12,8 +12,22 @@ import { usePathname } from 'next/navigation';
 import { SIDEBAR_SECTIONS, isNavItemActive, type SidebarItem } from '@/app/lib/sidebarNav.ts';
 import { NavIcon } from './navIcons.ts';
 
-function navItem(item: SidebarItem, pathname: string): ReactElement {
+function navItem(item: SidebarItem, pathname: string, badge: number | undefined): ReactElement {
   const active = isNavItemActive(pathname, item.href);
+  // R3 — a live count of pending work (e.g. gates awaiting a decision). Rendered as TEXT with an
+  // explicit aria-label (never colour/shape alone), and omitted entirely at zero so the badge only
+  // ever signals "there is something to do here".
+  const badgeEl =
+    badge && badge > 0
+      ? createElement(
+          'span',
+          {
+            'data-nav-badge': true,
+            'aria-label': `${badge} awaiting your review`,
+          },
+          String(badge),
+        )
+      : null;
   return createElement(
     'a',
     {
@@ -29,10 +43,16 @@ function navItem(item: SidebarItem, pathname: string): ReactElement {
       createElement('span', { 'data-nav-item-label': true }, item.label),
       createElement('span', { 'data-nav-item-desc': true }, item.description),
     ),
+    badgeEl,
   );
 }
 
-export function Sidebar(): ReactElement {
+export interface SidebarProps {
+  /** Live counts keyed by item href (e.g. { '/queue': 3 }); a positive value renders a badge. */
+  readonly badges?: Readonly<Record<string, number>>;
+}
+
+export function Sidebar({ badges = {} }: SidebarProps): ReactElement {
   const pathname = usePathname() ?? '/';
   return createElement(
     'aside',
@@ -57,7 +77,7 @@ export function Sidebar(): ReactElement {
             createElement('p', { 'data-nav-section-title': true }, section.title),
             createElement('p', { 'data-nav-section-hint': true }, section.hint),
           ),
-          ...section.items.map((item) => navItem(item, pathname)),
+          ...section.items.map((item) => navItem(item, pathname, badges[item.href])),
         ),
       ),
     ),

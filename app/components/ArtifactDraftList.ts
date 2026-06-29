@@ -51,12 +51,14 @@ function artifactArticle(artifact: ArtifactDraft): ReactElement {
     auditTrail(artifact),
     createElement('h3', { id: bodyId }, 'Draft'),
     // Preserve Markdown whitespace; render as text (no HTML injection from model output).
+    // R7 — `data-artifact-body` styles generated copy in the editorial serif so a draft reads as
+    // finished collateral, not form data. Whitespace stays preserved via CSS (not an inline style).
     createElement(
       'div',
       {
         'aria-labelledby': bodyId,
         'data-testid': 'artifact-body',
-        style: { whiteSpace: 'pre-wrap' },
+        'data-artifact-body': '',
       },
       artifact.body_markdown ?? '',
     ),

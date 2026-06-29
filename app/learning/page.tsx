@@ -26,7 +26,7 @@ export default async function LearningPage() {
   return (
     <main id="main">
       <PageHeader
-        eyebrow="Signals & Trends"
+        eyebrow="Intelligence"
         title="Self-Learning"
         description="How the system improves: reviewer edits and rejections fall as skills compound."
       />

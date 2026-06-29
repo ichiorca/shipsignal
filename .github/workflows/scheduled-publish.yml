@@ -1,0 +1,43 @@
+# Path B / Phase 4 — drive the approve-then-schedule queue. The constitution mandates the GitHub
+# Actions runner for scheduled work and forbids Step Functions / EventBridge / bespoke schedulers
+# (§1/§2), so this cron simply calls the app's drain endpoint, which ships any due, still-approved
+# scheduled posts via the Phase-3 adapters. The drain is gated by a shared secret; nothing is sent
+# unless SCHEDULED_PUBLISH_SECRET is configured (the endpoint 503s otherwise).
+#
+# Set repo VARIABLE `APP_BASE_URL` (the deployed dashboard origin) and SECRET
+# `SCHEDULED_PUBLISH_SECRET` (must match the app's env). No AWS/Python needed — just an HTTP call.
+
+name: scheduled-publish
+
+on:
+  schedule:
+    # Every 15 minutes (off the hour to avoid the cron thundering herd).
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Never run two drains at once (the drain is idempotent per row, but keep it serial).
+concurrency:
+  group: scheduled-publish
+  cancel-in-progress: false
+
+jobs:
+  drain:
+    name: Publish due scheduled posts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Drain the scheduled-publish queue
+        env:
+          APP_BASE_URL: ${{ vars.APP_BASE_URL }}
+          SCHEDULED_PUBLISH_SECRET: ${{ secrets.SCHEDULED_PUBLISH_SECRET }}
+        run: |
+          if [ -z "$APP_BASE_URL" ] || [ -z "$SCHEDULED_PUBLISH_SECRET" ]; then
+            echo "APP_BASE_URL or SCHEDULED_PUBLISH_SECRET not set — scheduled publishing is off."
+            exit 0
+          fi
+          # --fail surfaces a non-2xx as a job failure; the response body (counts only) is logged.
+          curl --fail --show-error --silent -X POST \
+            -H "Authorization: Bearer ${SCHEDULED_PUBLISH_SECRET}" \
+            "${APP_BASE_URL%/}/api/internal/scheduled-publishes/run"

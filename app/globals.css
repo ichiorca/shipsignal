@@ -1183,3 +1183,285 @@ table[data-bar-chart] td {
     flex-basis: 100%;
   }
 }
+
+/* ---- R9: first-run hero (empty-state) + sample-data notice ------------------- */
+
+[data-first-run-hero] {
+  background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 2rem 2.25rem;
+  box-shadow: var(--shadow);
+  margin: 1rem 0;
+}
+[data-first-run-hero] [data-hero-eyebrow] {
+  margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  font-weight: 600;
+}
+[data-first-run-hero] h2 {
+  font-family: var(--font-serif);
+  font-size: 1.9rem;
+  line-height: 1.2;
+  margin: 0.4rem 0 0.9rem;
+  max-width: 32ch;
+}
+[data-first-run-hero] [data-hero-points] {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.4rem;
+  display: grid;
+  gap: 0.5rem;
+  max-width: 60ch;
+}
+[data-first-run-hero] [data-hero-points] li {
+  position: relative;
+  padding-left: 1.5rem;
+  color: var(--text);
+}
+[data-first-run-hero] [data-hero-points] li::before {
+  content: '→';
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+  font-weight: 700;
+}
+[data-first-run-hero] [data-hero-actions] [data-sample-release] {
+  margin: 0;
+}
+[data-first-run-hero] [data-hero-secondary] {
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+[data-sample-data-notice] {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  background: var(--info-bg);
+  color: var(--info-text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.8rem;
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+}
+[data-sample-data-notice] [data-sample-tag] {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--info-text);
+  color: var(--surface);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  white-space: nowrap;
+}
+
+/* ---- R10: conversion funnel ------------------------------------------------ */
+
+[data-conversion-funnel] {
+  margin: 1.25rem 0;
+}
+[data-conversion-funnel] [data-funnel-caption] {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0.1rem 0 0.75rem;
+}
+[data-funnel-stages] {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+[data-funnel-row] {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.2rem;
+}
+[data-funnel-label] {
+  font-weight: 600;
+}
+[data-funnel-count] {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+[data-funnel-step] {
+  font-weight: 500;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+[data-funnel-bar] {
+  height: 0.6rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--info-text));
+  min-width: 2%;
+  transition: width 0.2s;
+}
+/* Each later stage tints slightly cooler so the narrowing reads as a journey. */
+[data-funnel-stage='approved'] [data-funnel-bar] { opacity: 0.9; }
+[data-funnel-stage='published'] [data-funnel-bar] { opacity: 0.8; }
+[data-funnel-stage='engaged'] [data-funnel-bar] { opacity: 0.7; }
+
+/* ---- R8: batch review toolbar + keyboard shortcuts ------------------------- */
+
+[data-review-toolbar] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.85rem;
+  margin: 0.5rem 0 1rem;
+}
+[data-review-shortcuts] {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+[data-review-shortcuts] kbd {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+}
+[data-review-progress] {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+[data-artifact-id][data-decided] {
+  opacity: 0.62;
+}
+[data-artifact-id][data-decided] > h3::after {
+  content: ' ✓ reviewed';
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ok-text);
+}
+
+/* ---- R7: editorial serif for generated artifact bodies --------------------- */
+
+[data-artifact-body] {
+  /* Generated marketing copy reads as finished collateral, not form data. */
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
+  line-height: 1.6;
+  white-space: pre-wrap; /* preserve Markdown whitespace (was an inline style) */
+  max-width: 70ch; /* a comfortable reading measure */
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.15rem;
+  margin: 0.4rem 0 0;
+}
+
+/* ---- R5: provenance story (hero lede + per-artifact summary) --------------- */
+
+[data-hero-lede] {
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  line-height: 1.45;
+  color: var(--text);
+  max-width: 60ch;
+  margin: 0.25rem 0 1rem;
+}
+
+[data-provenance-summary] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  margin: 0.2rem 0 0.6rem;
+  border: 1px solid var(--border);
+}
+[data-provenance-summary][data-tone='solid'] {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+[data-provenance-summary][data-tone='solid']::before {
+  content: '✓';
+}
+[data-provenance-summary][data-tone='partial'] {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+[data-provenance-summary][data-tone='partial']::before {
+  content: '⚠';
+}
+[data-provenance-summary][data-tone='none'] {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+/* ---- R4: dashboard hand-off CTAs ------------------------------------------- */
+
+[data-dashboard-actions] {
+  margin-top: 1.5rem;
+}
+[data-dashboard-cta-row] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+[data-dashboard-cta-row] a {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 600;
+  border: 1px solid var(--border);
+}
+[data-dashboard-cta-row] [data-cta-primary] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+[data-dashboard-cta-row] [data-cta-secondary] {
+  background: var(--surface);
+  color: var(--text);
+}
+[data-dashboard-cta-row] a:hover {
+  filter: brightness(0.96);
+}
+
+/* ---- R3: nav count badge --------------------------------------------------- */
+
+[data-nav-link] {
+  position: relative;
+}
+[data-nav-badge] {
+  margin-left: auto;
+  align-self: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.25rem;
+  text-align: center;
+  flex-shrink: 0;
+}

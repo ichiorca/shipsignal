@@ -6,10 +6,12 @@
 // led by an <h2>.
 
 import { listReleaseRuns } from '@/app/lib/db/releaseRuns.ts';
+import { hasSyntheticRun } from '@/app/lib/syntheticRun.ts';
 import { PageHeader } from '@/app/components/PageHeader.ts';
 import { ReviewQueue } from '@/app/components/ReviewQueue.ts';
 import { RunFeed } from '@/app/components/RunFeed.ts';
 import { StatusLegend } from '@/app/components/StatusLegend.ts';
+import { SampleDataNotice } from '@/app/components/SampleDataNotice.ts';
 
 // Always reflect the latest runs; this inbox is not statically cacheable.
 export const dynamic = 'force-dynamic';
@@ -19,10 +21,11 @@ export default async function ApprovalQueuePage() {
   return (
     <main id="main">
       <PageHeader
-        eyebrow="Decisions"
-        title="Approval Queue"
-        description="Launches waiting on your decision at a gate."
+        eyebrow="Workflow"
+        title="Review Queue"
+        description="Launches waiting on your decision at a gate — and the full launch feed."
       />
+      <SampleDataNotice show={hasSyntheticRun(runs)} />
       {/* Lead with "what needs me" — launches halted at an approval, each linking to its gate. */}
       <ReviewQueue runs={runs} />
       {/* The full launches feed for context, with search / status filter / pagination. */}

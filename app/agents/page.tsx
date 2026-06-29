@@ -24,7 +24,7 @@ export default async function AgentsPage() {
   return (
     <main id="main">
       <PageHeader
-        eyebrow="Skill library"
+        eyebrow="Library"
         title="Agents"
         description="The team that turns a release into launch content — and which capabilities each agent owns."
       />

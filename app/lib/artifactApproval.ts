@@ -20,3 +20,40 @@ export function isApprovable(artifact: ArtifactWithClaims): boolean {
     (c) => c.support_status === 'supported' && c.evidence.length > 0,
   );
 }
+
+/** A scannable provenance summary for one artifact (UX review R5 — sell the trust story).
+ *  `grounded` counts claims that are both supported and evidence-linked. `tone` drives the visual
+ *  state purely from data (never colour alone — the caller renders `text` too):
+ *    - 'none'   : no claims extracted (nothing tying the copy to evidence yet);
+ *    - 'solid'  : every claim is grounded;
+ *    - 'partial': at least one claim is unsupported or unlinked. */
+export interface ProvenanceSummary {
+  readonly total: number;
+  readonly grounded: number;
+  readonly tone: 'none' | 'solid' | 'partial';
+  readonly text: string;
+}
+
+export function provenanceSummary(artifact: ArtifactWithClaims): ProvenanceSummary {
+  const total = artifact.claims.length;
+  const grounded = artifact.claims.filter(
+    (c) => c.support_status === 'supported' && c.evidence.length > 0,
+  ).length;
+  if (total === 0) {
+    return { total, grounded, tone: 'none', text: 'No claims extracted — no evidence to back yet' };
+  }
+  if (grounded === total) {
+    return {
+      total,
+      grounded,
+      tone: 'solid',
+      text: `${total} ${total === 1 ? 'claim' : 'claims'} · all evidence-backed`,
+    };
+  }
+  return {
+    total,
+    grounded,
+    tone: 'partial',
+    text: `${grounded} of ${total} claims evidence-backed · ${total - grounded} need attention`,
+  };
+}

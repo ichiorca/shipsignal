@@ -6,13 +6,26 @@ import type { ReactNode } from 'react';
 import './globals.css';
 import { Sidebar } from '@/app/components/Sidebar.ts';
 import { ReviewerBadge } from '@/app/components/ReviewerBadge.ts';
+import { countRunsAwaitingReview } from '@/app/lib/db/releaseRuns.ts';
 
 export const metadata = {
   title: 'ShipSignal',
   description: 'Release-to-content engine',
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+// The badge count is live work, so the shell must not be statically cached.
+export const dynamic = 'force-dynamic';
+
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // R3 — a cheap COUNT so the nav can badge the Review Queue with the number of runs awaiting a
+  // gate decision (matches the queue's own `isAwaitingReview` filter). Fail-soft: a DB hiccup
+  // must never blank the whole app shell, so fall back to no badge.
+  let awaitingCount = 0;
+  try {
+    awaitingCount = await countRunsAwaitingReview();
+  } catch {
+    awaitingCount = 0;
+  }
   return (
     <html lang="en">
       <head>
@@ -28,7 +41,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           Skip to main content
         </a>
         <div data-app-shell>
-          <Sidebar />
+          <Sidebar badges={{ '/queue': awaitingCount }} />
           <div data-app-content>
             <header data-topbar>
               <ReviewerBadge />

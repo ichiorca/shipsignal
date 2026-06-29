@@ -11,6 +11,11 @@
  *  the operator chose ("model cost vs ~4h of PMM time"); a label, not a billed figure. */
 export const PMM_BASELINE_HOURS_PER_RELEASE = 4;
 
+/** A conservative loaded hourly cost for the PMM time the pipeline replaces (UX review R6 — the
+ *  purchase justification is headcount/time saved, so the cost tile leads with dollars saved).
+ *  An ESTIMATE/assumption for framing, not a billed rate; operators can revise it. */
+export const PMM_BASELINE_HOURLY_USD = 75;
+
 export interface HeroStatsData {
   /** Approved artifacts across all runs (the §18.1 publishable snapshots). */
   readonly artifactsShipped: number;
@@ -44,6 +49,30 @@ export function formatDuration(seconds: number): string {
   return `${(minutes / 60).toFixed(1)}h`;
 }
 
+/** R6 — the cost tile reframed as the MONEY-SAVED story: leads with the dollar value of the PMM
+ *  drafting time replaced per release, with the (tiny) model spend as the "instead of" detail.
+ *  Gated on having at least one completed release so an empty deployment never fabricates savings. */
+function buildSavingsStat(data: HeroStatsData): HeroStat {
+  const cost = data.avgModelCostPerRunUsd;
+  if (data.releasesWithApprovedContent === 0) {
+    return {
+      key: 'cost',
+      value: '—',
+      label: 'saved per release',
+      detail: `vs ~${PMM_BASELINE_HOURS_PER_RELEASE}h of PMM drafting, once a release completes review`,
+    };
+  }
+  const laborValue = PMM_BASELINE_HOURS_PER_RELEASE * PMM_BASELINE_HOURLY_USD;
+  const savings = Math.max(0, laborValue - (cost ?? 0));
+  const spendDetail = cost === null ? '' : `, for ${formatUsd(cost)} of model spend`;
+  return {
+    key: 'cost',
+    value: `$${Math.round(savings)}`,
+    label: 'saved per release',
+    detail: `~${PMM_BASELINE_HOURS_PER_RELEASE}h of PMM drafting (@ $${PMM_BASELINE_HOURLY_USD}/h)${spendDetail}`,
+  };
+}
+
 /** Shape the aggregates into the four hero stats, with honest placeholders ("—") before
  *  any data exists, so an empty deployment never fabricates a number. */
 export function buildHeroStats(data: HeroStatsData): readonly HeroStat[] {
@@ -63,12 +92,7 @@ export function buildHeroStats(data: HeroStatsData): readonly HeroStat[] {
               data.releasesWithApprovedContent === 1 ? '' : 's'
             }`,
     },
-    {
-      key: 'cost',
-      value: data.avgModelCostPerRunUsd === null ? '—' : formatUsd(data.avgModelCostPerRunUsd),
-      label: 'model cost per release',
-      detail: `vs ~${PMM_BASELINE_HOURS_PER_RELEASE}h of PMM drafting time per release`,
-    },
+    buildSavingsStat(data),
     {
       key: 'trust',
       value: rate === null ? '—' : `${Math.round(rate * 100)}%`,

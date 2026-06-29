@@ -21,7 +21,7 @@ export default async function CapabilitiesPage() {
   return (
     <main id="main">
       <PageHeader
-        eyebrow="Skill library"
+        eyebrow="Library"
         title="Capabilities"
         description="What the engine can produce, and which skills ground each capability — editable."
       />

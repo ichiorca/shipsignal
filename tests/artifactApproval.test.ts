@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isApprovable } from '../app/lib/artifactApproval.ts';
+import { isApprovable, provenanceSummary } from '../app/lib/artifactApproval.ts';
 import type { ArtifactWithClaims } from '../app/lib/db/claims.ts';
 
 function artifact(overrides: Partial<ArtifactWithClaims> = {}): ArtifactWithClaims {
@@ -68,4 +68,30 @@ test('an artifact with no claims is NOT approvable (zero claim-level provenance,
   // `.every` is vacuously true on an empty array; a zero-claim artifact has nothing linking it
   // to evidence, so Gate #2 must refuse it rather than publish unprovenanced content.
   assert.equal(isApprovable(artifact({ claims: [] })), false);
+});
+
+test('provenanceSummary is solid when every claim is grounded', () => {
+  const s = provenanceSummary(artifact());
+  assert.equal(s.tone, 'solid');
+  assert.equal(s.grounded, 1);
+  assert.equal(s.total, 1);
+  assert.match(s.text, /all evidence-backed/);
+});
+
+test('provenanceSummary is partial when a claim is unsupported or unlinked', () => {
+  const a = artifact();
+  const partial = artifact({
+    claims: [a.claims[0]!, { ...a.claims[0]!, id: 'c2', support_status: 'unsupported' }],
+  });
+  const s = provenanceSummary(partial);
+  assert.equal(s.tone, 'partial');
+  assert.equal(s.grounded, 1);
+  assert.equal(s.total, 2);
+  assert.match(s.text, /need attention/);
+});
+
+test('provenanceSummary is none when no claims were extracted', () => {
+  const s = provenanceSummary(artifact({ claims: [] }));
+  assert.equal(s.tone, 'none');
+  assert.equal(s.total, 0);
 });

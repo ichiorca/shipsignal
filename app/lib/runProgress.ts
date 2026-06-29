@@ -9,6 +9,15 @@ import type { RunStatus } from '@/app/lib/runStatus.ts';
 // runtime imports directly, and only type imports (erased) may use the bundler alias.
 import { progressIndex } from './runStatus.ts';
 
+/** The run statuses that mean "halted at a human gate, waiting on a reviewer decision" — the
+ *  single source of truth shared by `nextStep`/`isAwaitingReview` (the UI predicate) and
+ *  `countRunsAwaitingReview` (the SQL badge count), so the two can never drift. A drift test
+ *  asserts `isAwaitingReview` is true for exactly these statuses (tests/runProgress.test.ts). */
+export const AWAITING_REVIEW_STATUSES: readonly RunStatus[] = [
+  'features_pending_review',
+  'artifacts_pending_review',
+];
+
 /** The action a reviewer should take next, or null when the run needs no human right now.
  *  Only the two gates the run *status* encodes are surfaced (Gate #3 skill review is tracked by
  *  skill candidates, not run status, so it is not derivable here). */

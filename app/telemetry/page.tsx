@@ -27,7 +27,7 @@ export default async function TelemetryPage() {
   return (
     <main id="main">
       <PageHeader
-        eyebrow="Signals & Trends"
+        eyebrow="Intelligence"
         title="Quality Signals"
         description="Eval rubric scores, drift, and claim-level provenance."
       />

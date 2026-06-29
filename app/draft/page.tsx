@@ -19,7 +19,7 @@ export default async function DraftingPage() {
   return (
     <main id="main">
       <PageHeader
-        eyebrow="Decisions"
+        eyebrow="Workflow"
         title="Drafting"
         description="Start a new launch: turn a release into evidence-backed content."
       />

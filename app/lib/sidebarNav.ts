@@ -1,16 +1,16 @@
-// Sidebar IA — single source of truth, mirroring the peer app (hindsight-guild) so the two can
-// merge. Three sections matching how the operator reasons about the product:
-//   - Decisions      : the daily transactional inbox (things needing a yes/no/edit).
-//   - Skill library  : institutional knowledge — what the system knows & remembers.
-//   - Signals & Trends: observability — what happened, what's happening, what's trending.
+// Sidebar IA — single source of truth. Reorganized around the product's actual workflow funnel
+// (UX review R1) rather than the peer app's borrowed three-section split, so the nav mirrors how
+// the work flows — Create → Review → Distribute → Learn — instead of a different product's mental
+// model. Sections:
+//   - Overview     : the one-glance ROI + what needs you (the home dashboard).
+//   - Workflow     : the end-to-end loop — start a launch, review its gates, see what shipped.
+//   - Intelligence : observability — how the system learns and how it's performing.
+//   - Library      : institutional knowledge — skills, capabilities, and the agent roster.
+//   - Admin        : settings & connections hub.
 //
-// Names + taglines are kept identical to hindsight-guild for a clean future merge. Each item maps
-// to a ShipSignal route backed by real data, or an honest "coming soon" where the concept has no
-// ShipSignal equivalent yet (Agents roster, Experiments).
-//
-// Brand Voice is intentionally NOT a top-level item (operator note 2026-06-22): it is company
-// CONFIG the operator authors, not institutional skill knowledge, so it lives under Admin alongside
-// the other configuration surfaces (/settings, /projects, /webhooks) — reached via the Admin hub.
+// Every item maps to a ShipSignal route backed by real data. Stubbed concepts (Experiments) are
+// intentionally NOT surfaced here until they have data (see R2). Brand Voice stays config under
+// the Admin hub (/settings, /projects, /webhooks), not a top-level item (operator note 2026-06-22).
 
 import type { NavIconName } from '@/app/components/navIcons.ts';
 
@@ -29,17 +29,35 @@ export interface SidebarSection {
 
 export const SIDEBAR_SECTIONS: readonly SidebarSection[] = [
   {
-    title: 'Decisions',
-    hint: 'What needs your call today',
+    title: 'Overview',
+    hint: 'Your launches at a glance',
     items: [
-      { href: '/', label: 'Founder Dashboard', description: 'ROI & impact', icon: 'dashboard' },
-      { href: '/queue', label: 'Approval Queue', description: 'Decide on launches', icon: 'inbox' },
-      { href: '/draft', label: 'Drafting', description: 'Run the pipeline', icon: 'draft' },
+      { href: '/', label: 'Dashboard', description: 'ROI + what needs you', icon: 'dashboard' },
+    ],
+  },
+  {
+    title: 'Workflow',
+    hint: 'Release → content, end to end',
+    items: [
+      { href: '/draft', label: 'New Launch', description: 'Start a release → content', icon: 'draft' },
+      { href: '/queue', label: 'Review Queue', description: 'Gates waiting on you', icon: 'inbox' },
       { href: '/distribute', label: 'Published', description: 'What shipped + where', icon: 'published' },
     ],
   },
   {
-    title: 'Skill library',
+    title: 'Intelligence',
+    hint: 'How the system learns & performs',
+    items: [
+      { href: '/learning', label: 'Self-Learning', description: 'How the team improves', icon: 'learning' },
+      { href: '/telemetry', label: 'Quality Signals', description: 'Rubric + drift + AI citations', icon: 'quality' },
+      // 'Experiments' (/experiments) is intentionally omitted: ShipSignal has no experiment data
+      // model yet, so the route is an honest "coming soon" empty state. Surfacing it in the nav
+      // reads as an unfinished product (UX review R2) — re-add it here once it is backed by data.
+      { href: '/live', label: 'Live Ops', description: "What's running now", icon: 'live' },
+    ],
+  },
+  {
+    title: 'Library',
     hint: 'What the system knows',
     items: [
       { href: '/skills', label: 'Skills', description: 'Playbook versions', icon: 'skills' },
@@ -48,13 +66,9 @@ export const SIDEBAR_SECTIONS: readonly SidebarSection[] = [
     ],
   },
   {
-    title: 'Signals & Trends',
-    hint: "What's happened, what's happening",
+    title: 'Admin',
+    hint: 'Settings & connections',
     items: [
-      { href: '/learning', label: 'Self-Learning', description: 'How the team improves', icon: 'learning' },
-      { href: '/telemetry', label: 'Quality Signals', description: 'Rubric + drift + AI citations', icon: 'quality' },
-      { href: '/experiments', label: 'Experiments', description: 'Hypotheses in flight', icon: 'experiments' },
-      { href: '/live', label: 'Live Ops', description: "What's running now", icon: 'live' },
       { href: '/admin', label: 'Admin', description: 'Settings & connections', icon: 'admin' },
     ],
   },

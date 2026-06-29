@@ -9,6 +9,7 @@ import { isUuid } from '@/app/lib/uuid.ts';
 import type { RunStatus } from '@/app/lib/runStatus.ts';
 import { isRunStatus } from '@/app/lib/runStatus.ts';
 import { isArtifactType, ALL_ARTIFACT_TYPES, type ArtifactType } from '@/app/lib/artifactTypes.ts';
+import { AWAITING_REVIEW_STATUSES } from '@/app/lib/runProgress.ts';
 
 export type TriggerType = 'manual' | 'release_tag' | 'workflow_dispatch';
 
@@ -133,6 +134,20 @@ export async function listReleaseRuns(limit = 50): Promise<readonly ReleaseRun[]
     [limit],
   );
   return result.rows.map(mapRow);
+}
+
+/** Count runs halted at a human gate (UX review R3 — the Review Queue nav badge). A cheap
+ *  indexed COUNT so the root layout can compute it on every page without loading all rows.
+ *  Uses the SAME status set as the UI predicate `isAwaitingReview` (AWAITING_REVIEW_STATUSES),
+ *  so the badge and the queue can never show different numbers. */
+export async function countRunsAwaitingReview(
+  db: Queryable = { query },
+): Promise<number> {
+  const result = await db.query<{ count: string }>(
+    `SELECT count(*)::text AS count FROM release_runs WHERE status = ANY($1::text[])`,
+    [[...AWAITING_REVIEW_STATUSES]],
+  );
+  return Number(result.rows[0]?.count ?? 0);
 }
 
 /** Fetch one run by id, or null if it does not exist. */

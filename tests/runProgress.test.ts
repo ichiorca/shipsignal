@@ -8,9 +8,11 @@ import {
   isAwaitingReview,
   statusCategory,
   buildPipeline,
+  AWAITING_REVIEW_STATUSES,
 } from '../app/lib/runProgress.ts';
 import type { ReleaseRun } from '../app/lib/db/releaseRuns.ts';
 import type { RunStatus } from '../app/lib/runStatus.ts';
+import { RUN_STATUSES } from '../app/lib/runStatus.ts';
 
 function run(status: RunStatus): ReleaseRun {
   return {
@@ -26,6 +28,18 @@ function run(status: RunStatus): ReleaseRun {
     completed_at: null,
   };
 }
+
+test('AWAITING_REVIEW_STATUSES matches isAwaitingReview exactly (R3 badge ↔ queue invariant)', () => {
+  // The nav badge counts via AWAITING_REVIEW_STATUSES (SQL); the queue filters via isAwaitingReview
+  // (TS). They must agree for every status, or the badge and the queue would disagree.
+  for (const status of RUN_STATUSES) {
+    assert.equal(
+      isAwaitingReview(run(status)),
+      AWAITING_REVIEW_STATUSES.includes(status),
+      `status ${status}: predicate and status-set disagree`,
+    );
+  }
+});
 
 test('nextStep points at the gate the run is halted at, else null', () => {
   assert.deepEqual(nextStep(run('features_pending_review')), {

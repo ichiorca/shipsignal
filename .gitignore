@@ -2,13 +2,10 @@
 .harness/
 adapters/
 cue.mod/
-evals/
 hooks/generated/
 hooks/precommit-gate.cue
 hooks/sessionstart-context.cue
 sagas/
-tools/
-workflows/
 harness.cue
 harness.lock
 levels.cue
@@ -58,8 +55,6 @@ Thumbs.db
 
 # --- Logs ---
 *.log
-
-.vercel
 .env*
 
 # --- Internal planning / future-enhancement docs (not part of the submission) ---

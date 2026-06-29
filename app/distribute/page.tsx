@@ -19,7 +19,7 @@ export default async function PublishedPage() {
   return (
     <main id="main">
       <PageHeader
-        eyebrow="Decisions"
+        eyebrow="Workflow"
         title="Published"
         description="What shipped and where — channels, send-time schedule, and the delivery ledger."
         actions={<a href="/webhooks">Published &amp; deliveries →</a>}

@@ -38,7 +38,7 @@ export default async function LivePage() {
   return (
     <main id="main">
       <PageHeader
-        eyebrow="Signals & Trends"
+        eyebrow="Intelligence"
         title="Live Ops"
         description="What's running and shipping right now."
       />

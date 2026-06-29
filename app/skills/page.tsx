@@ -30,7 +30,7 @@ export default async function SkillsPage() {
   return (
     <main id="main">
       <PageHeader
-        eyebrow="Skill library"
+        eyebrow="Library"
         title="Skills"
         description={`Playbook versions — the active repo skills, the revisions the system proposes, and how each skill is used. ${count}.`}
       />

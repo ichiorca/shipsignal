@@ -40,12 +40,27 @@ test('a populated deployment tells the speed/cost/trust/output story', () => {
   const byKey = new Map(stats.map((s) => [s.key, s]));
   assert.equal(byKey.get('speed')?.value, '42m');
   assert.equal(byKey.get('speed')?.detail, 'median across 3 releases');
-  assert.equal(byKey.get('cost')?.value, '$0.84');
-  assert.ok(
-    byKey.get('cost')?.detail.includes(`~${PMM_BASELINE_HOURS_PER_RELEASE}h of PMM`),
-  );
+  // R6 — the cost tile now leads with dollars SAVED: 4h @ $75/h ($300) minus $0.84 model spend.
+  assert.equal(byKey.get('cost')?.value, '$299');
+  assert.equal(byKey.get('cost')?.label, 'saved per release');
+  assert.ok(byKey.get('cost')?.detail.includes(`~${PMM_BASELINE_HOURS_PER_RELEASE}h of PMM`));
+  assert.ok(byKey.get('cost')?.detail.includes('$0.84'), 'detail shows the model spend it replaced');
   assert.equal(byKey.get('trust')?.value, '96%');
   assert.equal(byKey.get('output')?.value, '14');
+});
+
+test('savings still shows once a release completes, even before cost telemetry exists', () => {
+  // releases exist but no model-cost telemetry yet → savings ≈ the labor value (4h @ $75/h).
+  const stats = buildHeroStats({
+    artifactsShipped: 2,
+    claimsEvidenceBackedRate: 1,
+    medianSecondsToApprovedContent: 600,
+    avgModelCostPerRunUsd: null,
+    releasesWithApprovedContent: 1,
+  });
+  const cost = new Map(stats.map((s) => [s.key, s])).get('cost');
+  assert.equal(cost?.value, '$300');
+  assert.equal(cost?.detail.includes('model spend'), false, 'no spend clause when cost is unknown');
 });
 
 test('durations switch to hours past 90 minutes', () => {

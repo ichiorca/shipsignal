@@ -192,3 +192,20 @@ test('reviewer field is labelled', () => {
   assert.ok(input, 'reviewer input exists');
   assert.ok(label, 'reviewer label exists and is associated');
 });
+
+test('R8 — the batch toolbar shows shortcut help and a live progress meter', () => {
+  const { doc } = render(ARTIFACTS);
+  const shortcuts = doc.querySelector('[data-review-shortcuts]');
+  assert.ok(shortcuts, 'shortcut help is present');
+  assert.equal(doc.querySelectorAll('[data-review-shortcuts] kbd').length, 3, 'A/R/E keys shown');
+  const progress = doc.querySelector('[data-review-progress]');
+  assert.ok(progress, 'progress meter is present');
+  assert.equal(progress?.getAttribute('aria-live'), 'polite', 'progress is announced politely');
+  assert.match(progress?.textContent ?? '', /0 of \d+ reviewed/, 'starts at none reviewed');
+});
+
+test('R8 — each artifact section carries its id so keyboard triage can target it', () => {
+  const { doc } = render(ARTIFACTS);
+  // The keydown handler resolves the focused artifact via closest('[data-artifact-id]').
+  assert.equal(doc.querySelectorAll('[data-artifact-id]').length, ARTIFACTS.length);
+});
