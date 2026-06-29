@@ -27,29 +27,29 @@ graph, versioned behaviour, and encrypted connections.
 
 ```mermaid
 flowchart LR
-  subgraph Ingest["Ingestion (untrusted input)"]
-    GH["GitHub Releases / Compare API\n(diff + PRs + issues)"]
+  subgraph Ingest["Ingestion - untrusted input"]
+    GH["GitHub Releases / Compare API<br/>diff + PRs + issues"]
   end
 
-  subgraph Worker["Release Worker — LangGraph (Python)"]
+  subgraph Worker["Release Worker - LangGraph (Python)"]
     direction TB
-    EV["collect → redact → deterministic signals"]
-    FE["cluster features  ──▶ Gate #1 (human)"]
-    CO["generate artifacts → extract claims →\nlink to evidence → guardrails ──▶ Gate #2 (human)"]
-    ME["media: narration (TTS) + ffmpeg video"]
-    SL["mine reviewer edits → skill candidate ──▶ Gate #3 (human)"]
+    EV["collect, redact, deterministic signals"]
+    FE["cluster features -- Gate #1 (human)"]
+    CO["generate artifacts, extract claims,<br/>link to evidence, guardrails -- Gate #2 (human)"]
+    ME["media: narration TTS + ffmpeg video"]
+    SL["mine reviewer edits, skill candidate -- Gate #3 (human)"]
     EV --> FE --> CO --> ME
     CO -. reviewer edits .-> SL
   end
 
   subgraph AWS["AWS"]
-    AUR[("Amazon Aurora PostgreSQL\nrelease_runs · evidence_items (pgvector/HNSW)\nfeature_clusters · artifacts · artifact_claims (+evidence links)\nskills (versioned) · capability_skills · agent_capabilities\nlearning_signals · skill_revision_candidates\nmedia_assets · connections (encrypted) · brand brain")]
-    S3[("Amazon S3\nredacted evidence blobs · media (mp3/mp4)")]
-    BR["Amazon Bedrock\nNova (Converse authoring) + Titan embeddings\n+ Guardrails"]
+    AUR[("Amazon Aurora PostgreSQL<br/>release_runs, evidence_items pgvector/HNSW<br/>feature_clusters, artifacts, artifact_claims + evidence links<br/>skills versioned, capability_skills, agent_capabilities<br/>learning_signals, skill_revision_candidates<br/>media_assets, connections encrypted, brand brain")]
+    S3[("Amazon S3<br/>redacted evidence blobs, media mp3/mp4")]
+    BR["Amazon Bedrock<br/>Nova Converse authoring + Titan embeddings + Guardrails"]
   end
 
   subgraph Front["Vercel"]
-    UI["Next.js dashboard (App Router, React 19)\nreview · approve (×3 gates) · provenance ·\nmedia + 1-click YouTube · governance/connections"]
+    UI["Next.js dashboard - App Router, React 19<br/>review, approve x3 gates, provenance,<br/>media + 1-click YouTube, governance/connections"]
   end
 
   GH --> EV
@@ -58,7 +58,7 @@ flowchart LR
   Worker -.->|prompts / embeddings| BR
   UI -->|verified TLS, parameterised SQL| AUR
   UI -->|short-lived presigned GET| S3
-  UI -.->|OAuth upload (token decrypted server-side)| YT["YouTube Data API"]
+  UI -.->|OAuth upload, token decrypted server-side| YT["YouTube Data API"]
 ```
 
 ## Why the Aurora data model is the centerpiece
@@ -88,6 +88,55 @@ reading Aurora over **verified TLS** with parameterised SQL and reaching S3 only
 presigned GET URLs**. A **LangGraph** Python worker runs four graphs — release-intelligence, content,
 media, and skill-learning — orchestrating Gates #1–#3 as human-approval interrupts. **Amazon Bedrock**
 (Converse + Guardrails + Titan) is the LLM layer.
+
+## Skill evolution — the self-learning loop (Gate #3)
+The system improves itself from human feedback. Reviewer edits and rejections from Gate #2 are mined,
+clustered, and turned into a proposed **next-version skill** — which a third human gate must approve
+before any repo `SKILL.md` is overwritten. This is what makes ShipSignal compounding, not static.
+
+```mermaid
+flowchart TB
+  subgraph FB["Reviewer feedback from Gate #2"]
+    ED["reviewer edits"]
+    RJ["rejected claims"]
+    NT["review notes"]
+  end
+
+  subgraph SL["Skill-learning graph - LangGraph + Bedrock"]
+    direction TB
+    CS["collect_learning_signals<br/>persist to learning_signals"]
+    CL["cluster edit + rejection patterns<br/>themes: reduce hype, drop unsupported metric, ..."]
+    IS["select_impacted_skills<br/>attribute clusters to active skills"]
+    DR["draft_skill_revision_candidate<br/>Bedrock writes the next-version body"]
+    PC["persist candidate<br/>skill_revision_candidates status=draft"]
+    G3{"Gate #3<br/>human approval"}
+    CS --> CL --> IS --> DR --> PC --> G3
+  end
+
+  ED --> CS
+  RJ --> CS
+  NT --> CS
+
+  SUP[("cooldown suppressions<br/>skill_candidate_suppressions")]
+  SUP -. skip near-duplicate .-> DR
+
+  G3 -->|approved| SCAN["safety scan<br/>Guardrails + secret/PII checks"]
+  SCAN --> PUB["publish next version<br/>skills table + repo SKILL.md overwrite"]
+  PUB --> PRV["record promotion<br/>commit sha + old/new content hash"]
+  G3 -->|rejected| REJ["record rejection"]
+  REJ --> SUP
+
+  PRV -. new version grounds future generation .-> DR
+```
+
+- **Suggestion criterion:** a recurring, themed pattern of reviewer corrections, attributable to the
+  specific skill that grounded the corrected content (volume drives a displayed confidence). Near-
+  duplicates of a recently-rejected proposal are suppressed by a cooldown — reviewers aren't re-nagged.
+- **Promotion criterion:** a **human** at Gate #3 — there is deliberately no automated "this version is
+  better" test (constitution non-goal). On approval the new version is published to the `skills` table
+  and the repo `SKILL.md`, with the commit SHA + old/new content hashes recorded for provenance.
+- **Proven live:** the `brand-voice` skill was promoted to **v1.1.0** through this exact loop
+  (visible on `/skills` and `/learning`).
 
 ## Honest note for judges (live vs. demo)
 The **primary run is fully real end to end**: `3b1fed7f`
