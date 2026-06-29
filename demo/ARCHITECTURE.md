@@ -78,9 +78,9 @@ The diff → evidence → deterministic-signals → **Aurora persistence** path 
 (`NousResearch/hermes-agent` v0.16→v0.17). **pgvector retrieval is real** (real Bedrock Titan
 embeddings populated for 741/747 evidence rows; cosine ranking verified). The **media** is **real**
 (TTS + ffmpeg → MP3 **and** MP4 on S3). The **three gates** and the **self-learning loop** are real (a
-real promoted skill version). The **LLM authoring path is proven real**: a second run
-(`3b1fed7f`, `OrcaQubits/agentic-commerce-skills-plugins`) was clustered + written end-to-end by
-**Amazon Bedrock Nova** (cross-account, since that account has Nova quota). The hermes walk-through run
-uses the offline `DemoModelClient` for deterministic, media-rich demoing — **one `DEMO_MODE` flag**
-from live, and the OrcaQubits run is the proof. Schema, data flow, gates, learning loop, and vector
-retrieval are exactly as shipped.
+real promoted skill version). The **primary run is fully real end to end**: `3b1fed7f`
+(`OrcaQubits/agentic-commerce-skills-plugins`) was clustered + written by **Amazon Bedrock Nova**
+(cross-account, since that account has Nova quota), embedded with real Titan vectors, and narrated with
+real ElevenLabs/ffmpeg media. A secondary hermes run uses the offline `DemoModelClient` for the LLM
+authoring only — **one `DEMO_MODE` flag** from live, and the agentic-commerce run is the proof. Schema,
+data flow, gates, learning loop, and vector retrieval are exactly as shipped.

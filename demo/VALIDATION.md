@@ -27,18 +27,19 @@ Status legend: ✅ real & verified · ⚠️ demo-mode (offline model, one env f
 
 **Live verification (production, against Aurora + S3):**
 - `GET /api/health` → 200
-- `GET /releases/49a31f1c-…` (+ `/review`, `/artifacts`, `/media`) → 200
-- `GET /api/media/{id}/playback` → 302 → presigned `shipsignal-media-897722692550.s3.us-east-1.amazonaws.com/...` → 200 (MP3 + MP4)
+- `GET /releases/3b1fed7f-…` (primary, agentic commerce) + `/review` `/artifacts` `/media` → 200; hermes `49a31f1c` likewise
+- `GET /api/media/{id}/playback` → 302 → presigned `shipsignal-media-897722692550.s3.us-east-1.amazonaws.com/...` → 200 (MP3 + MP4, **both runs**)
 - `GET /skills` shows `brand-voice` **v1.1.0**; `GET /connections` → 200
 
-## Second run — fully real Bedrock Nova authoring (`3b1fed7f`)
-A second end-to-end run proving the LLM-authoring path runs on real Bedrock inference:
+## Primary run — fully real, agentic commerce (`3b1fed7f`)
+The lead demo run — real from diff to media, end to end:
 - **Repo:** `OrcaQubits/agentic-commerce-skills-plugins`, diff `7473b6a` → `4366f7c` (300-file cap surfaced honestly)
 - **~8,100 evidence rows** (real diff → redact → persist); **8136/8136 embedded** with real Titan vectors
-- **3 features clustered by Amazon Nova** (Medusa Plugin Hooks, Spree Headless Storefront, Spree Checkout) + **4 Nova-written artifacts** (blog/changelog/LinkedIn/email)
+- **3 features clustered by Amazon Bedrock Nova** (Medusa Plugin Hooks, Spree Headless Storefront, Spree Checkout) + **4 Nova-written artifacts** (blog/changelog/LinkedIn/email)
+- **Real media:** ElevenLabs TTS narration (MP3, ~31s) + ffmpeg title-card video (MP4) in S3; both stream live (playback 302 → presigned S3 → 200)
 - **Cosine retrieval verified:** "Medusa plugin security hooks" → the `medusa-commerce` plugin-hooks code/docs (distance 0.33)
-- **Cross-account by design:** Bedrock/Nova on a second AWS account (which has Nova quota); S3 + Aurora on the shipsignal account — split credentials in one process, IAM restored after
-- **Live:** `/releases/3b1fed7f-eba1-487e-8382-0de8c26a33f3` (run/review/artifacts → 200)
+- **Cross-account by design:** Bedrock/Nova on a second AWS account (which has Nova quota); S3 + Aurora on the shipsignal account — split credentials in one process, IAM restored after each use
+- **Live:** `/releases/3b1fed7f-eba1-487e-8382-0de8c26a33f3` (run/review/artifacts/**media** → 200)
 
 **Bottom line:** the AWS-database-centric system (the hackathon's core requirement) is fully real and
 deployed — Aurora schema, provenance graph, **real pgvector retrieval on real Bedrock Titan

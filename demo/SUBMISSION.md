@@ -1,8 +1,8 @@
 # ShipSignal — Devpost submission (h01.devpost.com)
 
 **Live app:** https://shipsignal-xi.vercel.app
-**Walk-through run (media-rich):** https://shipsignal-xi.vercel.app/releases/49a31f1c-0cc7-4a56-a410-edefbffb0d2b
-**Fully-real run (real Bedrock Nova authoring):** https://shipsignal-xi.vercel.app/releases/3b1fed7f-eba1-487e-8382-0de8c26a33f3
+**Primary walk-through (fully real — agentic commerce, Bedrock Nova authoring + media):** https://shipsignal-xi.vercel.app/releases/3b1fed7f-eba1-487e-8382-0de8c26a33f3
+**Secondary run (offline-LLM, also media-rich):** https://shipsignal-xi.vercel.app/releases/49a31f1c-0cc7-4a56-a410-edefbffb0d2b
 **Vercel Team ID:** `team_tkkqXRJtyzq0R4542ddf5pYo`
 **AWS database:** **Amazon Aurora PostgreSQL (Serverless v2)** + `pgvector`
 **Docs:** architecture → `demo/ARCHITECTURE.md` · demo script → `demo/DEMO_SCRIPT.md` · what's real → `demo/VALIDATION.md`
@@ -14,7 +14,7 @@ ShipSignal turns a GitHub **release diff** into approved, on-brand, multi-channe
 
 It never writes marketing copy from a raw diff. It builds an evidence-backed **feature manifest** → a human approves → it generates content with **claim-level provenance** → a human approves → optional media → and reviewer edits feed a **self-learning skill loop** gated by a third human.
 
-The live deployment runs on the **real release diff** of `NousResearch/hermes-agent` v0.16.0 → v0.17.0 (744 evidence rows persisted to Aurora).
+The primary live run is the **real release diff** of our own `OrcaQubits/agentic-commerce-skills-plugins` repo (between two commits) — ~8,100 evidence rows in Aurora, **clustered and written end-to-end by real Amazon Bedrock (Nova)**, with narrated ElevenLabs/ffmpeg media. (A second run on `NousResearch/hermes-agent` is kept as an offline-LLM comparison.)
 
 ---
 
@@ -46,7 +46,7 @@ Aurora Serverless v2 (min 0.5 / max 2 ACU) keeps cost near zero while staying wa
 - **LLM authoring — proven real on Bedrock:** the second run (`3b1fed7f`, `OrcaQubits/agentic-commerce-skills-plugins`) was authored end-to-end by **real Amazon Bedrock (Nova)** — Nova clustered the diff into the feature manifest and wrote all four artifacts (blog/changelog/LinkedIn/email), with **8136/8136** of its evidence rows embedded by real Titan and cosine retrieval verified. So the LLM stage is not "trust the flag" — there is a live run that did it for real.
 - **Why hermes uses the offline model:** the primary walk-through run (`49a31f1c`) uses the offline `DemoModelClient` for deterministic, media-rich demoing (its Bedrock account's Converse quota is pending an increase). It's **one env flag** from live — and the OrcaQubits run is the proof. Bedrock authoring is **not** a hackathon requirement; schema, gates, learning loop, and vector retrieval are real on both runs.
 
-> **Two demonstration runs:** hermes = real evidence + real embeddings + real media (offline LLM, for a deterministic walkthrough); **OrcaQubits = real evidence + real embeddings + real Bedrock Nova authoring** (the fully-real proof). Hermes data is preserved unchanged.
+> **Two demonstration runs:** **OrcaQubits/agentic-commerce-skills-plugins (primary) = real evidence + real embeddings + real Bedrock Nova authoring + real ElevenLabs/ffmpeg media** — fully real end to end; hermes (secondary) = the same minus LLM authoring (offline model), kept as a comparison. Both stream media live via presigned S3 URLs.
 
 ## Impact
 Every team ships releases and re-writes the same launch content by hand — slowly, off-brand, untraceable. ShipSignal makes that a **governed, evidence-backed, self-improving** workflow: diff → approved, on-brand, multi-channel content with claim-level provenance, plus one-click distribution. It's production-shaped, not a toy.
