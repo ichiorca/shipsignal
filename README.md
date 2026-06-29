@@ -4,6 +4,7 @@
 
 Built for the **[AWS hackathon · h01.devpost.com](https://h01.devpost.com/)**. Live on **Vercel**, with **Amazon Aurora PostgreSQL** as the system of record.
 
+▶️ **Demo video (< 3 min):** https://youtu.be/oG0LAP4eT7U
 🔗 **Live app:** https://shipsignal-xi.vercel.app
 🎬 **Primary demo run (fully real, agentic commerce):** https://shipsignal-xi.vercel.app/releases/3b1fed7f-eba1-487e-8382-0de8c26a33f3
 🎬 **Secondary run:** https://shipsignal-xi.vercel.app/releases/49a31f1c-0cc7-4a56-a410-edefbffb0d2b
@@ -69,6 +70,7 @@ Full honesty matrix (real vs. demo, with verification) → **[demo/VALIDATION.md
 ## 📂 Demo artifacts
 | Artifact | What it is |
 |---|---|
+| **[▶️ Demo video](https://youtu.be/oG0LAP4eT7U)** | < 3-min walkthrough of the live app (the agentic-commerce run, end to end) |
 | **[demo/SUBMISSION.md](demo/SUBMISSION.md)** | The Devpost write-up — criteria-mapped, with live links + Team ID |
 | **[demo/ARCHITECTURE.md](demo/ARCHITECTURE.md)** | Architecture + skill-evolution diagrams, and the Aurora data-model deep dive |
 | **[demo/DEMO_SCRIPT.md](demo/DEMO_SCRIPT.md)** | The < 3-minute demo-video script (beat by beat) |
