@@ -1,5 +1,6 @@
 # ShipSignal — Devpost submission (h01.devpost.com)
 
+**Demo video (< 3 min):** https://youtu.be/oG0LAP4eT7U
 **Live app:** https://shipsignal-xi.vercel.app
 **Primary walk-through (fully real — agentic commerce, Bedrock Nova authoring + media):** https://shipsignal-xi.vercel.app/releases/3b1fed7f-eba1-487e-8382-0de8c26a33f3
 **Secondary run (offline-LLM, also media-rich):** https://shipsignal-xi.vercel.app/releases/49a31f1c-0cc7-4a56-a410-edefbffb0d2b
