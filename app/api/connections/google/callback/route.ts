@@ -89,8 +89,15 @@ export async function GET(request: Request): Promise<NextResponse> {
       signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
     });
     if (!tokenResponse.ok) {
-      console.error('google token exchange failed', { status: tokenResponse.status });
-      return back(request, 'error=exchange_failed');
+      // Surface Google's error CODE (e.g. invalid_client / invalid_grant / redirect_uri_mismatch)
+      // so the failure is diagnosable. The OAuth token-error body never contains the client secret.
+      const errBody: unknown = await tokenResponse.json().catch(() => ({}));
+      const code =
+        typeof (errBody as { error?: unknown }).error === 'string'
+          ? (errBody as { error: string }).error
+          : String(tokenResponse.status);
+      console.error('google token exchange failed', { status: tokenResponse.status, error: code });
+      return back(request, `error=exchange_failed&detail=${encodeURIComponent(code)}`);
     }
     const data: unknown = await tokenResponse.json();
     const refreshToken = (data as { refresh_token?: unknown }).refresh_token;

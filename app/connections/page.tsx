@@ -31,8 +31,12 @@ function flagMessage(params: Record<string, string | string[] | undefined>): str
   const connected = params['connected'];
   if (typeof connected === 'string' && MESSAGES[connected] !== undefined) return MESSAGES[connected];
   const error = params['error'];
-  if (typeof error === 'string') return MESSAGES[error] ?? 'Connection failed. Please retry.';
-  return null;
+  if (typeof error !== 'string') return null;
+  const base = MESSAGES[error] ?? 'Connection failed. Please retry.';
+  // The callback appends Google's error code (e.g. invalid_client, invalid_grant,
+  // redirect_uri_mismatch) as ?detail= so the failure is diagnosable, secret-free.
+  const detail = params['detail'];
+  return typeof detail === 'string' && detail !== '' ? `${base} (Google: ${detail})` : base;
 }
 
 export default async function ConnectionsPage({ searchParams }: PageProps) {
