@@ -38,6 +38,7 @@ The lead demo run — real from diff to media, end to end:
 - **3 features clustered by Amazon Bedrock Nova** (Medusa Plugin Hooks, Spree Headless Storefront, Spree Checkout) + **4 Nova-written artifacts** (blog/changelog/LinkedIn/email)
 - **Real media:** ElevenLabs TTS narration (MP3, ~31s) + ffmpeg title-card video (MP4) in S3; both stream live (playback 302 → presigned S3 → 200)
 - **Cosine retrieval verified:** "Medusa plugin security hooks" → the `medusa-commerce` plugin-hooks code/docs (distance 0.33)
+- **LLM-as-judge eval is real:** Amazon Bedrock Nova scored each approved artifact against the rubric (4 rubric scores, 3.6–4.5) plus deterministic metrics, persisted to `eval_runs` and shown at `/releases/3b1fed7f-…/evals`
 - **Cross-account by design:** Bedrock/Nova on a second AWS account (which has Nova quota); S3 + Aurora on the shipsignal account — split credentials in one process, IAM restored after each use
 - **Live:** `/releases/3b1fed7f-eba1-487e-8382-0de8c26a33f3` (run/review/artifacts/**media** → 200)
 
