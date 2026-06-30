@@ -87,3 +87,6 @@ Full honesty matrix (real vs. demo, with verification) → **[demo/VALIDATION.md
 
 ## Status
 38 Aurora migrations · 485 TypeScript + 420 Python tests green · deployed and live · two real end-to-end runs.
+
+## License
+Licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
