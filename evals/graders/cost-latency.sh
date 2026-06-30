@@ -94,7 +94,10 @@ check "token-budget tracker exists" has 'class BudgetTracker' "$WORKER_SRC/token
 check "overrun surfaces as a failure (raises), never proceeds silently" \
   has 'class TokenBudgetExceededError' "$WORKER_SRC/token_budget.py"
 check "the model client charges the budget per call" has 'self._budget' "$WORKER_SRC/bedrock_client.py"
-check "throttling backoff retained (aws-bedrock-rules)" has '_jittered_backoff' "$WORKER_SRC/bedrock_client.py"
+# The resilience-hardening refactor (spec 011/023) centralized the ThrottlingException retry
+# out of bedrock_client into the shared bedrock_retry module (one source of retry truth, no
+# double backoff); the jitter helper now lives there as jittered_backoff.
+check "throttling backoff retained (aws-bedrock-rules)" has 'jittered_backoff' "$WORKER_SRC/bedrock_retry.py"
 check "budget enforcement unit suite green" runtest worker/tests/test_token_budget.py
 endcat
 

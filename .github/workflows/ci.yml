@@ -29,7 +29,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install pydantic==2.10.4 pytest==8.3.4 ruff==0.8.4
+      # Unit deps: the pure model/state/node tests need only pydantic, but several aurora/
+      # bedrock unit tests import psycopg[binary] and botocore (boto3) at module load, so the
+      # gate must install them or pytest errors during collection. Pinned to match
+      # worker/requirements.txt (dependency-policy: no floating ranges). Heavy deps
+      # (langgraph/playwright) stay out — those tests importorskip them.
+      - run: pip install pydantic==2.10.4 pytest==8.3.4 ruff==0.8.4 'psycopg[binary]==3.2.3' boto3==1.35.90
       - run: ruff check .
       - run: pytest -q
 
